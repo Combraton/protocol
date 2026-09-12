@@ -2,7 +2,7 @@
 
 Independent semantic contracts for controllers, agentic execution, evidence and context services.
 
-> Bootstrap documentation only. No product runtime, released API, installation command or performance claim is established here. The reviewed architecture is `architecture-v1-20260912`; its full canonical documents have not yet been imported into these repositories. These READMEs summarize boundaries and do not replace the specifications.
+> Bootstrap documentation only. No product runtime, released API, installation command or performance claim is established here. The reviewed architecture is `architecture-v1-20260912`, published as `public-development-v1-20260913`. Canonical specifications are available through [the documentation map](docs/README.md). This README is an overview, not the full specification.
 
 The protocol connects independently useful systems without requiring Combraton's desktop, internal database, programming language or scheduler. It owns no execution engine or memory store. Other applications can implement only the profiles they need, negotiating required semantics explicitly.
 
@@ -47,4 +47,8 @@ Define a minimal versioned schema slice and deterministic conformance fixtures f
 
 Keep schemas language-neutral, with separately versioned bindings and a tested consumer compatibility matrix. Local JSON-RPC over bounded authenticated transport is a starting preference; encoding, framing and digest rules must be specified and tested.
 
-See [BOOTSTRAP](https://github.com/Combraton/combraton/blob/main/BOOTSTRAP.md). This bootstrap contains no generated SDK or selected license; initial visibility is private.
+See [BOOTSTRAP](https://github.com/Combraton/combraton/blob/main/BOOTSTRAP.md). This bootstrap contains no generated SDK or selected license; the repository is public and its project license remains to be selected.
+
+## Working on this repository
+
+Read [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md), [the documentation map](docs/README.md), and [verification](docs/VERIFICATION.md). Use existing native harnesses for development. **Combraton self-development is deferred until usable v0.1 releases of all four projects.** Public visibility does not select a license; no project license has been added yet.

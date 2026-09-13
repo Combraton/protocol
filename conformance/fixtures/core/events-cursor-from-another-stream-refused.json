@@ -1,11 +1,11 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "core.events.subscription-delivers-backlog-then-live",
+  "id": "core.events.cursor-from-another-stream-refused",
   "version": 1,
-  "title": "A subscription delivers the backlog, then new events, and stops after unsubscribe",
+  "title": "A well-formed cursor from another store's stream is invalid_cursor",
   "requirements": [
     "OBS-2",
-    "OBS-3"
+    "OBS-8"
   ],
   "spec_refs": [
     "docs/spec/profiles/CORE.md#16-events-and-subscriptions-proposed-m2-draft"
@@ -22,8 +22,7 @@
   ],
   "polarity": "negative",
   "kills": [
-    "subscription-misses-backlog",
-    "notify-before-response"
+    "accept-cursor-from-other-stream"
   ],
   "steps": [
     {
@@ -93,36 +92,73 @@
     },
     {
       "step": "query",
-      "operation": "core.events.subscribe",
+      "operation": "core.events.read",
       "payload": {
+        "limit": 100,
         "from": "start"
       },
+      "expect": {
+        "ok": {
+          "items": {
+            "$len": 1
+          }
+        }
+      },
       "capture": {
-        "sub": "/result/subscription"
+        "cursor": "/result/next_cursor"
       }
     },
     {
-      "step": "expect_notification",
-      "expect": {
-        "params": {
-          "subscription": {
-            "$var": "sub"
+      "step": "stop"
+    },
+    {
+      "step": "start",
+      "config": {
+        "principal": "owner",
+        "authority_principals": [
+          "owner"
+        ]
+      },
+      "fresh_data_directory": true
+    },
+    {
+      "step": "negotiate",
+      "payload": {
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.events"
+            ],
+            "optional_features": []
           },
-          "items": [
-            {
-              "event": {
-                "sequence": 1,
-                "command_id": "cmd-1"
-              }
-            }
-          ]
-        }
+          {
+            "name": "core-test",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          }
+        ]
       }
     },
     {
       "step": "command",
       "operation": "core-test.subject.put",
-      "command_id": "cmd-2",
+      "command_id": "cmd-1",
       "subject": {
         "kind": "core-test.subject",
         "id": "s-1"
@@ -133,65 +169,26 @@
             "kind": "core-test.subject",
             "id": "s-1"
           },
-          "revision": 1
+          "revision": 0
         }
       ],
       "authority_epoch": 0,
       "payload": {
-        "value": "b"
-      }
-    },
-    {
-      "step": "expect_notification",
-      "expect": {
-        "params": {
-          "items": [
-            {
-              "event": {
-                "sequence": 2,
-                "command_id": "cmd-2"
-              }
-            }
-          ]
-        }
+        "value": "a"
       }
     },
     {
       "step": "query",
-      "operation": "core.events.unsubscribe",
+      "operation": "core.events.read",
       "payload": {
-        "subscription": {
-          "$var": "sub"
+        "limit": 100,
+        "cursor": {
+          "$var": "cursor"
         }
       },
       "expect": {
-        "ok": {}
+        "error": "invalid_cursor"
       }
-    },
-    {
-      "step": "command",
-      "operation": "core-test.subject.put",
-      "command_id": "cmd-3",
-      "subject": {
-        "kind": "core-test.subject",
-        "id": "s-1"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "core-test.subject",
-            "id": "s-1"
-          },
-          "revision": 2
-        }
-      ],
-      "authority_epoch": 0,
-      "payload": {
-        "value": "c"
-      }
-    },
-    {
-      "step": "expect_no_notification"
     },
     {
       "step": "stop"

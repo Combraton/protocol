@@ -1,14 +1,14 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "core.events.multi-event-command-contiguous",
+  "id": "core.grants.authority-binding-scope-must-exist",
   "version": 1,
-  "title": "A command producing several events keeps sequences contiguous",
+  "title": "A binding to an unknown authority scope is invalid; one to a later epoch authorizes once that epoch is current",
   "requirements": [
-    "OBS-4",
-    "OBS-1"
+    "CORE-11",
+    "CORE-10"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CORE.md#16-events-and-subscriptions-proposed-m2-draft"
+    "docs/spec/profiles/CORE.md#15-principals-and-grants-proposed-m2-draft"
   ],
   "role": "provider",
   "profiles": [
@@ -18,13 +18,11 @@
     }
   ],
   "features": [
-    "core.events",
     "core.grants"
   ],
-  "polarity": "positive",
+  "polarity": "negative",
   "kills": [
-    "no-grant-issued-events",
-    "revoke-event-target-only"
+    "unknown-binding-scope-accepted"
   ],
   "steps": [
     {
@@ -54,7 +52,6 @@
             ],
             "required": true,
             "required_features": [
-              "core.events",
               "core.grants"
             ],
             "optional_features": []
@@ -74,7 +71,50 @@
     {
       "step": "command",
       "operation": "core.grant.issue",
-      "command_id": "i-1",
+      "command_id": "issue-g-x",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-x"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-x"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "agent-1",
+        "audience": "conformance-provider",
+        "rights": [
+          "core-test.read",
+          "core-test.write"
+        ],
+        "resources": [
+          {
+            "kind": "core-test.subject",
+            "id_prefix": "s-"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        },
+        "authority_binding": {
+          "scope": "no-such-scope",
+          "epoch": 0
+        }
+      },
+      "expect": {
+        "error": "invalid_envelope"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "issue-g-1",
       "subject": {
         "kind": "core.grant",
         "id": "g-1"
@@ -89,19 +129,30 @@
         }
       ],
       "payload": {
-        "holder": "agent",
+        "holder": "agent-1",
         "audience": "conformance-provider",
         "rights": [
-          "core-test.read"
+          "core-test.read",
+          "core-test.write"
         ],
         "resources": [
           {
-            "kind": "core-test.subject"
+            "kind": "core-test.subject",
+            "id_prefix": "s-"
           }
         ],
         "delegation": {
-          "allowed": true,
-          "max_depth": 1
+          "allowed": false,
+          "max_depth": 0
+        },
+        "authority_binding": {
+          "scope": "core-test",
+          "epoch": 1
+        }
+      },
+      "expect": {
+        "ok": {
+          "replay": false
         }
       }
     },
@@ -111,7 +162,7 @@
     {
       "step": "start",
       "config": {
-        "principal": "agent",
+        "principal": "agent-1",
         "authority_principals": [
           "owner"
         ]
@@ -135,7 +186,6 @@
             ],
             "required": true,
             "required_features": [
-              "core.events",
               "core.grants"
             ],
             "optional_features": []
@@ -154,37 +204,33 @@
     },
     {
       "step": "command",
-      "operation": "core.grant.issue",
-      "command_id": "i-2",
+      "operation": "core-test.subject.put",
+      "command_id": "cmd-1",
       "subject": {
-        "kind": "core.grant",
-        "id": "g-2"
+        "kind": "core-test.subject",
+        "id": "s-1"
       },
       "preconditions": [
         {
           "subject": {
-            "kind": "core.grant",
-            "id": "g-2"
+            "kind": "core-test.subject",
+            "id": "s-1"
           },
           "revision": 0
         }
       ],
+      "authority_epoch": 0,
       "payload": {
-        "holder": "agent-2",
-        "audience": "conformance-provider",
-        "rights": [
-          "core-test.read"
-        ],
-        "resources": [
-          {
-            "kind": "core-test.subject"
-          }
-        ],
-        "delegation": {
-          "allowed": false,
-          "max_depth": 0
-        },
-        "parent": "g-1"
+        "value": "a"
+      },
+      "expect": {
+        "error": "permission_denied",
+        "details": {
+          "reason": "authority_epoch_stale"
+        }
+      },
+      "set": {
+        "grant": "g-1"
       }
     },
     {
@@ -217,7 +263,6 @@
             ],
             "required": true,
             "required_features": [
-              "core.events",
               "core.grants"
             ],
             "optional_features": []
@@ -236,69 +281,104 @@
     },
     {
       "step": "command",
-      "operation": "core.grant.revoke",
-      "command_id": "r-1",
+      "operation": "core-test.authority.claim",
+      "command_id": "claim-1",
       "subject": {
-        "kind": "core.grant",
-        "id": "g-1"
+        "kind": "core-test.authority",
+        "id": "core-test"
       },
       "preconditions": [
         {
           "subject": {
-            "kind": "core.grant",
-            "id": "g-1"
+            "kind": "core-test.authority",
+            "id": "core-test"
           },
-          "revision": 1
+          "revision": 0
         }
       ],
-      "payload": {}
+      "payload": {},
+      "expect": {
+        "ok": {
+          "outcome": {
+            "epoch": 1
+          }
+        }
+      }
     },
     {
-      "step": "query",
-      "operation": "core.events.read",
+      "step": "stop"
+    },
+    {
+      "step": "start",
+      "config": {
+        "principal": "agent-1",
+        "authority_principals": [
+          "owner"
+        ]
+      }
+    },
+    {
+      "step": "negotiate",
       "payload": {
-        "limit": 100,
-        "from": "start"
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.grants"
+            ],
+            "optional_features": []
+          },
+          {
+            "name": "core-test",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          }
+        ]
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core-test.subject.put",
+      "command_id": "cmd-2",
+      "subject": {
+        "kind": "core-test.subject",
+        "id": "s-1"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core-test.subject",
+            "id": "s-1"
+          },
+          "revision": 0
+        }
+      ],
+      "authority_epoch": 1,
+      "payload": {
+        "value": "a"
       },
       "expect": {
         "ok": {
-          "items": [
-            {
-              "event": {
-                "sequence": 1,
-                "type": "core.grant.issued"
-              }
-            },
-            {
-              "event": {
-                "sequence": 2,
-                "type": "core.grant.issued"
-              }
-            },
-            {
-              "event": {
-                "sequence": 3,
-                "type": "core.grant.revoked",
-                "subject": {
-                  "kind": "core.grant",
-                  "id": "g-1"
-                },
-                "command_id": "r-1"
-              }
-            },
-            {
-              "event": {
-                "sequence": 4,
-                "type": "core.grant.revoked",
-                "subject": {
-                  "kind": "core.grant",
-                  "id": "g-2"
-                },
-                "command_id": "r-1"
-              }
-            }
-          ]
+          "replay": false
         }
+      },
+      "set": {
+        "grant": "g-1"
       }
     },
     {

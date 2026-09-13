@@ -28,16 +28,49 @@
         },
         "items": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "$ref": "../../core/1/common.schema.json#/$defs/stream_item"
           }
         },
         "next_cursor": {
           "$ref": "../../core/1/common.schema.json#/$defs/cursor"
+        },
+        "ended": {
+          "type": "object",
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "enum": [
+                "authorization_lost",
+                "item_too_large"
+              ]
+            }
+          },
+          "unevaluatedProperties": false
         }
       },
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "if": {
+        "required": [
+          "ended"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "items": {
+            "minItems": 1
+          }
+        }
+      }
     }
   },
   "unevaluatedProperties": false

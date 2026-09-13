@@ -92,6 +92,8 @@ pub struct Session {
     started: Instant,
     label: String,
     transcript: Vec<Value>,
+    /// Largest frame this caller accepts: 1 MiB until a negotiation advertises another value.
+    pub receive_limit: usize,
 }
 
 pub struct Launch<'a> {
@@ -241,6 +243,7 @@ impl Session {
             started,
             label: "main".into(),
             transcript: Vec::new(),
+            receive_limit: 1_048_576,
         };
         session.note("start", &json!({"argv": argv}));
         Ok(session)
@@ -260,6 +263,7 @@ impl Session {
             started,
             label: label.to_string(),
             transcript: Vec::new(),
+            receive_limit: 1_048_576,
         };
         session.note("connect", &json!({"socket": path.display().to_string()}));
         Ok(session)

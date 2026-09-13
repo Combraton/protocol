@@ -74,6 +74,10 @@
         "new_epoch_on_start": {
           "type": "boolean"
         },
+        "unvouched_last": {
+          "type": "integer",
+          "minimum": 0
+        },
         "retain_last": {
           "type": "integer",
           "minimum": 0

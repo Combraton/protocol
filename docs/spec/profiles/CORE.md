@@ -125,7 +125,8 @@ That is how a `requires` entry is told apart.
 - An extension is **optional** unless its key appears in `requires`. A receiver MAY ignore an optional extension it does not understand. When the operation defines stored content, the receiver MUST either store the extension unchanged with that content or declare in its manifest that it drops unknown extensions.
 - An extension key or feature name listed in `requires` MUST be understood and negotiated. Otherwise the message is refused with `unsupported_required_feature`, before any state change.
 - `requires` entries MUST be unique. An entry containing a slash MUST also be present in `extensions`. A violation of either rule is `invalid_envelope`. An empty `requires` means nothing beyond the negotiated profile versions is required.
-- A caller MUST NOT send fields that belong to a feature the session did not select, or call operations that belong to one; such operations are refused with `unsupported_required_feature` naming the feature.
+- A caller MUST NOT send fields that belong to a feature the session did not select. Such a field in another operation's envelope, such as `grant` without `core.grants`, is an unknown field: `invalid_envelope` at step 2.
+- A caller MUST NOT call an operation that belongs to an unselected feature. Its own params are validated against its schema at step 2 as usual, and the operation is then refused at step 3 with `unsupported_required_feature` naming the feature.
 
 This mirrors the "critical" marking used by JWS `crit` and X.509 critical extensions. The decision record [002](../../decisions/002-schema-language-and-extensibility.md) gives the evidence and alternatives.
 
@@ -183,7 +184,7 @@ Each precondition entry names a subject and the revision the caller expects:
 - `revision: 0` means the subject MUST NOT exist.
 - `revision: n > 0` means the subject MUST exist at exactly revision `n`.
 
-All preconditions of a command are checked together. Two entries naming the same subject are `invalid_envelope`. A subject kind the provider does not own is a subject that does not exist. If any fails, the command is refused with `precondition_failed` and **no** part of it takes effect. The error lists every failed entry. Where the principal may read the subject, the entry includes its current revision (CORE-9).
+All preconditions of a command are checked together. Two entries naming the same subject are `invalid_envelope`. A subject kind the provider does not own is a subject that does not exist. If any fails, the command is refused with `precondition_failed` and **no** part of it takes effect. The error lists every failed entry. Where the principal may read the subject, the entry includes its current revision (CORE-9); otherwise `current` is omitted. An authority principal acting without a grant may read every subject. Under a grant, the principal may read the subjects that grant would show it in events (§16.6).
 
 Preconditions are checked **after** the idempotency lookup. A retransmitted create whose original succeeded therefore returns the original acknowledgment, even though the subject now exists and a fresh evaluation would fail.
 
@@ -389,9 +390,13 @@ A grant is a provider-owned subject of kind `core.grant`. Its record contains:
   - the child has the same `authority_binding` as the parent, if the parent has one.
 
   A violation is `permission_denied` with reason `delegation_exceeded`.
-- An `audience` other than the provider's own ID, or an `expires_at` not after the provider's current time, is `invalid_envelope`.
+- `issue` and `revoke` carry exactly one precondition, on the grant subject itself: revision `0` for `issue` and at least `1` for `revoke`. Anything else is `invalid_envelope` at step 2.
+- An `authority_binding` whose `scope` is not an authority scope the provider tracks is `invalid_envelope`, checked with `audience` and `expires_at` at step 6. A binding to a later epoch of a known scope is accepted; the grant authorizes once that epoch is current.
+- Unknown right names and resource kinds are accepted. They never match an operation or subject.
+- An `audience` other than the provider's own ID, or an `expires_at` not after the provider's current time, is `invalid_envelope`. These checks run at step 6, after deduplication, so an already-bound issue command still replays after its expiry has passed.
+- A grant is expired from the instant `expires_at` onward: it authorizes only while the provider clock is strictly before `expires_at`.
 
-**Revoking:** a grant may be revoked by its issuer or by an authority principal. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
+**Revoking:** a grant may be revoked by its issuer or by an authority principal. Anyone else gets `permission_denied` with reason `not_authority`, whether or not the grant exists. Revoking a grant that is already revoked is `permission_denied` with reason `revoked`, decided after that check. The outcome's `revoked` lists the named grant first, then its descendants that were still active, in a provider-chosen order; each gets a new revision and one `core.grant.revoked` event. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
 
 ### 15.4 Grants and authority epochs
 
@@ -401,7 +406,7 @@ A grant with `authority_binding` stops authorizing once that scope's epoch chang
 
 For each command or query that a profile protects:
 
-1. **A `grant` field is present.** It must name a grant whose holder is the session principal, that is active, unexpired, bound to a current epoch if bound at all, and whose rights and resources cover every right the operation needs.
+1. **A `grant` field is present.** This applies even to an authority principal, which is then restricted to that grant. It must name a grant whose holder is the session principal, that is active, unexpired, bound to a current epoch if bound at all, and whose rights and resources cover every right the operation needs.
 2. **No `grant` field.** The principal must be an authority principal.
 3. **Outcome.** Otherwise the operation is refused with `permission_denied` and `details.reason`, one of:
    - `grant_required` — no grant named, and the principal is not an authority;
@@ -413,6 +418,12 @@ For each command or query that a profile protects:
    - `right_missing` — some needed right is not granted;
    - `out_of_scope` — a subject is not covered;
    - `delegation_exceeded`.
+
+   When several reasons apply, report the first in this order: `grant_not_found` (checked before any other property of the grant, so another principal's revoked grant is still `grant_not_found`); `revoked`; `expired`; `authority_epoch_stale`; `right_missing` for any needed right; `out_of_scope` for any needed subject.
+
+**Which operations are protected.** In this document: the `core-test` operations (§13), `core.events.read` and `core.events.subscribe` (§16.6). The `core.grant.*` operations follow their own rules (§15.3). `core.describe`, `core.negotiate`, `core.authenticate`, `core.capabilities` and `core.events.unsubscribe` are not protected. A `grant` field on an unprotected or `core.grant.*` operation is validated but not evaluated. `core.events.unsubscribe` removes only the session's own subscriptions; an unknown subscription is `not_found`.
+
+**Without `core.grants`.** Authorization still applies when the session did not negotiate `core.grants`. Such a session cannot name a grant, so a principal that is not an authority is refused with `grant_required`.
 
 **Existence is never revealed by authorization.** Step 6 runs before any check that depends on whether a subject exists. An unauthorized principal gets the same `permission_denied` for an existing and a nonexistent subject (CORE-12). `precondition_failed` details include current revisions only for subjects the principal may read, and every precondition subject needs read authority anyway.
 
@@ -466,12 +477,13 @@ A provider store has one semantic stream with a stable `stream` ID.
 ### 16.3 Recording rules
 
 - An accepted command appends its events in the same owner transaction as its state change (§10 step 8). If that transaction fails, neither exists.
+- Events are recorded whether or not any session negotiated `core.events`. The stream belongs to the store, not to a session.
 - A replay, a rejected command and a query append nothing. A duplicate transmission never produces a duplicate event.
 - A command that changes several subjects appends events in a stable order: the primary subject first.
 
 ### 16.4 `core.events.read` (query)
 
-**Payload:** exactly one of `cursor` (from an earlier result) or `from` (`"start"` or `"now"`), plus optional `kinds` (subject kinds to include) and `limit` (1–1000 items).
+**Payload:** exactly one of `cursor` (from an earlier result) or `from` (`"start"` or `"now"`), required `limit` (1–1000 items), and optional `kinds` (subject kinds to include).
 
 **Result:** `{ "stream": { "id", "epoch" }, "items": [...], "next_cursor", "filtered" }`.
 
@@ -481,27 +493,47 @@ A provider store has one semantic stream with a stable `stream` ID.
 |---|---|
 | `{ "event": record }` | The next event after the cursor that the principal may see |
 | `{ "epoch_change": { "from_epoch", "to_epoch", "vouched_through" } }` | The stream moved to a new epoch after `vouched_through` in `from_epoch`. Nothing after that position in the old epoch will ever be delivered. Reading continues in `to_epoch` from sequence 1. |
-| `{ "gap": { "kind": "retention", "from", "to", "snapshot" } }` | Events between positions `from` and `to` were discarded under retention. `snapshot` is `{ "as_of": position, "subjects": [ { "subject", "revision", "state" } ] }` for the visible subjects at `as_of`, which equals `to`. Reading continues after `to`. |
+| `{ "gap": { "kind": "retention", "from", "to", "snapshot" } }` | Some events from `from` onward were discarded under retention, so positions `from` through `to` are not delivered as individual events. `snapshot` is `{ "as_of": position, "subjects": [ { "subject", "revision", "state" } ] }` for the visible subjects at `as_of`, which equals `to`. The provider chooses `to` anywhere from the last discarded position up to the stream head. A provider that keeps only current state uses the head; one that keeps historical snapshots may stop at the discard boundary and deliver later retained events individually. Reading continues after `to`. |
 
 Rules:
 
-- **Cursors.** `next_cursor` is the position after the last item. Resuming from it never repeats and never skips an item. A cursor that is malformed, belongs to another stream, or points beyond the stream's current end is `invalid_cursor`. Cursors are opaque; callers MUST NOT construct or interpret them.
+- **Cursors.** `next_cursor` is the position after everything the result covered: after the last item or, when the read reached the end, after any trailing events that were hidden. Resuming from it never repeats and never skips an item. A cursor that is malformed, belongs to another stream, or points beyond the stream's current end is `invalid_cursor`. Cursors are opaque; callers MUST NOT construct or interpret them.
 - **No silent gaps.** A provider MUST NOT present an incomplete history as complete. If events after the cursor were discarded, the first item is a `gap` with a snapshot, never the next surviving event.
 - **`from: "now"`** returns no items and a cursor at the current end.
-- **Filtering.** When authorization or `kinds` hides some events, `filtered` is `true`. The skipped sequence numbers are then not gaps.
+- **Filtering.** `filtered` is `true` exactly when at least one event or snapshot subject in the range covered by this result was hidden by authorization or `kinds`. The skipped sequence numbers are then not gaps.
+- **Snapshot state.**
+  - `core-test.subject`: `{ "value" }`;
+  - `core-test.authority`: `{ "epoch" }`;
+  - `core.grant`: `{ "grant": record }`;
+  - `core.capabilities`: `{ "predicates" }`.
+
+  Other profiles define their own.
+
+  `subjects` lists every visible subject changed by an event at or before `as_of`. A provider may also list visible subjects that no event changed, such as the initial capability snapshot.
+- **Cursors in earlier epochs.** A cursor into an earlier epoch is valid even when it points past that epoch's `vouched_through`. That happens when the provider lost events it had already delivered, which is what epochs exist to report. The first item is then the `epoch_change`, and a `vouched_through` below the cursor's position tells the consumer it holds events the provider no longer vouches for. A well-formed cursor from another stream, or one past the head of the current epoch, is `invalid_cursor`. `details.reason` is informative; its values are not specified.
+- **Size.** A read returns fewer than `limit` items when the whole response would exceed the caller's `receive_limits.max_frame_bytes` (§4.2). If not even one item fits, the read is `internal_error`.
 
 ### 16.5 Subscriptions
 
 `core.events.subscribe` (query) takes the payload of `core.events.read` without `limit`. It returns `{ "subscription", "stream" }`.
 
-- **Delivery.** The provider then sends JSON-RPC notifications `core.events.notify` with params `{ "subscription", "items", "next_cursor" }` on the same connection. First comes the backlog from the requested position, then new items as commands commit.
+- **Delivery.** The provider then sends JSON-RPC notifications `core.events.notify` with params `{ "subscription", "items", "next_cursor" }` on the same connection. First comes the backlog from the requested position, then new items as commands commit. Every notification frame fits the caller's receive limit; the provider splits items across notifications as needed.
 - **Ordering.** A notification carrying events caused by a command on the same connection is sent after that command's response.
-- **Lifetime.** A subscription ends with its session or with `core.events.unsubscribe` (payload `{ "subscription" }`).
+- **Lifetime.** A subscription ends with its session or with `core.events.unsubscribe` (payload `{ "subscription" }`). If the grant it was created under stops authorizing (revoked, expired or epoch-stale), the provider sends one final `core.events.notify` with `"items": []` and `"ended": { "reason": "authorization_lost" }`, then delivers nothing more on it. If a single item cannot fit the caller's receive limit even alone, the subscription ends the same way with reason `item_too_large`; the item is never skipped.
+- **Authorization.** Subscribing needs the same authorization as reading (§16.6), checked when subscribing and again before each delivery.
 - **Consumers.** Semantic events are never dropped silently. Consumers deduplicate by position and resume from the last cursor they durably processed. A reconnect may therefore replay items.
 
 ### 16.6 Authorization
 
-Reading or subscribing needs an authority principal, or a grant with right `core.events.read`. Under a grant, only events and snapshot subjects covered by its resources are included, and `filtered` is `true`.
+Reading or subscribing needs an authority principal, or a grant with right `core.events.read`. Authority principals see every event. Under a grant, an event or snapshot subject is included only if the session principal could read that subject directly:
+
+| Subject kind | Visible under a grant when |
+|---|---|
+| A profile subject such as `core-test.subject` or `core-test.authority` | The same grant also has the profile's read right (`core-test.read`) with resources covering the subject |
+| `core.grant` | The session principal is that grant's holder or issuer, matching `core.grant.get` (§15.3) |
+| `core.capabilities` | The grant's resources cover kind `core.capabilities` |
+
+`core.events.read` alone therefore reveals nothing the principal could not already read.
 
 **Limitation:** sequence numbers reveal how many events filtering hid, though not their content or subjects. Profiles that need to hide event counts need a separate stream design.
 
@@ -519,7 +551,7 @@ Payload `{}`. Result:
 
 | Field | Meaning |
 |---|---|
-| `revision` | Integer that increases whenever any predicate's status, enforcement or evidence changes. It is stable across restarts when nothing changed. |
+| `revision` | Integer that increases whenever any predicate's name set, status, enforcement or `evidence.source` changes. A change to `observed_at` alone does not raise it. It is stable across restarts when nothing changed. |
 | `predicates` | Array of `{ "name", "status", "enforcement"?, "evidence" }` |
 
 Predicate fields:

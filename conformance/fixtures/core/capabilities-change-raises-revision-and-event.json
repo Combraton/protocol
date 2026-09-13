@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "core.capabilities.change-raises-revision-and-event",
-  "version": 1,
+  "version": 2,
   "title": "A capability change raises the revision and appends a provider-origin event",
   "requirements": [
     "CORE-16",
@@ -23,7 +23,9 @@
   ],
   "polarity": "negative",
   "kills": [
-    "capability-revision-static"
+    "capability-revision-static",
+    "capability-event-wrong-revision",
+    "capability-event-wrong-subject"
   ],
   "steps": [
     {
@@ -135,6 +137,9 @@
             "$ne_var": "rev"
           }
         }
+      },
+      "capture": {
+        "rev2": "/result/revision"
       }
     },
     {
@@ -155,7 +160,11 @@
                 "type": "core.capabilities.changed",
                 "origin": "provider",
                 "subject": {
-                  "kind": "core.capabilities"
+                  "kind": "core.capabilities",
+                  "id": "conformance-provider"
+                },
+                "revision": {
+                  "$var": "rev2"
                 },
                 "command_id": {
                   "$absent": true

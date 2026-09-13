@@ -6,7 +6,7 @@ This directory holds the normative, language-neutral conformance material for Pr
 
 | Path | Contents |
 |---|---|
-| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 108 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2). |
+| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 144 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2), `socket/` for the Unix-socket binding. |
 | `vectors/` | Encoding and digest test vectors |
 | `schemas/` | Schema for fixture files |
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |
@@ -33,7 +33,7 @@ A fixture is a JSON file conforming to `schemas/fixture.schema.json`. The common
 | `request`, `notify`, `raw` | Send an arbitrary request, a notification, or raw, padded or unterminated bytes |
 | `expect_frame`, `expect_close`, `close_input` | Frame-level expectations |
 
-Expectations are `{"ok": pattern}` or `{"error": code, "details": pattern}`. Patterns match subsets and support `$var`, `$ne_var`, `$type`, `$contains`, `$len`, `$absent`, `$any` and `$exact`. `capture` stores JSON-pointer values from a response for later steps.
+Expectations are `{"ok": pattern}`, `{"error": code, "details": pattern}`, or `{"any_of": [expectation, …]}` for behaviors the spec leaves to the provider. Object patterns match subsets of members. Array patterns match exactly, in length and order; use `$contains` for membership. Patterns support `$var`, `$ne_var`, `$type`, `$contains`, `$len`, `$absent`, `$any` and `$exact`. `capture` stores JSON-pointer values from a response for later steps. Values the runner sends may use `{"$var": name}`, `{"$unique": prefix}` and `{"$repeat": [text, count]}`, which expands to `text` repeated `count` times. Every frame a participant sends must fit the caller's receive limit: 1 MiB, or the `receive_limits.max_frame_bytes` of the session's successful negotiation.
 
 Negative fixtures exercise invalid, hostile or out-of-order input. Each must list in `kills` at least one reference mutant it fails, and `check-mutants` enforces this. Changing what a fixture means requires incrementing its `version`.
 
@@ -53,9 +53,12 @@ A participant under test is launched with a data directory and a JSON launch con
 | `dedupe.advance_on_start` | At this start, `current += N` |
 | `dedupe.retain_generations` | At this start, `oldest_retained = max(oldest_retained, current − R + 1)`, discarding records filed under older generations |
 | `events.new_epoch_on_start` | At this start, begin a new stream epoch whose previous epoch is vouched through its last sequence (CORE §16.1) |
+| `events.unvouched_last` | With `new_epoch_on_start`, vouch for the previous epoch only through its last sequence minus this many events (default 0). Subject state is unchanged; only the vouched position moves. |
 | `events.retain_last` | At this start, discard all but the newest N events (CORE §16.4) |
 | `capabilities` | Map of capability name to status, such as `{"core-test.writes": "unsupported"}` (CORE §17.4) |
 | `clock.fixed` | Fixed provider clock instant `YYYY-MM-DDTHH:MM:SSZ` (CORE §15.2) |
+
+At each start the keys apply in this order: `dedupe`, `events.new_epoch_on_start`, `events.retain_last` (counted across all epochs), then `capabilities`, so a capability change event recorded at start is never discarded by the same start.
 
 Keys a participant does not support make it unable to run fixtures that use them. It should refuse to start (nonzero exit) rather than silently ignore them.
 

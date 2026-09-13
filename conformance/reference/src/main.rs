@@ -152,6 +152,7 @@ fn run(args: Args) -> Result<(), String> {
             config["events"]["new_epoch_on_start"]
                 .as_bool()
                 .unwrap_or(false),
+            config["events"]["unvouched_last"].as_i64().unwrap_or(0),
             config["events"]["retain_last"].as_i64(),
             mutant_set.on("volatile-events"),
         )
@@ -187,6 +188,10 @@ fn run(args: Args) -> Result<(), String> {
             &capabilities,
             &grants::now(fixed_clock.as_deref()),
             mutant_set.on("capability-revision-static"),
+            (
+                mutant_set.on("capability-event-wrong-revision"),
+                mutant_set.on("capability-event-wrong-subject"),
+            ),
         )
         .map_err(|e| e.to_string())?;
     let credentials: Vec<provider::Credential> = config["credentials"]
@@ -358,6 +363,7 @@ fn serve<R: std::io::Read, W: Write>(
     let exit_nonzero = mutant_set.on("exit-nonzero-at-end-of-input");
     let frame_limit_fixed = mutant_set.on("frame-limit-never-raised");
     let cross_session = !mutant_set.on("no-cross-session-delivery");
+    let notify_first = mutant_set.on("notify-before-response");
     let mut reader = FrameReader::new(input);
     reader.unbounded = mutant_set.on("unbounded-frames");
     reader.parse_unterminated = mutant_set.on("parse-unterminated");
@@ -489,6 +495,13 @@ fn serve<R: std::io::Read, W: Write>(
         }
         let method = object["method"].as_str().unwrap_or_default().to_string();
         let response = provider.handle(id, &method, object["params"].clone());
+        if notify_first {
+            for notification in provider.drain_notifications() {
+                if !send(&notification) {
+                    return Ok(());
+                }
+            }
+        }
         if !send(&response) {
             return Ok(());
         }

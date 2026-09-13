@@ -1,10 +1,11 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "core.events.retention-gap-returns-snapshot",
-  "version": 2,
-  "title": "Reading across discarded events returns a typed gap with a snapshot",
+  "id": "core.events.retention-snapshot-is-filtered",
+  "version": 1,
+  "title": "A retention gap snapshot under a grant shows only subjects the principal may read",
   "requirements": [
-    "OBS-5"
+    "OBS-5",
+    "CORE-12"
   ],
   "spec_refs": [
     "docs/spec/profiles/CORE.md#16-events-and-subscriptions-proposed-m2-draft"
@@ -17,11 +18,12 @@
     }
   ],
   "features": [
-    "core.events"
+    "core.events",
+    "core.grants"
   ],
   "polarity": "negative",
   "kills": [
-    "silent-retention-gap"
+    "snapshot-unfiltered"
   ],
   "steps": [
     {
@@ -51,7 +53,8 @@
             ],
             "required": true,
             "required_features": [
-              "core.events"
+              "core.events",
+              "core.grants"
             ],
             "optional_features": []
           },
@@ -135,6 +138,42 @@
     },
     {
       "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "issue-g-1",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-1"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-1"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "agent-1",
+        "audience": "conformance-provider",
+        "rights": [
+          "core.events.read",
+          "core-test.read"
+        ],
+        "resources": [
+          {
+            "kind": "core-test.subject",
+            "id": "s-1"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        }
+      }
+    },
+    {
+      "step": "command",
       "operation": "core-test.subject.put",
       "command_id": "cmd-4",
       "subject": {
@@ -161,7 +200,7 @@
     {
       "step": "start",
       "config": {
-        "principal": "owner",
+        "principal": "agent-1",
         "authority_principals": [
           "owner"
         ],
@@ -188,7 +227,8 @@
             ],
             "required": true,
             "required_features": [
-              "core.events"
+              "core.events",
+              "core.grants"
             ],
             "optional_features": []
           },
@@ -215,25 +255,14 @@
         "any_of": [
           {
             "ok": {
+              "filtered": true,
               "items": [
                 {
                   "gap": {
                     "kind": "retention",
-                    "from": {
-                      "epoch": 1,
-                      "sequence": 1
-                    },
-                    "to": {
-                      "epoch": 1,
-                      "sequence": 4
-                    },
                     "snapshot": {
-                      "as_of": {
-                        "epoch": 1,
-                        "sequence": 4
-                      },
-                      "subjects": {
-                        "$contains": {
+                      "subjects": [
+                        {
                           "subject": {
                             "kind": "core-test.subject",
                             "id": "s-1"
@@ -242,8 +271,15 @@
                           "state": {
                             "value": "b"
                           }
+                        },
+                        {
+                          "subject": {
+                            "kind": "core.grant",
+                            "id": "g-1"
+                          },
+                          "revision": 1
                         }
-                      }
+                      ]
                     }
                   }
                 }
@@ -252,25 +288,21 @@
           },
           {
             "ok": {
+              "filtered": true,
               "items": [
                 {
                   "gap": {
                     "kind": "retention",
-                    "from": {
-                      "epoch": 1,
-                      "sequence": 1
-                    },
-                    "to": {
-                      "epoch": 1,
-                      "sequence": 3
-                    },
                     "snapshot": {
-                      "as_of": {
-                        "epoch": 1,
-                        "sequence": 3
-                      },
-                      "subjects": {
-                        "$contains": {
+                      "subjects": [
+                        {
+                          "subject": {
+                            "kind": "core.grant",
+                            "id": "g-1"
+                          },
+                          "revision": 1
+                        },
+                        {
                           "subject": {
                             "kind": "core-test.subject",
                             "id": "s-1"
@@ -280,15 +312,7 @@
                             "value": "b"
                           }
                         }
-                      }
-                    }
-                  }
-                },
-                {
-                  "event": {
-                    "sequence": 4,
-                    "payload": {
-                      "value": "d"
+                      ]
                     }
                   }
                 }
@@ -297,54 +321,8 @@
           }
         ]
       },
-      "capture": {
-        "cursor": "/result/next_cursor"
-      }
-    },
-    {
-      "step": "command",
-      "operation": "core-test.subject.put",
-      "command_id": "cmd-5",
-      "subject": {
-        "kind": "core-test.subject",
-        "id": "s-1"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "core-test.subject",
-            "id": "s-1"
-          },
-          "revision": 2
-        }
-      ],
-      "authority_epoch": 0,
-      "payload": {
-        "value": "e"
-      }
-    },
-    {
-      "step": "query",
-      "operation": "core.events.read",
-      "payload": {
-        "limit": 100,
-        "cursor": {
-          "$var": "cursor"
-        }
-      },
-      "expect": {
-        "ok": {
-          "items": [
-            {
-              "event": {
-                "sequence": 5,
-                "payload": {
-                  "value": "e"
-                }
-              }
-            }
-          ]
-        }
+      "set": {
+        "grant": "g-1"
       }
     },
     {

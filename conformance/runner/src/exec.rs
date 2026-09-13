@@ -70,6 +70,8 @@ struct State<'a> {
     launches: u32,
     config_principal: String,
     notifications: BTreeMap<String, VecDeque<Value>>,
+    awaiting_command: Option<Value>,
+    data_generation: u32,
     transcript: Vec<Value>,
     started: Instant,
 }
@@ -165,6 +167,8 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         launches: 0,
         config_principal: "conformance-caller".into(),
         notifications: BTreeMap::new(),
+        awaiting_command: None,
+        data_generation: 0,
         transcript: vec![],
         started: Instant::now(),
     };
@@ -459,7 +463,16 @@ impl State<'_> {
         let config_file = self.ctx.work_dir.join("config.json");
         std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())
             .map_err(|e| Harness(e.to_string()))?;
-        let data_dir = self.ctx.work_dir.join("data");
+        if step["fresh_data_directory"].as_bool().unwrap_or(false) {
+            self.data_generation += 1;
+        }
+        let data_dir = if self.data_generation == 0 {
+            self.ctx.work_dir.join("data")
+        } else {
+            self.ctx
+                .work_dir
+                .join(format!("data-{}", self.data_generation))
+        };
         let stderr_file = self.ctx.work_dir.join("participant-stderr.log");
         self.notifications.clear();
         self.vars.remove("negotiation");
@@ -541,7 +554,16 @@ impl State<'_> {
             .map_err(|e| Harness(e.to_string()))?;
         let socket = self
             .prepare_socket_directory(step["unsafe_socket_directory"].as_bool().unwrap_or(false))?;
-        let data_dir = self.ctx.work_dir.join("data");
+        if step["fresh_data_directory"].as_bool().unwrap_or(false) {
+            self.data_generation += 1;
+        }
+        let data_dir = if self.data_generation == 0 {
+            self.ctx.work_dir.join("data")
+        } else {
+            self.ctx
+                .work_dir
+                .join(format!("data-{}", self.data_generation))
+        };
         let launch = Launch {
             descriptor: self.ctx.descriptor,
             repo: self.ctx.repo,
@@ -649,6 +671,9 @@ impl State<'_> {
         let params = json!({"operation": "core.negotiate", "message_id": self.unique("msg"), "payload": payload});
         let frame = self.call("core.negotiate", params, step)?;
         if let Some(result) = frame.get("result") {
+            if let Some(limit) = payload["receive_limits"]["max_frame_bytes"].as_u64() {
+                self.session()?.receive_limit = limit as usize;
+            }
             self.vars.insert(
                 "generation".into(),
                 result["dedupe_window"]["current"].clone(),
@@ -768,6 +793,21 @@ impl State<'_> {
                 self.receive_raw_frame(deadline.saturating_duration_since(Instant::now()))?;
             if frame.get("id").is_none() && frame.get("method").is_some() {
                 self.ctx.schemas.check_notification(&frame).map_err(Fail)?;
+                if let Some(command_id) = &self.awaiting_command {
+                    let early = frame["params"]["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|item| {
+                            item["event"]["origin"] == "command"
+                                && &item["event"]["command_id"] == command_id
+                        });
+                    if early {
+                        return Err(Fail(format!(
+                            "notification for command {command_id} arrived before its response (CORE section 16.5)"
+                        )));
+                    }
+                }
                 self.notifications
                     .entry(self.active.clone())
                     .or_default()
@@ -796,7 +836,15 @@ impl State<'_> {
     }
 
     fn receive_raw_frame(&mut self, timeout: Duration) -> Result<Value, StepError> {
-        let frame = match self.session()?.receive(timeout) {
+        let session = self.session()?;
+        let limit = session.receive_limit;
+        let frame = match session.receive(timeout) {
+            Received::Frame(frame) if frame.len() > limit => {
+                return Err(Fail(format!(
+                    "participant sent a {} byte frame; the caller's receive limit is {limit} (STREAM section 1)",
+                    frame.len()
+                )));
+            }
             Received::Frame(frame) => frame,
             Received::Closed => return Err(Fail("participant closed the connection".into())),
             Received::Timeout => {
@@ -821,10 +869,13 @@ impl State<'_> {
                 json!(self.next_id)
             }
         };
+        self.awaiting_command = params.get("command_id").cloned();
         let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let bytes = frame_bytes(&request, true);
         self.session()?.send(&bytes);
-        let frame = self.receive_frame(duration(step, RESPONSE_TIMEOUT))?;
+        let received = self.receive_frame(duration(step, RESPONSE_TIMEOUT));
+        self.awaiting_command = None;
+        let frame = received?;
         if frame.get("id") != Some(&id) {
             return Err(Fail(format!(
                 "response id {} does not match request id {id}",
@@ -841,6 +892,20 @@ impl State<'_> {
     }
 
     fn check(&self, frame: &Value, expect: &Value, method: Option<&str>) -> Result<(), StepError> {
+        if let Some(alternatives) = expect.get("any_of").and_then(Value::as_array) {
+            let mut reasons = Vec::new();
+            for alternative in alternatives {
+                match self.check(frame, alternative, method) {
+                    Ok(()) => return Ok(()),
+                    Err(Fail(reason)) => reasons.push(reason),
+                    Err(other) => return Err(other),
+                }
+            }
+            return Err(Fail(format!(
+                "no alternative matched: {}",
+                reasons.join(" | ")
+            )));
+        }
         self.ctx
             .schemas
             .check_response(frame, method)

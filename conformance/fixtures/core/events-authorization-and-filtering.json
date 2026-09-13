@@ -1,8 +1,8 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "core.events.authorization-and-filtering",
-  "version": 1,
-  "title": "Event reads need authority or core.events.read and are filtered to granted subjects",
+  "version": 2,
+  "title": "Event reads need authority or core.events.read and show only subjects the principal may read",
   "requirements": [
     "CORE-12",
     "OBS-2"
@@ -23,7 +23,8 @@
   ],
   "polarity": "negative",
   "kills": [
-    "events-ignore-authorization"
+    "events-ignore-authorization",
+    "events-ignore-subject-read"
   ],
   "steps": [
     {
@@ -135,6 +136,42 @@
         "holder": "agent-1",
         "audience": "conformance-provider",
         "rights": [
+          "core.events.read",
+          "core-test.read"
+        ],
+        "resources": [
+          {
+            "kind": "core-test.subject",
+            "id": "s-1"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "issue-bare",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-bare"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-bare"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "agent-1",
+        "audience": "conformance-provider",
+        "rights": [
           "core.events.read"
         ],
         "resources": [
@@ -229,12 +266,66 @@
                   "id": "s-1"
                 }
               }
+            },
+            {
+              "event": {
+                "sequence": 3,
+                "subject": {
+                  "kind": "core.grant",
+                  "id": "g-ev"
+                }
+              }
+            },
+            {
+              "event": {
+                "sequence": 4,
+                "subject": {
+                  "kind": "core.grant",
+                  "id": "g-bare"
+                }
+              }
             }
           ]
         }
       },
       "set": {
         "grant": "g-ev"
+      }
+    },
+    {
+      "step": "query",
+      "operation": "core.events.read",
+      "payload": {
+        "limit": 100,
+        "from": "start"
+      },
+      "expect": {
+        "ok": {
+          "filtered": true,
+          "items": [
+            {
+              "event": {
+                "sequence": 3,
+                "subject": {
+                  "kind": "core.grant",
+                  "id": "g-ev"
+                }
+              }
+            },
+            {
+              "event": {
+                "sequence": 4,
+                "subject": {
+                  "kind": "core.grant",
+                  "id": "g-bare"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "set": {
+        "grant": "g-bare"
       }
     },
     {

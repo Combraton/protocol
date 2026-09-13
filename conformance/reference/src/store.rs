@@ -346,6 +346,7 @@ impl Store {
     pub fn apply_event_config(
         &mut self,
         new_epoch: bool,
+        unvouched_last: i64,
         retain_last: Option<i64>,
         volatile: bool,
     ) -> rusqlite::Result<()> {
@@ -363,6 +364,7 @@ impl Store {
                 [epoch],
                 |r| r.get(0),
             )?;
+            let vouched = (vouched - unvouched_last).max(0);
             tx.execute(
                 "INSERT INTO epoch_changes VALUES (?1, ?2, ?3)",
                 params![epoch + 1, epoch, vouched],
@@ -421,6 +423,7 @@ impl Store {
         predicates: &serde_json::Value,
         recorded_at: &str,
         static_revision: bool,
+        event_flaws: (bool, bool),
     ) -> rusqlite::Result<i64> {
         let digest = crate::json::sha256_digest(predicates.to_string().as_bytes());
         let tx = self.connection.transaction()?;
@@ -463,8 +466,8 @@ impl Store {
                     "stream": stream,
                     "origin": "provider",
                     "type": "core.capabilities.changed",
-                    "subject": {"kind": "core.capabilities", "id": provider_id},
-                    "revision": revision,
+                    "subject": {"kind": "core.capabilities", "id": if event_flaws.1 { "capabilities" } else { provider_id }},
+                    "revision": revision + i64::from(event_flaws.0),
                     "caused_by": [],
                     "recorded_at": recorded_at,
                     "payload": {"predicates": predicates},

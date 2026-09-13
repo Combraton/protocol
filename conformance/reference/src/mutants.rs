@@ -5,6 +5,156 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "events-ignore-subject-read",
+        "shows events and snapshot subjects covered by a core.events.read grant without the subject's own read authority",
+    ),
+    (
+        "filtered-always-under-grant",
+        "reports filtered true under any grant or kind filter even when nothing was hidden",
+    ),
+    (
+        "issue-validation-before-dedupe",
+        "validates grant audience and expiry before deduplication, so bound issues stop replaying",
+    ),
+    (
+        "subscription-survives-authorization-loss",
+        "keeps delivering to a subscription after its grant stops authorizing",
+    ),
+    (
+        "grant-state-before-holder",
+        "reports another principal's revoked grant as revoked instead of grant_not_found",
+    ),
+    (
+        "expiry-boundary-inclusive",
+        "keeps a grant usable at exactly expires_at",
+    ),
+    (
+        "issue-at-now-accepted",
+        "issues grants whose expires_at equals the provider clock",
+    ),
+    (
+        "stale-parent-delegates",
+        "lets revoked, expired or epoch-stale parents delegate",
+    ),
+    (
+        "anyone-may-delegate",
+        "lets any principal delegate from a parent grant",
+    ),
+    (
+        "delegation-ignores-allowed-flag",
+        "ignores a parent's delegation.allowed false",
+    ),
+    (
+        "child-may-outlive-parent",
+        "lets a delegated grant expire later than its parent or omit expiry",
+    ),
+    (
+        "child-drops-authority-binding",
+        "lets a delegated grant drop its parent's authority binding",
+    ),
+    ("anyone-may-revoke", "lets any principal revoke any grant"),
+    (
+        "authority-grant-unrestricted",
+        "ignores the grant an authority principal names",
+    ),
+    ("claim-needs-no-right", "does not require core-test.claim"),
+    (
+        "applied-count-unprotected",
+        "does not protect applied_count with core-test.read",
+    ),
+    (
+        "denial-order-scope-first",
+        "reports out_of_scope before right_missing",
+    ),
+    (
+        "no-grant-issued-events",
+        "records no core.grant.issued events",
+    ),
+    (
+        "revoke-event-target-only",
+        "records a revoked event only for the named grant",
+    ),
+    (
+        "accept-cursor-from-other-stream",
+        "accepts a well-formed cursor from another stream",
+    ),
+    (
+        "closed-epoch-cursor-refused",
+        "refuses a cursor into an earlier epoch past its vouched_through instead of reporting the epoch change",
+    ),
+    (
+        "current-revealed-without-read",
+        "includes current revisions in precondition_failed for subjects the principal may not read",
+    ),
+    (
+        "re-revoke-accepted",
+        "revokes an already revoked grant again",
+    ),
+    (
+        "grant-precondition-revision-unchecked",
+        "accepts issue preconditions other than revision 0 and revoke preconditions at revision 0",
+    ),
+    (
+        "unknown-binding-scope-accepted",
+        "issues grants bound to an authority scope the provider does not track",
+    ),
+    (
+        "grant-hidden-from-issuer",
+        "answers not_found when a grant's issuer reads it",
+    ),
+    (
+        "ignore-caller-receive-limit",
+        "sends responses and notifications larger than the caller's receive limit",
+    ),
+    (
+        "notify-before-response",
+        "sends notifications before the response of the command that caused them",
+    ),
+    (
+        "subscription-ignores-kinds",
+        "ignores a subscription's kinds filter",
+    ),
+    (
+        "subscription-ignores-grant",
+        "ignores the grant's visibility filter for subscriptions",
+    ),
+    (
+        "subscribe-unauthorized",
+        "lets any principal subscribe without authorization",
+    ),
+    (
+        "events-read-any-grant",
+        "lets any grant read events without core.events.read",
+    ),
+    (
+        "snapshot-unfiltered",
+        "includes snapshot subjects the principal may not read",
+    ),
+    (
+        "capability-after-preconditions",
+        "checks capabilities after epoch and preconditions",
+    ),
+    (
+        "capability-before-authorization",
+        "checks capabilities before authorization",
+    ),
+    (
+        "capability-event-wrong-revision",
+        "records capability change events with a revision different from the snapshot",
+    ),
+    (
+        "capability-event-wrong-subject",
+        "records capability change events with a subject id other than provider_id",
+    ),
+    (
+        "claim-depends-on-writes",
+        "makes authority claims depend on core-test.writes",
+    ),
+    (
+        "duplicate-precondition-subjects-accepted",
+        "accepts two preconditions naming the same subject",
+    ),
+    (
         "skip-authentication",
         "lets unauthenticated socket sessions negotiate and operate",
     ),

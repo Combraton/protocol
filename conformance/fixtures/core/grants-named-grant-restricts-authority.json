@@ -1,14 +1,13 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "core.events.subscription-delivers-backlog-then-live",
+  "id": "core.grants.named-grant-restricts-authority",
   "version": 1,
-  "title": "A subscription delivers the backlog, then new events, and stops after unsubscribe",
+  "title": "An authority principal that names a grant is restricted to it",
   "requirements": [
-    "OBS-2",
-    "OBS-3"
+    "CORE-11"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CORE.md#16-events-and-subscriptions-proposed-m2-draft"
+    "docs/spec/profiles/CORE.md#15-principals-and-grants-proposed-m2-draft"
   ],
   "role": "provider",
   "profiles": [
@@ -18,12 +17,11 @@
     }
   ],
   "features": [
-    "core.events"
+    "core.grants"
   ],
   "polarity": "negative",
   "kills": [
-    "subscription-misses-backlog",
-    "notify-before-response"
+    "authority-grant-unrestricted"
   ],
   "steps": [
     {
@@ -53,7 +51,7 @@
             ],
             "required": true,
             "required_features": [
-              "core.events"
+              "core.grants"
             ],
             "optional_features": []
           },
@@ -67,6 +65,41 @@
             "optional_features": []
           }
         ]
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "issue-g-self",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-self"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-self"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "owner",
+        "audience": "conformance-provider",
+        "rights": [
+          "core-test.read"
+        ],
+        "resources": [
+          {
+            "kind": "core-test.subject",
+            "id_prefix": "s-"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        }
       }
     },
     {
@@ -89,34 +122,15 @@
       "authority_epoch": 0,
       "payload": {
         "value": "a"
-      }
-    },
-    {
-      "step": "query",
-      "operation": "core.events.subscribe",
-      "payload": {
-        "from": "start"
       },
-      "capture": {
-        "sub": "/result/subscription"
-      }
-    },
-    {
-      "step": "expect_notification",
       "expect": {
-        "params": {
-          "subscription": {
-            "$var": "sub"
-          },
-          "items": [
-            {
-              "event": {
-                "sequence": 1,
-                "command_id": "cmd-1"
-              }
-            }
-          ]
+        "error": "permission_denied",
+        "details": {
+          "reason": "right_missing"
         }
+      },
+      "set": {
+        "grant": "g-self"
       }
     },
     {
@@ -133,65 +147,18 @@
             "kind": "core-test.subject",
             "id": "s-1"
           },
-          "revision": 1
+          "revision": 0
         }
       ],
       "authority_epoch": 0,
       "payload": {
-        "value": "b"
-      }
-    },
-    {
-      "step": "expect_notification",
-      "expect": {
-        "params": {
-          "items": [
-            {
-              "event": {
-                "sequence": 2,
-                "command_id": "cmd-2"
-              }
-            }
-          ]
-        }
-      }
-    },
-    {
-      "step": "query",
-      "operation": "core.events.unsubscribe",
-      "payload": {
-        "subscription": {
-          "$var": "sub"
-        }
+        "value": "a"
       },
       "expect": {
-        "ok": {}
-      }
-    },
-    {
-      "step": "command",
-      "operation": "core-test.subject.put",
-      "command_id": "cmd-3",
-      "subject": {
-        "kind": "core-test.subject",
-        "id": "s-1"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "core-test.subject",
-            "id": "s-1"
-          },
-          "revision": 2
+        "ok": {
+          "replay": false
         }
-      ],
-      "authority_epoch": 0,
-      "payload": {
-        "value": "c"
       }
-    },
-    {
-      "step": "expect_no_notification"
     },
     {
       "step": "stop"

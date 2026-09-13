@@ -219,7 +219,12 @@ pub struct Provider {
     next_subscription: u64,
     /// Mutant `failed-negotiation-blocks-retry` only.
     negotiation_refused: bool,
+    /// The caller's `receive_limits.max_frame_bytes` (STREAM section 1).
+    caller_frame_limit: usize,
 }
+
+/// Room left for the JSON-RPC wrapper and a request id of up to 128 escaped code points.
+const RESPONSE_OVERHEAD: usize = 1024;
 
 #[derive(Clone)]
 struct Subscription {
@@ -227,6 +232,7 @@ struct Subscription {
     position: (i64, i64),
     kinds: Option<Vec<String>>,
     grant: Option<Value>,
+    grant_id: Option<String>,
 }
 
 impl Provider {
@@ -253,6 +259,7 @@ impl Provider {
             subscriptions: Vec::new(),
             next_subscription: 0,
             negotiation_refused: false,
+            caller_frame_limit: 1_048_576,
         }
     }
 
@@ -273,10 +280,21 @@ impl Provider {
         let _guard = PROCESSING
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        match self.process(&id, method, params) {
+        let response = match self.process(&id, method, params) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-            Err(Reject { code, details }) => error_response(id, code, details),
+            Err(Reject { code, details }) => error_response(id.clone(), code, details),
+        };
+        if self.frame_fits(&response, 0) {
+            response
+        } else {
+            error_response(id, "internal_error", json!({}))
         }
+    }
+
+    /// Whether `value`, plus `overhead` bytes, fits the caller's receive limit (CORE section 4.2).
+    fn frame_fits(&self, value: &Value, overhead: usize) -> bool {
+        self.mutants.on("ignore-caller-receive-limit")
+            || crate::json::encode_frame(value).len() - 1 + overhead <= self.caller_frame_limit
     }
 
     fn process(&mut self, id: &Value, method: &str, params: Value) -> Result<Value, Reject> {
@@ -490,13 +508,19 @@ impl Provider {
             }
         }
 
+        if self.mutants.on("capability-before-authorization") {
+            self.check_capabilities(operation.name)?;
+        }
         // Step 6: authorization.
         if !self.mutants.on("deny-replay-after-revocation") {
             self.authorize(operation.name, &params)?;
         }
 
         // Step 7: capabilities, then epoch and preconditions.
-        if !self.mutants.on("capability-loss-blocks-replay") {
+        if !self.mutants.on("capability-loss-blocks-replay")
+            && !self.mutants.on("capability-before-authorization")
+            && !self.mutants.on("capability-after-preconditions")
+        {
             self.check_capabilities(operation.name)?;
         }
         if !self.mutants.on("checks-before-dedupe")
@@ -511,6 +535,9 @@ impl Provider {
                     .map_err(storage)?;
             }
             return Err(rejection);
+        }
+        if self.mutants.on("capability-after-preconditions") {
+            self.check_capabilities(operation.name)?;
         }
 
         // Steps 8-9: commit and acknowledge.
@@ -537,6 +564,8 @@ impl Provider {
         };
         let record_events = !self.mutants.on("events-not-recorded");
         let sequence_gap = self.mutants.on("event-sequence-gap");
+        let no_issued_events = self.mutants.on("no-grant-issued-events");
+        let revoke_target_only = self.mutants.on("revoke-event-target-only");
         let response = self
             .store
             .commit_with(&scope, &key, generation, &digest, |tx, sequence| {
@@ -550,6 +579,13 @@ impl Provider {
                 )?;
                 if record_events {
                     for (event_type, event_subject, event_revision, event_payload) in events {
+                        if (event_type == "core.grant.issued" && no_issued_events)
+                            || (event_type == "core.grant.revoked"
+                                && revoke_target_only
+                                && event_subject != subject)
+                        {
+                            continue;
+                        }
                         let record = json!({
                             "stream": stream,
                             "origin": "command",
@@ -650,7 +686,10 @@ impl Provider {
     }
 
     fn check_capabilities(&self, operation: &str) -> Result<(), Reject> {
-        if operation != "core-test.subject.put" || self.mutants.on("ignore-capability-loss") {
+        let dependent = operation == "core-test.subject.put"
+            || (operation == "core-test.authority.claim"
+                && self.mutants.on("claim-depends-on-writes"));
+        if !dependent || self.mutants.on("ignore-capability-loss") {
             return Ok(());
         }
         let status = self
@@ -680,11 +719,20 @@ impl Provider {
 
     /// A grant the session principal may act under right now (CORE section 15.5).
     fn usable_grant(&self, id: &str) -> Result<Value, Reject> {
+        self.usable_grant_checked(id, true)
+    }
+
+    fn usable_grant_checked(&self, id: &str, check_holder: bool) -> Result<Value, Reject> {
         let denied = |reason: &str| reject("permission_denied", json!({"reason": reason}));
         let Some((_, grant)) = self.store.grant(id).map_err(storage)? else {
             return Err(denied("grant_not_found"));
         };
-        if grant["holder"] != self.identity.principal.as_str()
+        let state_first = self.mutants.on("grant-state-before-holder");
+        if state_first && grant["state"] != "active" && !self.mutants.on("ignore-revocation") {
+            return Err(denied("revoked"));
+        }
+        if check_holder
+            && grant["holder"] != self.identity.principal.as_str()
             && !self.mutants.on("accept-any-holder")
         {
             return Err(denied("grant_not_found"));
@@ -692,9 +740,11 @@ impl Provider {
         if grant["state"] != "active" && !self.mutants.on("ignore-revocation") {
             return Err(denied("revoked"));
         }
+        let now = grants::now(self.identity.fixed_clock.as_deref());
         if let Some(expiry) = grant.get("expires_at").and_then(Value::as_str)
             && !self.mutants.on("ignore-expiry")
-            && expiry <= grants::now(self.identity.fixed_clock.as_deref()).as_str()
+            && (expiry < now.as_str()
+                || (expiry == now.as_str() && !self.mutants.on("expiry-boundary-inclusive")))
         {
             return Err(denied("expired"));
         }
@@ -715,8 +765,47 @@ impl Provider {
         Ok(grant)
     }
 
+    /// Issue validation (CORE section 15.3), part of step 6 so bound issues still replay.
+    fn validate_issue(&self, payload: &Value) -> Result<(), Reject> {
+        let invalid = |path: &str, reason: &str| {
+            Err(reject(
+                "invalid_envelope",
+                json!({"path": path, "reason": reason}),
+            ))
+        };
+        if payload["audience"] != self.identity.provider_id.as_str()
+            && !self.mutants.on("ignore-audience")
+        {
+            return invalid("/payload/audience", "audience is not this provider");
+        }
+        if let Some(binding) = payload.get("authority_binding")
+            && binding["scope"] != AUTHORITY_ID
+            && !self.mutants.on("unknown-binding-scope-accepted")
+        {
+            return invalid(
+                "/payload/authority_binding/scope",
+                "not an authority scope of this provider",
+            );
+        }
+        if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
+            let now = grants::now(self.identity.fixed_clock.as_deref());
+            let too_early = if self.mutants.on("issue-at-now-accepted") {
+                expiry < now.as_str()
+            } else {
+                expiry <= now.as_str()
+            };
+            if too_early {
+                return invalid("/payload/expires_at", "grant would already be expired");
+            }
+        }
+        Ok(())
+    }
+
     /// Step 6 (CORE section 15.5).
     fn authorize(&self, operation: &str, params: &Value) -> Result<(), Reject> {
+        if operation == "core.grant.issue" && !self.mutants.on("issue-validation-before-dedupe") {
+            self.validate_issue(&params["payload"])?;
+        }
         if self.mutants.on("ignore-grants") {
             return Ok(());
         }
@@ -728,11 +817,39 @@ impl Provider {
                     None if self.is_authority() => Ok(()),
                     None => denied("not_authority"),
                     Some(parent_id) => {
-                        let parent = self.usable_grant(parent_id)?;
-                        let allowed = parent["delegation"]["allowed"].as_bool().unwrap_or(false)
+                        let parent = if self.mutants.on("stale-parent-delegates") {
+                            match self.store.grant(parent_id).map_err(storage)? {
+                                Some((_, grant))
+                                    if grant["holder"] == self.identity.principal.as_str() =>
+                                {
+                                    grant
+                                }
+                                _ => return denied("grant_not_found"),
+                            }
+                        } else {
+                            self.usable_grant_checked(
+                                parent_id,
+                                !self.mutants.on("anyone-may-delegate"),
+                            )?
+                        };
+                        let allowed = (parent["delegation"]["allowed"].as_bool().unwrap_or(false)
+                            || self.mutants.on("delegation-ignores-allowed-flag"))
                             && parent["delegation"]["max_depth"].as_i64().unwrap_or(0) >= 1;
+                        let mut child = payload.clone();
+                        if self.mutants.on("child-may-outlive-parent") {
+                            child["expires_at"] =
+                                parent.get("expires_at").cloned().unwrap_or(Value::Null);
+                            if child["expires_at"].is_null() {
+                                child.as_object_mut().map(|m| m.remove("expires_at"));
+                            }
+                        }
+                        if self.mutants.on("child-drops-authority-binding")
+                            && let Some(binding) = parent.get("authority_binding")
+                        {
+                            child["authority_binding"] = binding.clone();
+                        }
                         if !self.mutants.on("allow-delegation-escalation")
-                            && !(allowed && grants::within_parent(&parent, payload))
+                            && !(allowed && grants::within_parent(&parent, &child))
                         {
                             return denied("delegation_exceeded");
                         }
@@ -741,26 +858,43 @@ impl Provider {
                 }
             }
             "core.grant.revoke" => {
-                if self.is_authority() {
-                    return Ok(());
-                }
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
-                let issuer = self
-                    .store
-                    .grant(id)
-                    .map_err(storage)?
+                let record = self.store.grant(id).map_err(storage)?;
+                let issuer = record
+                    .as_ref()
                     .is_some_and(|(_, grant)| grant["issuer"] == self.identity.principal.as_str());
-                if issuer {
-                    Ok(())
-                } else {
-                    denied("not_authority")
+                if !(self.is_authority() || issuer || self.mutants.on("anyone-may-revoke")) {
+                    return denied("not_authority");
                 }
+                let already_revoked = record
+                    .as_ref()
+                    .is_some_and(|(_, grant)| grant["state"] == "revoked");
+                if already_revoked && !self.mutants.on("re-revoke-accepted") {
+                    return denied("revoked");
+                }
+                Ok(())
             }
             _ => {
-                let Some(needed) = grants::required_rights(operation, params) else {
+                let Some(mut needed) = grants::required_rights(operation, params) else {
                     return Ok(());
                 };
+                if (operation == "core-test.authority.claim"
+                    && self.mutants.on("claim-needs-no-right"))
+                    || (operation == "core-test.subject.applied_count"
+                        && self.mutants.on("applied-count-unprotected"))
+                {
+                    needed.clear();
+                }
+                if needed.is_empty() {
+                    return Ok(());
+                }
                 match params.get("grant").and_then(Value::as_str) {
+                    Some(_)
+                        if self.is_authority()
+                            && self.mutants.on("authority-grant-unrestricted") =>
+                    {
+                        Ok(())
+                    }
                     None if self.is_authority() => Ok(()),
                     None => denied("grant_required"),
                     Some(grant_id) => {
@@ -768,12 +902,32 @@ impl Provider {
                         if self.mutants.on("ignore-grant-scope") {
                             return Ok(());
                         }
-                        for (right, subject) in &needed {
-                            if let Err(reason) = grants::grant_covers(&grant, right, subject) {
-                                return denied(reason);
-                            }
+                        let scope_first = self.mutants.on("denial-order-scope-first");
+                        let rights = |grant: &Value| -> Option<&'static str> {
+                            needed.iter().find_map(|(right, subject)| {
+                                match grants::grant_covers(grant, right, subject) {
+                                    Err("right_missing") => Some("right_missing"),
+                                    _ => None,
+                                }
+                            })
+                        };
+                        let scopes = |grant: &Value| -> Option<&'static str> {
+                            needed.iter().find_map(|(right, subject)| {
+                                match grants::grant_covers(grant, right, subject) {
+                                    Err("out_of_scope") => Some("out_of_scope"),
+                                    _ => None,
+                                }
+                            })
+                        };
+                        let first = if scope_first {
+                            scopes(&grant).or_else(|| rights(&grant))
+                        } else {
+                            rights(&grant).or_else(|| scopes(&grant))
+                        };
+                        match first {
+                            Some(reason) => denied(reason),
+                            None => Ok(()),
                         }
-                        Ok(())
                     }
                 }
             }
@@ -919,18 +1073,9 @@ impl Provider {
                 return invalid("/grant", "feature core.grants was not negotiated");
             }
         }
-        if operation.name == "core.grant.issue" {
-            let payload = &params["payload"];
-            if payload["audience"] != self.identity.provider_id.as_str()
-                && !self.mutants.on("ignore-audience")
-            {
-                return invalid("/payload/audience", "audience is not this provider");
-            }
-            if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str)
-                && expiry <= grants::now(self.identity.fixed_clock.as_deref()).as_str()
-            {
-                return invalid("/payload/expires_at", "grant would already be expired");
-            }
+        if operation.name == "core.grant.issue" && self.mutants.on("issue-validation-before-dedupe")
+        {
+            self.validate_issue(&params["payload"])?;
         }
         let extensions = params.get("extensions").and_then(Value::as_object);
         for entry in params
@@ -977,10 +1122,27 @@ impl Provider {
             .unwrap_or_default();
         let mut seen = Vec::new();
         for entry in &preconditions {
-            if seen.contains(&entry["subject"]) {
+            if seen.contains(&entry["subject"])
+                && !self.mutants.on("duplicate-precondition-subjects-accepted")
+            {
                 return invalid("/preconditions", "duplicate precondition subject");
             }
             seen.push(entry["subject"].clone());
+        }
+        // The schemas allow one precondition; its revision is fixed by the operation (CORE section 15.3).
+        let revision = preconditions
+            .first()
+            .and_then(|entry| entry["revision"].as_i64());
+        let revision_ok = match operation.name {
+            "core.grant.issue" => revision == Some(0),
+            "core.grant.revoke" => revision.is_some_and(|revision| revision >= 1),
+            _ => true,
+        };
+        if !revision_ok && !self.mutants.on("grant-precondition-revision-unchecked") {
+            return invalid(
+                "/preconditions/0/revision",
+                "issue needs revision 0 and revoke at least 1",
+            );
         }
         if !seen.contains(&params["subject"]) && !self.mutants.on("no-primary-precondition-check") {
             return invalid("/preconditions", "the primary subject needs a precondition");
@@ -1043,6 +1205,23 @@ impl Provider {
         self.check_preconditions_only(params)
     }
 
+    /// Whether the principal may read `subject` in this command's authorization context (CORE section 7).
+    fn may_read(&self, subject: &Value, params: &Value) -> Result<bool, Reject> {
+        match params.get("grant").and_then(Value::as_str) {
+            _ if subject["kind"] == "core.grant" && self.is_authority() => Ok(true),
+            Some(id) => match self.usable_grant(id) {
+                Ok(grant) => self.visible(subject, &None, &Some(grant)),
+                Err(_) => Ok(false),
+            },
+            None if self.is_authority() => Ok(true),
+            None => self.visible(
+                subject,
+                &None,
+                &Some(json!({"rights": [], "resources": []})),
+            ),
+        }
+    }
+
     fn check_preconditions_only(&self, params: &Value) -> Result<(), Reject> {
         let mut failed = Vec::new();
         for entry in params["preconditions"].as_array().into_iter().flatten() {
@@ -1060,9 +1239,13 @@ impl Provider {
             let current = self.store.revision(kind, id).map_err(storage)?;
             let expected = entry["revision"].as_i64().unwrap_or_default();
             if current != expected {
-                failed.push(
-                    json!({"subject": entry["subject"], "expected": expected, "current": current}),
-                );
+                let mut failure = json!({"subject": entry["subject"], "expected": expected});
+                if self.may_read(&entry["subject"], params)?
+                    || self.mutants.on("current-revealed-without-read")
+                {
+                    failure["current"] = json!(current);
+                }
+                failed.push(failure);
             }
         }
         if failed.is_empty() {
@@ -1102,7 +1285,8 @@ impl Provider {
                     Some((revision, grant))
                         if self.is_authority()
                             || grant["holder"] == self.identity.principal.as_str()
-                            || grant["issuer"] == self.identity.principal.as_str()
+                            || (grant["issuer"] == self.identity.principal.as_str()
+                                && !self.mutants.on("grant-hidden-from-issuer"))
                             || self.mutants.on("grant-visible-to-all") =>
                     {
                         Ok(json!({"grant": grant, "revision": revision}))
@@ -1340,6 +1524,9 @@ impl Provider {
                 .map(|(name, (_, features, _))| (name, features))
                 .collect(),
         );
+        self.caller_frame_limit = payload["receive_limits"]["max_frame_bytes"]
+            .as_u64()
+            .map_or(1_048_576, |limit| limit as usize);
         Ok(json!({
             "selected": selected_json,
             "unselected": unselected,
@@ -1363,7 +1550,7 @@ impl Provider {
                     .into_iter()
                     .flatten()
                     .any(|right| right == "core.events.read");
-                if can_read {
+                if can_read || self.mutants.on("events-read-any-grant") {
                     Ok(Some(grant))
                 } else {
                     Err(reject(
@@ -1406,7 +1593,7 @@ impl Provider {
             return Err("malformed");
         }
         let stream = self.store.stream_id().map_err(|_| "unavailable")?;
-        if parts[1] != stream {
+        if parts[1] != stream && !self.mutants.on("accept-cursor-from-other-stream") {
             return Err("foreign_stream");
         }
         let epoch: i64 = parts[2].parse().map_err(|_| "malformed")?;
@@ -1415,10 +1602,15 @@ impl Provider {
         let limit = if epoch == current {
             head
         } else if (1..current).contains(&epoch) {
-            self.store
-                .vouched_through(epoch)
-                .map_err(|_| "unavailable")?
-                .unwrap_or(0)
+            // A closed epoch: a position past vouched_through is answered with the epoch change.
+            if self.mutants.on("closed-epoch-cursor-refused") {
+                self.store
+                    .vouched_through(epoch)
+                    .map_err(|_| "unavailable")?
+                    .unwrap_or(0)
+            } else {
+                i64::MAX
+            }
         } else {
             return Err("beyond_end");
         };
@@ -1434,53 +1626,96 @@ impl Provider {
         Ok(format!("ev1:{stream}:{}:{}", position.0, position.1 + skew))
     }
 
-    fn visible(subject: &Value, kinds: &Option<Vec<String>>, grant: &Option<Value>) -> bool {
+    /// Visibility of a subject in events and snapshots (CORE section 16.6).
+    fn visible(
+        &self,
+        subject: &Value,
+        kinds: &Option<Vec<String>>,
+        grant: &Option<Value>,
+    ) -> Result<bool, Reject> {
         let kind_ok = kinds
             .as_ref()
             .is_none_or(|kinds| kinds.iter().any(|kind| subject["kind"] == kind.as_str()));
-        let grant_ok = grant.as_ref().is_none_or(|grant| {
-            grant["resources"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|resource| grants::resource_covers_subject(resource, subject))
-        });
-        kind_ok && grant_ok
+        let Some(grant) = grant else {
+            return Ok(kind_ok);
+        };
+        let covers = grant["resources"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|resource| grants::resource_covers_subject(resource, subject));
+        if self.mutants.on("events-ignore-subject-read") {
+            return Ok(kind_ok && covers);
+        }
+        let kind = subject["kind"].as_str().unwrap_or_default();
+        let readable = if kind.starts_with("core-test.") {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "core-test.read")
+        } else if kind == "core.grant" {
+            let id = subject["id"].as_str().unwrap_or_default();
+            self.store
+                .grant(id)
+                .map_err(storage)?
+                .is_some_and(|(_, record)| {
+                    record["holder"] == self.identity.principal.as_str()
+                        || record["issuer"] == self.identity.principal.as_str()
+                })
+        } else {
+            covers
+        };
+        Ok(kind_ok && readable)
     }
 
+    /// Visible snapshot subjects and whether any subject was hidden.
     fn snapshot_subjects(
         &self,
         kinds: &Option<Vec<String>>,
         grant: &Option<Value>,
-    ) -> Result<Vec<Value>, Reject> {
+    ) -> Result<(Vec<Value>, bool), Reject> {
+        let grant = if self.mutants.on("snapshot-unfiltered") {
+            &None
+        } else {
+            grant
+        };
         let mut subjects = Vec::new();
-        for (kind, id, revision, value) in self.store.all_subjects().map_err(storage)? {
-            let subject = json!({"kind": kind, "id": id});
-            if Self::visible(&subject, kinds, grant) {
-                let state = if kind == AUTHORITY_KIND {
-                    json!({"epoch": revision})
+        let mut hidden = false;
+        let mut consider =
+            |this: &Self, subject: Value, revision: i64, state: Value| -> Result<(), Reject> {
+                if this.visible(&subject, kinds, grant)? {
+                    subjects
+                        .push(json!({"subject": subject, "revision": revision, "state": state}));
                 } else {
-                    json!({"value": value})
-                };
-                subjects.push(json!({"subject": subject, "revision": revision, "state": state}));
-            }
+                    hidden = true;
+                }
+                Ok(())
+            };
+        for (kind, id, revision, value) in self.store.all_subjects().map_err(storage)? {
+            let state = if kind == AUTHORITY_KIND {
+                json!({"epoch": revision})
+            } else {
+                json!({"value": value})
+            };
+            consider(self, json!({"kind": kind, "id": id}), revision, state)?;
         }
-        let capability_subject =
-            json!({"kind": "core.capabilities", "id": self.identity.provider_id});
-        if Self::visible(&capability_subject, kinds, grant) {
-            subjects.push(json!({
-                "subject": capability_subject,
-                "revision": self.store.capability_revision().map_err(storage)?,
-                "state": {"predicates": self.identity.capabilities},
-            }));
+        consider(
+            self,
+            json!({"kind": "core.capabilities", "id": self.identity.provider_id}),
+            self.store.capability_revision().map_err(storage)?,
+            json!({"predicates": self.identity.capabilities}),
+        )?;
+        for (revision, record) in self.store.all_grants().map_err(storage)? {
+            consider(
+                self,
+                json!({"kind": "core.grant", "id": record["id"]}),
+                revision,
+                json!({"grant": record}),
+            )?;
         }
-        for (revision, grant_record) in self.store.all_grants().map_err(storage)? {
-            let subject = json!({"kind": "core.grant", "id": grant_record["id"]});
-            if Self::visible(&subject, kinds, grant) {
-                subjects.push(json!({"subject": subject, "revision": revision, "state": {"grant": grant_record}}));
-            }
-        }
-        Ok(subjects)
+        Ok((subjects, hidden))
     }
 
     /// Ordered stream items after `start` (CORE section 16.4).
@@ -1493,17 +1728,20 @@ impl Provider {
     ) -> Result<Collected, Reject> {
         let current = self.store.stream_epoch().map_err(storage)?;
         let discarded = self.store.discarded_through().map_err(storage)?;
-        let mut filtered = kinds.is_some() || grant.is_some();
+        let mut filtered =
+            self.mutants.on("filtered-always-under-grant") && (kinds.is_some() || grant.is_some());
         let mut position = start;
         let mut items = Vec::new();
         if discarded > position && !self.mutants.on("silent-retention-gap") {
             let head = self.head()?;
             let as_of = json!({"epoch": head.0, "sequence": head.1});
+            let (subjects, hidden) = self.snapshot_subjects(kinds, grant)?;
+            filtered |= hidden;
             items.push(json!({"gap": {
                 "kind": "retention",
                 "from": {"epoch": position.0.max(1), "sequence": position.1 + 1},
                 "to": as_of,
-                "snapshot": {"as_of": as_of, "subjects": self.snapshot_subjects(kinds, grant)?},
+                "snapshot": {"as_of": as_of, "subjects": subjects},
             }}));
             return Ok((items, head, filtered));
         }
@@ -1521,7 +1759,7 @@ impl Provider {
                 {
                     Some((sequence, event)) if sequence <= vouched => {
                         position = (position.0, sequence);
-                        if Self::visible(&event["subject"], kinds, grant) {
+                        if self.visible(&event["subject"], kinds, grant)? {
                             items.push(json!({"event": event}));
                         } else {
                             filtered = true;
@@ -1546,7 +1784,7 @@ impl Provider {
                 {
                     Some((sequence, event)) => {
                         position = (current, sequence);
-                        if Self::visible(&event["subject"], kinds, grant) {
+                        if self.visible(&event["subject"], kinds, grant)? {
                             items.push(json!({"event": event}));
                         } else {
                             filtered = true;
@@ -1573,19 +1811,37 @@ impl Provider {
         let grant = self.event_access(params)?;
         let payload = &params["payload"];
         let start = self.start_position(payload)?;
-        let limit = payload["limit"].as_u64().unwrap_or(100) as usize;
+        let mut take = payload["limit"].as_u64().unwrap_or(100) as usize;
         let kinds = Self::kinds(payload);
-        let (items, position, filtered) = self.collect_items(start, limit, &kinds, &grant)?;
-        Ok(json!({
-            "stream": {"id": self.store.stream_id().map_err(storage)?, "epoch": self.store.stream_epoch().map_err(storage)?},
-            "next_cursor": self.cursor(position, !items.is_empty())?,
-            "items": items,
-            "filtered": filtered,
-        }))
+        loop {
+            let (items, position, filtered) = self.collect_items(start, take, &kinds, &grant)?;
+            let count = items.len();
+            let result = json!({
+                "stream": {"id": self.store.stream_id().map_err(storage)?, "epoch": self.store.stream_epoch().map_err(storage)?},
+                "next_cursor": self.cursor(position, count > 0)?,
+                "items": items,
+                "filtered": filtered,
+            });
+            if self.frame_fits(&result, RESPONSE_OVERHEAD) {
+                return Ok(result);
+            }
+            if count <= 1 {
+                return Err(reject("internal_error", json!({})));
+            }
+            take = count / 2;
+        }
     }
 
     fn events_subscribe(&mut self, params: &Value) -> Result<Value, Reject> {
-        let grant = self.event_access(params)?;
+        let grant = if self.mutants.on("subscribe-unauthorized") {
+            None
+        } else {
+            self.event_access(params)?
+        };
+        let grant_id = params
+            .get("grant")
+            .and_then(Value::as_str)
+            .map(String::from);
         let payload = &params["payload"];
         let position = if self.mutants.on("subscription-misses-backlog") {
             self.start_position(payload)?;
@@ -1598,8 +1854,17 @@ impl Provider {
         self.subscriptions.push(Subscription {
             id: id.clone(),
             position,
-            kinds: Self::kinds(payload),
-            grant,
+            kinds: if self.mutants.on("subscription-ignores-kinds") {
+                None
+            } else {
+                Self::kinds(payload)
+            },
+            grant: if self.mutants.on("subscription-ignores-grant") {
+                None
+            } else {
+                grant.clone()
+            },
+            grant_id: if grant.is_some() { grant_id } else { None },
         });
         Ok(json!({
             "subscription": id,
@@ -1611,28 +1876,59 @@ impl Provider {
     pub fn drain_notifications(&mut self) -> Vec<Value> {
         let mut frames = Vec::new();
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
+        subscriptions.retain(|subscription| {
+            let Some(grant_id) = &subscription.grant_id else { return true };
+            if self.mutants.on("subscription-survives-authorization-loss") || self.usable_grant(grant_id).is_ok() {
+                return true;
+            }
+            frames.push(json!({
+                "jsonrpc": "2.0",
+                "method": "core.events.notify",
+                "params": {"subscription": subscription.id, "items": [], "next_cursor": self.cursor(subscription.position, false).unwrap_or_default(), "ended": {"reason": "authorization_lost"}},
+            }));
+            false
+        });
+        let mut too_large = Vec::new();
         for subscription in &mut subscriptions {
+            let mut take = 100;
             while let Ok((items, position, _)) = self.collect_items(
                 subscription.position,
-                100,
+                take,
                 &subscription.kinds,
                 &subscription.grant,
             ) {
-                let advanced = !items.is_empty();
-                subscription.position = position;
-                if !advanced {
+                let count = items.len();
+                if count == 0 {
+                    subscription.position = position;
                     break;
                 }
                 let Ok(next_cursor) = self.cursor(position, true) else {
                     break;
                 };
-                frames.push(json!({
+                let frame = json!({
                     "jsonrpc": "2.0",
                     "method": "core.events.notify",
                     "params": {"subscription": subscription.id, "items": items, "next_cursor": next_cursor},
-                }));
+                });
+                if !self.frame_fits(&frame, 0) {
+                    if count > 1 {
+                        take = count / 2;
+                        continue;
+                    }
+                    frames.push(json!({
+                        "jsonrpc": "2.0",
+                        "method": "core.events.notify",
+                        "params": {"subscription": subscription.id, "items": [], "next_cursor": self.cursor(subscription.position, false).unwrap_or_default(), "ended": {"reason": "item_too_large"}},
+                    }));
+                    too_large.push(subscription.id.clone());
+                    break;
+                }
+                subscription.position = position;
+                frames.push(frame);
+                take = 100;
             }
         }
+        subscriptions.retain(|subscription| !too_large.contains(&subscription.id));
         self.subscriptions = subscriptions;
         frames
     }

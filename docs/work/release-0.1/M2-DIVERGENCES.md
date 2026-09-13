@@ -88,3 +88,90 @@ Several decisions are pinned "as the independent implementation chose". Its read
 - Pipelined requests need a runner step that accepts responses in any order (M3, where execution watch needs it).
 - `unavailable` and `internal_error` "nothing bound" semantics need fault injection (M3).
 - The limit + 1 buffering and inherited-descriptor rules are not observable over stdio; they stay documented requirements.
+
+## E. M2 features — second independent pass
+
+The same helper extended the independent provider to grants, events and capabilities from the documents at `3b32037` (section E of its [divergence log](../../../conformance/independent/python-core/DIVERGENCES.md)). It passed 107 of 108 fixtures. Its sensitivity check showed that 34 of 35 deliberate violations of stated M2 requirements also passed. One of them was a real disclosure bug in the specification (E-GRANT-EVENT-LEAK). Another, in its own first version, silently lost events when a notification exceeded the caller's receive limit (E-NOTIFY-SIZE). The Protocol session's reference provider had the same class of bug, because it never tracked the caller's limit.
+
+### E.1 Contradictions
+
+| Tag | Resolution |
+|---|---|
+| E-GAP-TO | **spec:** CORE §16.4 lets the provider choose a gap's `to` anywhere from the last discarded position to the stream head. **fixture:** `core.events.retention-gap-returns-snapshot` version 2 accepts either reading with `any_of`. |
+| E-READ-LIMIT | **spec:** `limit` is required, as the schema says. |
+| E-GRANT-FIELD | **spec:** CORE §5.1 separates fields (`invalid_envelope`) from operations (`unsupported_required_feature`) of an unselected feature. |
+| E-FEATURE-OP-STEP | **spec:** an operation's own params are validated at step 2 as usual, and step 3 then refuses it. |
+| E-FILTERED | **spec:** `filtered` is `true` exactly when something in the covered range was hidden. **reference** plus **fixture** `core.events.unfiltered-read-under-grant` with mutant `filtered-always-under-grant`. |
+| E-GRANT-EVENT-LEAK | **spec:** CORE §16.6 now shows an event or snapshot subject under a grant only if the principal could read it directly: profile subjects need the profile's read right, `core.grant` subjects follow `core.grant.get`. **reference** plus **fixtures** `core.events.authorization-and-filtering` version 2 (mutant `events-ignore-subject-read`), `core.events.retention-snapshot-is-filtered` and `core.events.subscription-applies-kinds-and-grant`. |
+
+### E.2 Unstated expectations
+
+| Tag | Resolution |
+|---|---|
+| E-SNAPSHOT-STATE | **spec:** CORE §16.4 defines `state` per subject kind and says `subjects` lists every visible subject changed by an event at or before `as_of`; a provider may also list subjects no event changed. |
+| E-CAP-EVIDENCE | **spec:** the revision rises when a predicate's name set, status, enforcement or `evidence.source` changes, not for `observed_at` alone. **Still unguarded:** evidence sources are provider-chosen, so no fixture can require a revision change for a source change. |
+| E-CURSOR-REASON | **spec:** `invalid_cursor` `details.reason` is informative and unspecified. |
+| E-FEATURE-CLAIM-GATING | Accepted as designed. A provider without `core.grants` that accepts a `grant` field fails `core.envelope.unknown-field-refused`'s closed-object rule, not the gated fixture. |
+| E-ARRAY-EXACT | **fixture docs:** the conformance README says object patterns match subsets and array patterns match exactly. |
+
+### E.3 Open questions — decisions
+
+| Tag | Decision (spec unless noted) |
+|---|---|
+| E-AUTH-WITHOUT-FEATURE | Authorization applies without `core.grants`; a non-authority gets `grant_required`. **fixture** `core.capabilities.checked-after-authorization-before-preconditions` exercises it. |
+| E-UNPROTECTED | CORE §15.5 lists protected operations; `core.capabilities` and `core.events.unsubscribe` are not protected, and a `grant` field there is validated but not evaluated. |
+| E-DENIAL-ORDER | `grant_not_found`, `revoked`, `expired`, `authority_epoch_stale`, `right_missing`, `out_of_scope`. **fixture** `core.grants.denial-reason-order` with mutants `grant-state-before-holder` and `denial-order-scope-first`. |
+| E-ISSUE-VALIDATION-STEP | Audience, expiry and binding-scope checks run at step 6. **fixture** `core.grants.issue-replays-after-expiry` with mutant `issue-validation-before-dedupe`. |
+| E-ISSUE-PARENT-HOLDER | Only the parent's holder may delegate, authorities included; others get `grant_not_found`. **fixture** `core.grants.delegation-needs-usable-delegable-parent`. |
+| E-REVOKE-DENIAL | Neither issuer nor authority: `not_authority`, whether or not the grant exists. Already revoked: `revoked`, decided after that check. **reference** (it re-revoked). **fixture** `core.grants.revoke-needs-issuer-or-authority` with mutants `anyone-may-revoke` and `re-revoke-accepted`. |
+| E-GRANT-PRE | Exactly one precondition on the grant, revision `0` for `issue` and at least `1` for `revoke`; otherwise `invalid_envelope` at step 2. **reference** (it reported `precondition_failed`). **fixture** `core.grants.grant-command-precondition-revision` with mutant `grant-precondition-revision-unchecked`. |
+| E-REVOKE-CASCADE | `revoked` lists the named grant first, then descendants that were still active, in a provider-chosen order. |
+| E-BINDING-SCOPE | An unknown scope is `invalid_envelope`; a later epoch of a known scope is accepted and authorizes once current. The reference had never authorized such grants; the independent implementation had treated unknown scopes as epoch 0. **reference** plus **fixture** `core.grants.authority-binding-scope-must-exist` with mutant `unknown-binding-scope-accepted`. |
+| E-RIGHTS-UNKNOWN | Unknown rights and resource kinds are accepted and never match. |
+| E-PRE-CURRENT | `current` appears only for subjects the principal may read: always for an authority without a grant, otherwise by the §16.6 visibility rules. **reference** (it always disclosed `current`). **fixture** `core.grants.precondition-current-needs-read` with mutant `current-revealed-without-read`. |
+| E-EXPIRY-BOUNDARY | Expired from `expires_at` onward; issuing at the current instant is invalid. **fixture** `core.grants.expiry-instant-is-exclusive` with mutants `expiry-boundary-inclusive` and `issue-at-now-accepted`. |
+| E-START-ORDER | **fixture docs:** the conformance README fixes the order `dedupe`, new epoch, retention, capabilities. |
+| E-CURSOR-AFTER-HIDDEN | `next_cursor` follows trailing hidden events when a read reaches the end. |
+| E-CURSOR-OLD-EPOCH | Adopted as the independent implementation chose. A cursor into an earlier epoch past `vouched_through` receives the `epoch_change`; that is the case epochs exist to report. Only a cursor past the current epoch's head, or from another stream, is `invalid_cursor`. **reference** (it refused such cursors). **launch configuration** `events.unvouched_last`. **fixtures** `core.events.cursor-past-vouched-position-gets-epoch-change` (mutant `closed-epoch-cursor-refused`) and `core.events.cursor-from-another-stream-refused` (mutant `accept-cursor-from-other-stream`). **Still unguarded:** a cursor past the current head cannot be produced without constructing a cursor, which callers must not do. |
+| E-GAP-EPOCHS | **deferred:** a discarded range spanning epochs is unreachable with current launch controls; the order of `epoch_change` and `gap` is left to M6 compatibility work. |
+| E-SUB-REAUTH | A lapsed grant ends the subscription with a final `core.events.notify` carrying `"ended": {"reason": "authorization_lost"}`; the notification schema gains `ended`. **reference** plus **fixture** `core.events.subscription-ends-when-grant-stops-authorizing` with mutant `subscription-survives-authorization-loss`. |
+| E-NOTIFY-SIZE | Reads return fewer items and notifications are split to fit the caller's receive limit. An item that cannot fit alone makes a read `internal_error` and ends a subscription with reason `item_too_large`; it is never skipped. **reference** (it ignored the caller's limit). **runner:** every received frame must fit the session's advertised receive limit; `$repeat` builds large values. **fixture** `core.events.reads-and-notifications-fit-receive-limit` with mutant `ignore-caller-receive-limit`. |
+| E-UNSUBSCRIBE | An unknown subscription is `not_found`. |
+| E-EVENTS-WITHOUT-FEATURE | Events are recorded whether or not a session negotiated `core.events`. |
+| E-CAP-SCOPE | Only `put` depends on `core-test.writes`. **fixture** `core.capabilities.claim-does-not-depend-on-writes` with mutant `claim-depends-on-writes`. |
+
+### E.4 Unguarded requirements — new fixtures
+
+Each deviation in the helper's E.4 table that passed every fixture now has a reference mutant and a fixture that fails it:
+
+| Deviation that passed | Fixture now guarding it |
+|---|---|
+| `delegation.allowed: false` ignored; stale parent delegates; non-holder delegates | `core.grants.delegation-needs-usable-delegable-parent` |
+| Child outlives its parent or drops its binding | `core.grants.delegation-keeps-expiry-and-binding` |
+| Anyone may revoke; `core.grant.get` hidden from the issuer | `core.grants.revoke-needs-issuer-or-authority` |
+| Expiry boundary inclusive; issue at the current instant | `core.grants.expiry-instant-is-exclusive` |
+| Issue validation before deduplication | `core.grants.issue-replays-after-expiry` |
+| State before holder; scope before rights | `core.grants.denial-reason-order` |
+| An authority naming a grant is unrestricted | `core.grants.named-grant-restricts-authority` |
+| `claim` needs no right; `applied_count` unprotected | `core.grants.claim-and-applied-count-need-rights` |
+| `current` disclosed without read authority | `core.grants.precondition-current-needs-read` |
+| No `core.grant.issued` events; `core.grant.revoked` only for the target | `core.events.multi-event-command-contiguous` (now declares both mutants) |
+| `filtered` always true under a grant | `core.events.unfiltered-read-under-grant` |
+| Foreign-stream cursor accepted | `core.events.cursor-from-another-stream-refused` |
+| Notification before the command's response | `core.events.subscription-delivers-backlog-then-live` (runner enforces the order) |
+| Subscription ignores kinds or grant | `core.events.subscription-applies-kinds-and-grant` |
+| Subscribe unauthorized; read under any grant | `core.events.read-and-subscribe-need-events-right` |
+| Gap snapshot unfiltered | `core.events.retention-snapshot-is-filtered` |
+| Capability checked after preconditions or before authorization | `core.capabilities.checked-after-authorization-before-preconditions` |
+| Capability event revision or subject wrong | `core.capabilities.change-raises-revision-and-event` version 2 |
+| `claim` depends on writes | `core.capabilities.claim-does-not-depend-on-writes` |
+| Duplicate precondition subjects accepted (D-PRE-DUP) | `core.preconditions.duplicate-subject-invalid` |
+
+**Independent implementation status.** These resolutions postdate the helper's pass. It currently fails the fixtures for decisions that went the other way or are new:
+- §16.6 visibility;
+- `filtered`;
+- `ended` notifications;
+- `events.unvouched_last`;
+- binding scope.
+
+A further spec-only pass is needed to bring it level before M2 can claim REL-6. The divergence log's own entries are left as written, as evidence of what the documents said at `3b32037`.

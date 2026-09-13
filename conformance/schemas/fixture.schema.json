@@ -146,6 +146,9 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "fresh_data_directory": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false
@@ -884,6 +887,13 @@
         "frame_text_excludes": {
           "type": "array",
           "items": {}
+        },
+        "any_of": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/expect"
+          }
         }
       },
       "additionalProperties": false

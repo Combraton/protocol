@@ -52,3 +52,7 @@ See [BOOTSTRAP](https://github.com/Combraton/combraton/blob/main/BOOTSTRAP.md). 
 ## Working on this repository
 
 Read [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md), [the documentation map](docs/README.md), and [verification](docs/VERIFICATION.md). Use existing native harnesses for development. **Combraton self-development is deferred until usable v0.1 releases of all four projects.** Public visibility does not select a license; no project license has been added yet.
+
+## Standalone-first validation
+
+Complete the agreed standalone release surface and conformance suite before dependent implementations rely on it. Keep normative fixtures here; benchmarks composes/version-pins them without redefining contracts. One PIO/CBR pass does not certify untested profiles. See [release gates](https://github.com/Combraton/combraton/blob/main/docs/STANDALONE-RELEASES.md), [PIO client semantics](https://github.com/Combraton/pio/blob/main/docs/spec/STANDALONE-CLIENT.md) and [benchmarks](https://github.com/Combraton/benchmarks). PIO and CBR develop in parallel against the agreed Protocol release surface; accepted standalone releases precede thin Combraton implementation.

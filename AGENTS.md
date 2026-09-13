@@ -13,6 +13,10 @@ Start with [README](README.md) and [the documentation map](docs/README.md), then
 - Coordinate one owner for a contract change with affected providers/consumers. Agree the required slice and distinguishing fixtures before parallel implementations rely on it.
 - Use explicit versions and compatible rollout. Additive consumers can migrate independently; breaking changes need a migration path, not fictional atomic cross-repository merges.
 
+## Current standalone-first milestone
+
+Complete the agreed standalone release surface and conformance suite before dependent implementations rely on it. Keep normative fixtures here; benchmarks composes/version-pins them without redefining contracts. One PIO/CBR pass does not certify untested profiles. Follow [release gates](https://github.com/Combraton/combraton/blob/main/docs/STANDALONE-RELEASES.md) and [ADR 001](https://github.com/Combraton/combraton/blob/main/docs/decisions/001-standalone-first-and-evaluation.md). Comparative evaluation lives in [benchmarks](https://github.com/Combraton/benchmarks); product acceptance remains evidence-based.
+
 ## Work and coordination
 
 Inspect the assigned issue/task, branch, head, worktree and uncommitted changes before editing. Preserve unrelated work. For a large task, persist a small plan with outcome, scope, acceptance, dependencies and next step in `docs/work/` or the linked issue; do not rely on chat alone. One owner per task; one isolated worktree per concurrent writer. Agree shared contracts before consumers diverge.

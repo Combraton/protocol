@@ -65,8 +65,11 @@ DEFAULT_PROVIDER_ID = "conformance-provider"  # conformance README, launch confi
 KNOWN_CAPABILITIES = ("core-test.writes",)
 OPERATION_CAPABILITIES = {"core-test.subject.put": ("core-test.writes",)}
 AUTHORITY_SCOPE = "core-test"
+TRACKED_SCOPES = (AUTHORITY_SCOPE,)  # CORE 15.3: the authority scopes this provider tracks
+# CORE 16.6: profile subject kinds and the read right a grant needs to see them.
+PROFILE_READ_RIGHTS = {"core-test.subject": "core-test.read", "core-test.authority": "core-test.read"}
+CAPABILITIES_KIND = "core.capabilities"
 NOTIFY_CHUNK = 100
-RESPONSE_MARGIN = 1024  # JSON-RPC wrapper and request id around a result
 
 # CORE 12 retry classes, plus the binding-level codes of STREAM 2-3.
 RETRY = {
@@ -80,6 +83,7 @@ RETRY = {
     "stale_authority_epoch": "after_reconcile",
     "unknown_authority_epoch": "no", "precondition_failed": "after_reconcile", "invalid_cursor": "no",
     "not_found": "no", "permission_denied": "no", "unavailable": "same_command", "internal_error": "after_reconcile",
+    "authentication_required": "no", "authentication_failed": "no", "already_authenticated": "no",
 }
 RPC_CODE = {
     "parse_error": -32700, "invalid_utf8": -32700, "frame_too_large": -32010,
@@ -177,12 +181,17 @@ def load_config(path: str) -> dict:
         raise ConfigError("dedupe.retain_generations must be a positive integer")
 
     events = cfg.get("events", {})
-    if not isinstance(events, dict) or set(events) - {"new_epoch_on_start", "retain_last"}:
-        raise ConfigError("events must be an object with new_epoch_on_start and/or retain_last")
+    if not isinstance(events, dict) or set(events) - {"new_epoch_on_start", "unvouched_last", "retain_last"}:
+        raise ConfigError("events must be an object with new_epoch_on_start, unvouched_last and/or retain_last")
     new_epoch = events.get("new_epoch_on_start", False)
+    unvouched_last = events.get("unvouched_last", 0)
     retain_last = events.get("retain_last")
     if not isinstance(new_epoch, bool):
         raise ConfigError("events.new_epoch_on_start must be a boolean")
+    if not E.is_int(unvouched_last) or unvouched_last < 0:
+        raise ConfigError("events.unvouched_last must be a non-negative integer")
+    # "With new_epoch_on_start": without a new epoch there is no previous epoch
+    # to vouch for, so the key has no effect (F-UNVOUCHED-CONFIG).
     if retain_last is not None and (not E.is_int(retain_last) or retain_last < 0):
         raise ConfigError("events.retain_last must be a non-negative integer")
 
@@ -215,6 +224,7 @@ def load_config(path: str) -> dict:
         "advance": advance,
         "retain": retain,
         "new_epoch": new_epoch,
+        "unvouched_last": unvouched_last,
         "retain_last": retain_last,
         "capabilities": capabilities,
         "clock": fixed,
@@ -233,6 +243,7 @@ class Session:
         self.send_limit = MIB
         self.subscriptions: dict[str, dict] = {}  # CORE 16.5: end with the session
         self.next_subscription = 1
+        self.request_id = None  # JSON-RPC id of the request being answered
 
     def feature_selected(self, feature: str) -> bool:
         return any(feature in p["features"] for p in self.selected.values())
@@ -246,30 +257,46 @@ class Session:
 
 class Auth:
     """The outcome of CORE 10 step 6 for one operation: acting as an authority
-    principal (``grant is None``) or under one grant record."""
+    principal (``grant is None``) or under one grant record. A non-authority
+    reaches ``grant is None`` only on operations step 6 does not protect
+    (``core.grant.*`` follow their own rules, CORE 15.5)."""
 
     def __init__(self, provider: "Provider", grant: dict | None):
         self.provider = provider
         self.grant = grant
 
-    def may_read(self, subject: dict) -> bool:
-        """Whether error details may reveal this subject's current state
-        (CORE 7, CORE 12 "if permitted")."""
-        p = self.provider
-        if subject["kind"] == E.GRANT_KIND:
-            # CORE 15.3: a grant is visible to its holder, its issuer and
-            # authority principals.
-            if p.is_authority:
-                return True
-            row = p.store.grant(subject["id"])
-            return row is not None and p.principal in (row[1]["holder"], row[1]["issuer"])
-        if self.grant is None:
-            return p.is_authority
-        return "core-test.read" in self.grant["rights"] and G.grant_covers(self.grant, subject)
+    def _holder_or_issuer(self, grant_id: str) -> bool:
+        row = self.provider.store.grant(grant_id)
+        return row is not None and self.provider.principal in (row[1]["holder"], row[1]["issuer"])
+
+    def grant_shows(self, subject: dict) -> bool:
+        """CORE 16.6 table: whether this grant shows the subject in events."""
+        kind = subject["kind"]
+        if kind == E.GRANT_KIND:
+            return self._holder_or_issuer(subject["id"])
+        if kind == CAPABILITIES_KIND:
+            return G.grant_covers(self.grant, subject)
+        right = PROFILE_READ_RIGHTS.get(kind)
+        return right is not None and right in self.grant["rights"] and G.grant_covers(self.grant, subject)
 
     def sees(self, subject: dict) -> bool:
-        """Event and snapshot visibility (CORE 16.6)."""
-        return self.grant is None or G.grant_covers(self.grant, subject)
+        """Event and snapshot visibility (CORE 16.6): authority principals see
+        every event; under a grant, only what the principal could read."""
+        return self.grant is None or self.grant_shows(subject)
+
+    def may_read(self, subject: dict) -> bool:
+        """Whether error details may reveal a subject's current revision (CORE
+        7, CORE 12 "if permitted")."""
+        if self.grant is not None:
+            # "Under a grant, the principal may read the subjects that grant
+            # would show it in events (16.6)."
+            return self.grant_shows(subject)
+        if self.provider.is_authority:
+            return True  # "An authority principal acting without a grant may read every subject."
+        # Not covered by CORE 7: a non-authority acting without a grant on a
+        # core.grant.* command may read what core.grant.get shows it
+        # (F-PRE-CURRENT-NO-GRANT).
+        return subject["kind"] == E.GRANT_KIND and self._holder_or_issuer(subject["id"])
 
 
 class Provider:
@@ -287,6 +314,7 @@ class Provider:
             # operation: (profile, feature, kind, validator, handler)
             "core.describe": ("core", None, "query", E.describe_params, self.op_describe),
             "core.negotiate": ("core", None, "query", E.negotiate_params, self.op_negotiate),
+            "core.authenticate": ("core", None, "query", E.authenticate_params, self.op_authenticate),
             "core.grant.issue": ("core", "core.grants", "command", E.grant_issue_params, self.op_grant_issue),
             "core.grant.revoke": ("core", "core.grants", "command", E.grant_revoke_params, self.op_grant_revoke),
             "core.grant.get": ("core", "core.grants", "query", E.grant_get_params, self.op_grant_get),
@@ -306,11 +334,12 @@ class Provider:
         instant, or the system clock in UTC at second precision."""
         return self.fixed_clock or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    def epoch_of(self, scope: str) -> int:
-        # The only authority scope this provider tracks is core-test; any other
-        # scope stays at epoch 0 (E-BINDING-SCOPE).
-        if scope != AUTHORITY_SCOPE:
-            return 0
+    def epoch_of(self, scope: str) -> int | None:
+        # The only authority scope this provider tracks is core-test. A binding
+        # to any other scope is refused at issue (CORE 15.3); None never
+        # equals a bound epoch.
+        if scope not in TRACKED_SCOPES:
+            return None
         return self.store.revision(E.AUTHORITY_SUBJECT["kind"], E.AUTHORITY_SUBJECT["id"])
 
     # ------------------------------------------------------------ output
@@ -358,6 +387,7 @@ class Provider:
         ):
             self.write_frame(error_object(rid, "invalid_request", {}, "malformed JSON-RPC request"))
             return
+        self.session.request_id = rid
         try:
             result = self.dispatch(msg["method"], msg["params"])
             response = {"jsonrpc": "2.0", "id": rid, "result": result}
@@ -380,7 +410,9 @@ class Provider:
         if op is None:
             raise ProtocolError("method_not_found", {"operation": method})
         profile, feature, kind, validator, handler = op
-        if method not in ("core.describe", "core.negotiate"):
+        # CORE 3.1: before negotiation only describe, negotiate and authenticate
+        # are answered (F-AUTH-STEP1).
+        if method not in ("core.describe", "core.negotiate", "core.authenticate"):
             if not s.negotiated:
                 raise ProtocolError("negotiation_required")
             if profile not in s.selected:
@@ -527,9 +559,10 @@ class Provider:
             return self.authorize_issue(env)
         if method == "core.grant.revoke":
             return self.authorize_revoke(env)
-        # core.describe, core.negotiate, core.grant.get (its own visibility
-        # rule), core.capabilities and core.events.unsubscribe are not
-        # protected by step 6 (E-UNPROTECTED).
+        # CORE 15.5 "Which operations are protected": core.describe,
+        # core.negotiate, core.authenticate, core.capabilities and
+        # core.events.unsubscribe are not; core.grant.get has its own
+        # visibility rule. A grant field there is validated, not evaluated.
         return Auth(self, None)
 
     def authorize_under(self, env: dict, needs: list) -> Auth:
@@ -564,6 +597,12 @@ class Provider:
         if "expires_at" in terms and terms["expires_at"] <= self.now():
             raise ProtocolError("invalid_envelope", {"path": "/payload/expires_at",
                                                      "reason": "expires_at must be after the provider's current time"})
+        # CORE 15.3: a binding to an authority scope the provider does not
+        # track, "checked with audience and expires_at at step 6". A later
+        # epoch of a tracked scope is accepted (F-ISSUE-CHECK-ORDER).
+        if "authority_binding" in terms and terms["authority_binding"]["scope"] not in TRACKED_SCOPES:
+            raise ProtocolError("invalid_envelope", {"path": "/payload/authority_binding/scope",
+                                                     "reason": "not an authority scope this provider tracks"})
         if "parent" not in terms:
             if not self.is_authority:
                 raise denied("not_authority")
@@ -585,9 +624,10 @@ class Provider:
         row = self.store.grant(env["subject"]["id"])
         issuer = row[1]["issuer"] if row else None
         if not self.is_authority and issuer != self.principal:
-            # Uniform for nonexistent and invisible grants (E-REVOKE-DENIAL).
+            # CORE 15.3: "whether or not the grant exists".
             raise denied("not_authority")
         if row is not None and row[1]["state"] == "revoked":
+            # CORE 15.3: re-revocation, "decided after that check".
             raise denied("revoked")
         return Auth(self, None)
 
@@ -771,6 +811,12 @@ class Provider:
             "dedupe_window": self.store.window(),
         }
 
+    def op_authenticate(self, env: dict, auth: Auth) -> dict:
+        # CORE 18.2 "Repeats": every stdio session already has the principal
+        # its launch configuration assigned (STREAM 5). The credential is never
+        # examined, logged or echoed (CORE 18.1 "Secrecy").
+        raise ProtocolError("already_authenticated")
+
     def op_get(self, env: dict, auth: Auth) -> dict:
         subj = env["payload"]["subject"]
         row = self.store.subject(subj["kind"], subj["id"])
@@ -798,25 +844,51 @@ class Provider:
         except EV.CursorError as exc:
             raise ProtocolError("invalid_cursor", {"reason": exc.reason}) from None
 
+    def response_fits(self, result: dict) -> bool:
+        """Whether the response frame carrying ``result`` fits the caller's
+        receive limit (STREAM 1.5, CORE 4.2)."""
+        frame = {"jsonrpc": "2.0", "id": self.session.request_id, "result": result}
+        return len(V.canonical(frame)) <= self.session.send_limit
+
+    def fit_items(self, build, limit: int):
+        """CORE 16.4 "Size" and 16.5 "Delivery": the largest item count up to
+        ``limit`` whose frame fits. ``build(n)`` reads at most ``n`` items and
+        returns ``(frame_fits, items, value)``. Returns the value for the
+        largest fitting count, or None when not even one item fits."""
+        fits, items, value = build(limit)
+        if fits or not items:
+            return value
+        lo, hi, best = 1, len(items) - 1, None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            fits, _, candidate = build(mid)
+            if fits:
+                best, lo = candidate, mid + 1
+            else:
+                hi = mid - 1
+        return best
+
     def op_events_read(self, env: dict, auth: Auth) -> dict:
         payload = env["payload"]
         start = self.start_position(payload)
-        limit = payload["limit"]
-        while True:
-            items, pos, hidden = EV.read_items(self.store, start, limit, auth.sees, payload.get("kinds"))
+
+        def build(n):
+            items, pos, hidden = EV.read_items(self.store, start, n, auth.sees, payload.get("kinds"))
             result = {
                 "stream": self.stream_ref(),
                 "items": items,
                 "next_cursor": EV.encode_cursor(self.store, pos),
-                # CORE 16.6: "Under a grant ... filtered is true" (E-FILTERED).
-                "filtered": hidden or auth.grant is not None,
+                # CORE 16.4: true exactly when something in the covered range
+                # was hidden by authorization or kinds.
+                "filtered": hidden,
             }
-            # `limit` is a maximum: return fewer items rather than a response
-            # the caller cannot receive (E-NOTIFY-SIZE). A single item that
-            # does not fit becomes internal_error in write_frame.
-            if len(items) <= 1 or len(V.canonical(result)) + RESPONSE_MARGIN <= self.session.send_limit:
-                return result
-            limit = len(items) // 2
+            return self.response_fits(result), items, result
+
+        result = self.fit_items(build, payload["limit"])
+        if result is None:
+            # CORE 16.4: "If not even one item fits, the read is internal_error."
+            raise ProtocolError("internal_error", {}, "the next item does not fit the caller's receive limit")
+        return result
 
     def op_events_subscribe(self, env: dict, auth: Auth) -> dict:
         payload = env["payload"]
@@ -837,40 +909,52 @@ class Provider:
         return {"revision": revision, "predicates": predicates}
 
     # ------------------------------------------------------ CORE 16.5
+    def end_subscription(self, sid: str, reason: str) -> None:
+        """One final notification with no items and ``ended``, then nothing
+        more (CORE 16.5 "Lifetime"). ``next_cursor`` is where delivery stopped:
+        after the last item delivered."""
+        sub = self.session.subscriptions.pop(sid)
+        log("ending subscription", sid, "reason", reason)
+        self.write_frame({"jsonrpc": "2.0", "method": "core.events.notify",
+                          "params": {"subscription": sid, "items": [],
+                                     "next_cursor": EV.encode_cursor(self.store, sub["pos"]),
+                                     "ended": {"reason": reason}}})
+
     def deliver_notifications(self) -> None:
         for sid in list(self.session.subscriptions):
             sub = self.session.subscriptions.get(sid)
             if sub is None:
                 continue
             try:
-                # Authorization is re-evaluated at each delivery; a subscription
-                # whose grant stopped authorizing ends (E-SUB-REAUTH).
+                # CORE 16.5 "Authorization": checked again before each
+                # delivery. This runs after every request, whether or not an
+                # item is pending, so the end is reported promptly
+                # (F-SUB-END-TIMING).
                 auth = self.authorize("core.events.subscribe", sub["env"])
             except ProtocolError:
-                log("ending subscription", sid, "whose authorization lapsed")
-                del self.session.subscriptions[sid]
+                self.end_subscription(sid, "authorization_lost")
                 continue
-            chunk = NOTIFY_CHUNK
             while True:
-                items, pos, _ = EV.read_items(self.store, sub["pos"], chunk, auth.sees, sub["kinds"])
-                frame = {"jsonrpc": "2.0", "method": "core.events.notify",
-                         "params": {"subscription": sid, "items": items,
-                                    "next_cursor": EV.encode_cursor(self.store, pos)}}
-                if items and len(V.canonical(frame)) > self.session.send_limit:
-                    # Fewer items per notification; never skip one (E-NOTIFY-SIZE).
-                    if len(items) > 1:
-                        chunk = len(items) // 2
-                        continue
-                    log("ending subscription", sid, "whose next item exceeds the caller's receive limit")
-                    del self.session.subscriptions[sid]
+                start = sub["pos"]
+
+                def build(n, start=start):
+                    items, pos, _ = EV.read_items(self.store, start, n, auth.sees, sub["kinds"])
+                    frame = {"jsonrpc": "2.0", "method": "core.events.notify",
+                             "params": {"subscription": sid, "items": items,
+                                        "next_cursor": EV.encode_cursor(self.store, pos)}}
+                    return len(V.canonical(frame)) <= self.session.send_limit, items, (frame, pos)
+
+                fitted = self.fit_items(build, NOTIFY_CHUNK)
+                if fitted is None:
+                    # CORE 16.5: an item that cannot fit alone ends the
+                    # subscription; it is never skipped.
+                    self.end_subscription(sid, "item_too_large")
                     break
-                moved = pos != sub["pos"]
-                sub["pos"] = pos
-                if items:
-                    self.write_frame(frame)
-                    chunk = NOTIFY_CHUNK
-                elif not moved:
-                    break
+                frame, pos = fitted
+                sub["pos"] = pos  # also passes trailing hidden events
+                if not frame["params"]["items"]:
+                    break  # the schema requires at least one item unless ended
+                self.write_frame(frame)
 
 
 def valid_request_id(rid) -> bool:
@@ -981,7 +1065,7 @@ def main(argv: list[str]) -> int:
     # Start-time environment, in this order (E-START-ORDER): deduplication
     # window, stream epoch, event retention, capability snapshot.
     store.apply_generation_config(config["advance"], config["retain"])
-    store.apply_event_config(config["new_epoch"], config["retain_last"])
+    store.apply_event_config(config["new_epoch"], config["unvouched_last"], config["retain_last"])
     predicates = capability_predicates(config)
 
     def capability_event(revision: int) -> dict:

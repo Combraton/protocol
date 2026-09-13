@@ -18,6 +18,10 @@ One database file in the data directory holds:
   position;
 - ``epochs``: closed stream epochs with their last sequence and the sequence
   the provider vouches through;
+- ``unvouched_events``: events of closed epochs after ``vouched_through``.
+  They are no longer part of the stream and are never delivered; they are
+  kept only so that retention snapshots taken after that epoch still reflect
+  subject state (conformance README ``events.unvouched_last``);
 - ``snapshot_base``: subject states as of the retention boundary, folded from
   the discarded events, used for ``gap`` snapshots (CORE 16.4).
 
@@ -71,6 +75,12 @@ CREATE TABLE IF NOT EXISTS epochs (
     last_sequence   INTEGER NOT NULL,
     vouched_through INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS unvouched_events (
+    epoch    INTEGER NOT NULL,
+    sequence INTEGER NOT NULL,
+    body     TEXT NOT NULL,
+    PRIMARY KEY (epoch, sequence)
+);
 CREATE TABLE IF NOT EXISTS snapshot_base (
     kind     TEXT NOT NULL,
     id       TEXT NOT NULL,
@@ -89,8 +99,9 @@ META_DEFAULTS = {
 
 def reduce_state(prior: dict | None, event: dict) -> dict:
     """Fold one event into a subject's snapshot state (CORE 16.2: payloads are
-    "sufficient for a consumer's reducer"). The state shape is this
-    implementation's choice (DIVERGENCES.md E-SNAPSHOT-STATE)."""
+    "sufficient for a consumer's reducer") into the per-kind ``state`` CORE
+    16.4 "Snapshot state" defines: ``{value}``, ``{epoch}``, ``{grant}``,
+    ``{predicates}``. A revocation updates the stored record's ``state``."""
     kind, payload = event["type"], event["payload"]
     if kind == "core.grant.revoked":
         state = dict(prior or {})
@@ -99,6 +110,12 @@ def reduce_state(prior: dict | None, event: dict) -> dict:
         state["grant"] = grant
         return state
     return dict(payload)
+
+
+def meaning(predicates: list) -> set:
+    """What CORE 17.1 says raises a capability revision: the name set and each
+    predicate's status, enforcement and ``evidence.source``."""
+    return {(p["name"], p["status"], p.get("enforcement"), p["evidence"]["source"]) for p in predicates}
 
 
 class Store:
@@ -241,6 +258,14 @@ class Store:
         row = self.db.execute("SELECT last_sequence FROM epochs WHERE epoch = ?", (epoch,)).fetchone()
         return row[0] if row else 0
 
+    def end_of(self, epoch: int) -> int:
+        """The last deliverable sequence of an epoch: the head for the
+        current epoch, ``vouched_through`` for a closed one (CORE 16.1)."""
+        cur_epoch, cur_seq = self.head()
+        if epoch == cur_epoch:
+            return cur_seq
+        return self.vouched_through(epoch)
+
     def vouched_through(self, epoch: int) -> int:
         row = self.db.execute("SELECT vouched_through FROM epochs WHERE epoch = ?", (epoch,)).fetchone()
         return row[0] if row else 0
@@ -267,20 +292,39 @@ class Store:
         rows = self.db.execute("SELECT kind, id, revision, state FROM snapshot_base ORDER BY kind, id")
         return [{"subject": {"kind": k, "id": i}, "revision": r, "state": V.loads(st)} for k, i, r, st in rows]
 
-    def apply_event_config(self, new_epoch: bool, retain_last: int | None) -> None:
+    def _fold_into_base(self, body: str) -> None:
+        event = V.loads(body)
+        subj = event["subject"]
+        prior = self.db.execute("SELECT state FROM snapshot_base WHERE kind = ? AND id = ?",
+                                (subj["kind"], subj["id"])).fetchone()
+        state = reduce_state(V.loads(prior[0]) if prior else None, event)
+        self.db.execute(
+            "INSERT INTO snapshot_base (kind, id, revision, state) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (kind, id) DO UPDATE SET revision = excluded.revision, state = excluded.state",
+            (subj["kind"], subj["id"], event["revision"], V.canonical_text(state)))
+
+    def apply_event_config(self, new_epoch: bool, unvouched_last: int, retain_last: int | None) -> None:
         """Test-environment control at process start (conformance README).
 
         ``new_epoch``: close the current epoch, vouched through its last
-        sequence, and continue in the next epoch from sequence 1.
-        ``retain_last``: discard all but the newest N events, folding each
-        discarded event into ``snapshot_base`` first. Applied after
-        ``new_epoch`` (DIVERGENCES.md E-START-ORDER).
+        sequence minus ``unvouched_last`` (never below 0), and continue in the
+        next epoch from sequence 1. Events after ``vouched_through`` leave the
+        stream (CORE 16.1: "The previous epoch keeps the events the provider
+        still vouches for"); subject state is unchanged.
+        ``retain_last``: discard all but the newest N stream events, folding
+        each discarded event into ``snapshot_base`` first. Applied after
+        ``new_epoch`` (conformance README start order).
         """
         def run():
             if new_epoch:
                 epoch, seq = self.head()
+                vouched = max(0, seq - unvouched_last)
                 self.db.execute("INSERT INTO epochs (epoch, last_sequence, vouched_through) VALUES (?, ?, ?)",
-                                (epoch, seq, seq))
+                                (epoch, seq, vouched))
+                self.db.execute("INSERT INTO unvouched_events (epoch, sequence, body) "
+                                "SELECT epoch, sequence, body FROM events WHERE epoch = ? AND sequence > ?",
+                                (epoch, vouched))
+                self.db.execute("DELETE FROM events WHERE epoch = ? AND sequence > ?", (epoch, vouched))
                 self._set_meta("ev_epoch", epoch + 1)
                 self._set_meta("ev_seq", 0)
             if retain_last is not None:
@@ -291,15 +335,14 @@ class Store:
                         "SELECT epoch, sequence, body FROM events ORDER BY epoch, sequence LIMIT ?", (excess,)
                     ).fetchall()
                     for epoch, seq, body in rows:
-                        event = V.loads(body)
-                        subj = event["subject"]
-                        prior = self.db.execute("SELECT state FROM snapshot_base WHERE kind = ? AND id = ?",
-                                                (subj["kind"], subj["id"])).fetchone()
-                        state = reduce_state(V.loads(prior[0]) if prior else None, event)
-                        self.db.execute(
-                            "INSERT INTO snapshot_base (kind, id, revision, state) VALUES (?, ?, ?, ?) "
-                            "ON CONFLICT (kind, id) DO UPDATE SET revision = excluded.revision, state = excluded.state",
-                            (subj["kind"], subj["id"], event["revision"], V.canonical_text(state)))
+                        # Unvouched changes of earlier epochs happened before
+                        # this event, so a snapshot as of it includes them.
+                        for (ubody,) in self.db.execute(
+                                "SELECT body FROM unvouched_events WHERE epoch < ? ORDER BY epoch, sequence",
+                                (epoch,)).fetchall():
+                            self._fold_into_base(ubody)
+                        self.db.execute("DELETE FROM unvouched_events WHERE epoch < ?", (epoch,))
+                        self._fold_into_base(body)
                         self.db.execute("DELETE FROM events WHERE epoch = ? AND sequence = ?", (epoch, seq))
                     self._set_meta("disc_epoch", rows[-1][0])
                     self._set_meta("disc_seq", rows[-1][1])
@@ -316,7 +359,9 @@ class Store:
         revision and appends a provider-origin event (CORE 17.3)."""
         def run():
             revision, stored = self.capabilities()
-            if revision and V.canonical(stored) == V.canonical(predicates):
+            if revision and meaning(stored) == meaning(predicates):
+                # CORE 17.1: observed_at alone does not raise the revision.
+                self._set_kv("cap_predicates", V.canonical_text(predicates))
                 return
             revision += 1
             self._set_meta("cap_revision", revision)

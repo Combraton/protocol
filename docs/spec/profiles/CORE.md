@@ -1,6 +1,6 @@
 # Core profile `core/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (Core command path from M1; M2 sections reserved).** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants is a proposed M2 draft.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
 This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and effect reconciliation are Core too; they are specified in milestone M2 and marked **reserved** below.
 
@@ -98,10 +98,11 @@ A **command** is sent as the `params` of a transport request. All command envelo
 | `correlation` | no | Opaque caller metadata object. Not interpreted; not part of the command digest. |
 | `caused_by` | no | Array of references explaining why the command exists. Not part of the command digest. |
 | `extensions` | no | Object keyed by namespaced extension keys (§5.1). |
+| `grant` | no | ID of the grant the caller acts under (§15). Allowed only when feature `core.grants` is negotiated. Not part of the command digest. |
 | `command_digest` | yes | Algorithm-qualified digest of the command intent ([ENCODING](../bindings/ENCODING.md)). |
 | `payload` | yes | Operation-specific object. |
 
-A **query** has `operation`, `message_id`, optional `requires`, optional `extensions` and `payload`. It has no command identity, preconditions or digest.
+A **query** has `operation`, `message_id`, optional `requires`, optional `extensions`, optional `grant` (§15) and `payload`. It has no command identity, preconditions or digest.
 
 ### 5.1 Closed objects, `requires` and extensions
 
@@ -193,7 +194,7 @@ Some operations act under an authority that can be taken over, such as a control
 
 The epoch check comes after the idempotency lookup. A retransmission of an already-accepted command still returns its stored result after an epoch change (CORE-10).
 
-**Reserved for M2:** how epochs are issued and advanced by grants and leases.
+A grant can be bound to an authority scope's epoch; it stops authorizing when that epoch is superseded (§15.4). Leases in later profiles define their own epoch issuance.
 
 ## 9. Limits
 
@@ -220,14 +221,14 @@ A provider MUST apply these steps in order. The first failing step determines th
 | 3 | Every `requires` entry negotiated and understood | `unsupported_required_feature` |
 | 4 | Digest algorithm supported; `command_digest` matches the recomputed digest | `unsupported_digest_algorithm`, `digest_mismatch` |
 | 5 | Deduplication lookup (§6) | `invalid_envelope`, `idempotency_conflict`, `dedupe_history_unavailable`; or return the stored result |
-| 6 | Authorization — **reserved M2**: grant, audience, rights | `permission_denied` |
+| 6 | Authorization (§15): the principal is an authority for the operation, or names a valid grant covering it | `invalid_envelope`, `permission_denied` |
 | 7 | Authority epoch (§8) and preconditions (§7) | `stale_authority_epoch`, `unknown_authority_epoch`, `precondition_failed` |
 | 8 | In one owner transaction: commit the command record binding its identity, the state change, resulting events and effect records | `unavailable` if the provider cannot commit; nothing is bound |
 | 9 | Return the acknowledgment and outcome | — |
 
-**Why step 5 precedes step 6** in this draft: the stored result is returned only to the same deduplication scope, which already implies prior authorization. **Open for M2:** whether a revoked principal may still read the stored result of its own earlier command.
+**Why step 5 precedes step 6:** the stored result is returned only within the same principal's deduplication scope, and a replay performs no new mediated operation. A principal whose grant was revoked may therefore still replay its own already-bound command and receive the stored result. Every new command or query needs current authorization (§15.5).
 
-A query applies steps 1–3 and then the operation's read rules. It creates no command record.
+A query applies steps 1–3, then authorization (step 6), then the operation's read rules. It creates no command record.
 
 ## 11. Acknowledgment and outcome
 
@@ -279,7 +280,7 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
 | `precondition_failed` | `after_reconcile` | One or more revision preconditions unsatisfied | `failed`: entries with `subject`, `expected`, and `current` if permitted |
 | `not_found` | `no` | Query target absent or not visible to this principal | — |
-| `permission_denied` | `no` | Reserved M2 | Reserved |
+| `permission_denied` | `no` | The principal is not authorized for this operation on this subject (§15.5) | `reason` |
 | `unavailable` | `same_command` | Provider temporarily cannot process; nothing was bound | — |
 | `internal_error` | `after_reconcile` | Provider failed in an undefined way; outcome unknown | — |
 
@@ -298,7 +299,9 @@ Fixtures reach every domain state — revisions, epochs, bound commands — only
 | `core-test.subject.get` | query | Payload `{ "subject": … }`. Returns `{ "revision": n, "value": … }` or `not_found`. |
 | `core-test.subject.applied_count` | query | Payload `{ "subject": … }`. Returns how many commands changed the subject. Fixtures use it to detect a re-executed duplicate without trusting the acknowledgment. |
 
-The primary subject's precondition entry is mandatory for `core-test.subject.put`. The authority scope starts at epoch 0, where the authority subject does not exist.
+The primary subject's precondition entry is mandatory for `core-test.subject.put`.
+
+Rights (§15): `core-test.claim` on the authority subject for `claim`; `core-test.write` on the primary subject for `put`, plus `core-test.read` on every other subject named in its preconditions; `core-test.read` on the payload subject for `get` and `applied_count`. The authority scope `core-test` is the one advanced by `claim`. The authority scope starts at epoch 0, where the authority subject does not exist.
 
 ### 13.1 Test control is environment-only
 
@@ -307,7 +310,7 @@ Conformance runs need states that ordinary operations cannot reach in bounded ti
 That channel:
 
 - Is a separate connection with its own protocol, served by a test launcher, never by the product endpoint.
-- May restart the provider (preserving durable state), advance or discard deduplication generations, drop connections and set retention configuration.
+- May restart the provider (preserving durable state), advance or discard deduplication generations, drop connections, set retention configuration, choose the session principal and the configured authority principals, and fix the provider clock.
 - MUST NOT create, modify or delete subjects, commands, epochs or grants.
 
 A provider's product endpoint MUST refuse control-channel method names with `method_not_found`.
@@ -318,3 +321,87 @@ A provider's product endpoint MUST refuse control-channel method names with `met
 - A missing response is not failure, and a closed session is not cancellation.
 - A revision orders changes to one subject at one provider; it is not a global clock.
 - Negotiated support for a feature says the provider implements it. It does not say the underlying system, such as a harness, can enforce it. Those limits are profile-specific capability facts.
+
+## 15. Principals and grants (proposed M2 draft)
+
+Owner decision U3 (release plan §6): grants are **provider-held records referenced by ID**. Bearer tokens that carry their own authority are deferred with Remote trust. This section is negotiated as the Core feature `core.grants`.
+
+### 15.1 Principals and authorities
+
+The transport binding establishes the session **principal** ([STREAM §5](../bindings/STREAM.md#5-stdio-form)); a message cannot assert its own principal.
+
+A provider has a configured, provider-local identity `provider_id` and a configured set of **authority principals**. These principals hold implicit full authority over the provider's subjects. In standalone use this is the owning user or the caller that user designates ([ADR 001](https://github.com/Combraton/combraton/blob/main/docs/decisions/001-standalone-first-and-evaluation.md)). How a product configures authorities is outside the protocol. Conformance launch configuration sets `authority_principals` and defaults it to the session principal.
+
+Every other principal acts only under a grant.
+
+### 15.2 Grant records
+
+A grant is a provider-owned subject of kind `core.grant`. Its record contains:
+
+| Field | Meaning |
+|---|---|
+| `id` | The subject ID |
+| `issuer` | Principal that issued it |
+| `holder` | The only principal that may act under it |
+| `audience` | The `provider_id` it is valid at. It must equal the issuing provider's own ID. |
+| `rights` | Non-empty set of right names (`<profile>.<right>`), defined by each profile |
+| `resources` | Non-empty list of `{ "kind": subject kind }`, optionally narrowed by exactly one of `id` or `id_prefix` |
+| `expires_at` | Optional instant `YYYY-MM-DDTHH:MM:SSZ` (UTC), evaluated against the provider's clock only |
+| `authority_binding` | Optional `{ "scope", "epoch" }`: the grant authorizes only while that authority scope's current epoch equals `epoch` |
+| `delegation` | `{ "allowed": boolean, "max_depth": integer ≥ 0 }` |
+| `parent` | Optional ID of the grant it was delegated from |
+| `state` | `active` or `revoked` |
+
+### 15.3 Operations
+
+| Operation | Kind | Semantics |
+|---|---|---|
+| `core.grant.issue` | command | Subject `{ "kind": "core.grant", "id": … }` with precondition revision `0`. Payload is the record without `id`, `issuer` and `state`. Outcome `{ "grant": record }` at revision 1. |
+| `core.grant.revoke` | command | Subject is the grant, with a precondition on its current revision. Payload `{}`. Revokes the grant and every grant delegated from it, directly or transitively. Outcome `{ "revoked": [ids] }` lists every grant revoked by this command. |
+| `core.grant.get` | query | Payload `{ "grant": id }`. Visible to its holder, its issuer and authority principals. Anyone else gets `not_found`. |
+
+**Issuing:**
+
+- A grant without `parent` may be issued only by an authority principal.
+- A grant with `parent` may be issued only by the parent's holder, while the parent is active, unexpired and still bound to a current epoch, and only when the parent's delegation is `allowed` with `max_depth ≥ 1`. The child MUST NOT exceed its parent:
+  - rights ⊆ parent rights;
+  - every child resource is covered by a parent resource;
+  - if the parent expires, the child expires no later;
+  - child `max_depth` ≤ parent `max_depth − 1`;
+  - the child has the same `authority_binding` as the parent, if the parent has one.
+
+  A violation is `permission_denied` with reason `delegation_exceeded`.
+- An `audience` other than the provider's own ID, or an `expires_at` not after the provider's current time, is `invalid_envelope`.
+
+**Revoking:** a grant may be revoked by its issuer or by an authority principal. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
+
+### 15.4 Grants and authority epochs
+
+A grant with `authority_binding` stops authorizing once that scope's epoch changes. Nothing is rewritten; the record stays `active`, but step 6 refuses it with reason `authority_epoch_stale`. This lets a takeover invalidate everything the previous controller delegated without enumerating it.
+
+### 15.5 Authorization (step 6)
+
+For each command or query that a profile protects:
+
+1. **A `grant` field is present.** It must name a grant whose holder is the session principal, that is active, unexpired, bound to a current epoch if bound at all, and whose rights and resources cover every right the operation needs.
+2. **No `grant` field.** The principal must be an authority principal.
+3. **Outcome.** Otherwise the operation is refused with `permission_denied` and `details.reason`, one of:
+   - `grant_required` — no grant named, and the principal is not an authority;
+   - `not_authority` — issuing a root grant as a non-authority;
+   - `grant_not_found` — no such grant held by this principal, so a grant held by someone else is indistinguishable from a nonexistent one;
+   - `revoked`;
+   - `expired`;
+   - `authority_epoch_stale`;
+   - `right_missing` — some needed right is not granted;
+   - `out_of_scope` — a subject is not covered;
+   - `delegation_exceeded`.
+
+**Existence is never revealed by authorization.** Step 6 runs before any check that depends on whether a subject exists. An unauthorized principal gets the same `permission_denied` for an existing and a nonexistent subject (CORE-12). `precondition_failed` details include current revisions only for subjects the principal may read, and every precondition subject needs read authority anyway.
+
+**Deduplication is per principal** (§6.2). Another principal's command identity is invisible. Reusing it is simply a new command.
+
+A replay of an already-bound command skips step 6 (§10), so revocation does not hide a principal's own earlier outcome.
+
+### 15.6 What grants do not establish
+
+A grant is authorization at one provider. It is not identity proof, is not transferable to another provider, and is not a promise that an underlying system will enforce the same limits. Execution profiles report enforcement levels separately. An expired or revoked grant does not mean nothing happened under it.

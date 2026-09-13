@@ -4,6 +4,49 @@
 use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
+    ("ignore-grants", "performs no authorization at all"),
+    (
+        "ignore-grant-scope",
+        "accepts any valid grant regardless of its rights and resources",
+    ),
+    ("ignore-revocation", "keeps honoring revoked grants"),
+    ("ignore-expiry", "keeps honoring expired grants"),
+    (
+        "no-revocation-cascade",
+        "revokes a grant without revoking grants delegated from it",
+    ),
+    (
+        "allow-delegation-escalation",
+        "lets a delegated grant exceed its parent",
+    ),
+    (
+        "leak-existence",
+        "answers not_found for unauthorized reads of nonexistent subjects before checking authorization",
+    ),
+    (
+        "global-dedupe-scope",
+        "shares deduplication records across principals",
+    ),
+    (
+        "ignore-grant-epoch-binding",
+        "keeps honoring grants bound to a superseded authority epoch",
+    ),
+    (
+        "deny-replay-after-revocation",
+        "authorizes before deduplication, so revoked principals cannot replay their own commands",
+    ),
+    (
+        "accept-any-holder",
+        "lets any principal act under a grant held by another",
+    ),
+    (
+        "ignore-audience",
+        "issues grants whose audience is another provider",
+    ),
+    (
+        "grant-visible-to-all",
+        "shows grant records to principals who are neither holder, issuer nor authority",
+    ),
     (
         "reexecute-duplicates",
         "skips the deduplication lookup and applies every transmission",

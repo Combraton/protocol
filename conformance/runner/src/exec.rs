@@ -85,6 +85,27 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
             };
         }
     }
+    let claimed_features: Vec<&str> = ctx.descriptor.raw["claims"]["features"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    for feature in fixture["features"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        if !claimed_features.contains(&feature) {
+            return CaseResult {
+                outcome: Outcome::NotApplicable,
+                step: None,
+                reason: Some(format!("participant does not claim feature {feature}")),
+                transcript: vec![],
+            };
+        }
+    }
     if let Err(error) = std::fs::create_dir_all(ctx.work_dir.join("data")) {
         return CaseResult {
             outcome: Outcome::HarnessError,

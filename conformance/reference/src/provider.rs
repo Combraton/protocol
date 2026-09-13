@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use jsonschema::Validator;
 use serde_json::{Value, json};
 
+use crate::grants;
 use crate::json::{CanonicalFlaws, canonical, sha256_digest};
 use crate::mutants::Mutants;
 use crate::store::Store;
@@ -52,6 +53,21 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.grant.issue",
+        profile: "core",
+        command: true,
+    },
+    Operation {
+        name: "core.grant.revoke",
+        profile: "core",
+        command: true,
+    },
+    Operation {
+        name: "core.grant.get",
+        profile: "core",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -84,7 +100,7 @@ const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "core",
         majors: &[1],
-        features: &[],
+        features: &["core.grants"],
         depends_on: &[],
     },
     SupportedProfile {
@@ -140,10 +156,18 @@ pub fn error_response(id: Value, code: &str, details: Value) -> Value {
     })
 }
 
+/// Session principal and provider-local authority configuration (CORE section 15.1).
+pub struct Identity {
+    pub principal: String,
+    pub provider_id: String,
+    pub authorities: Vec<String>,
+    pub fixed_clock: Option<String>,
+}
+
 pub struct Provider {
     store: Store,
     mutants: Mutants,
-    principal: String,
+    identity: Identity,
     limits: Limits,
     validators: HashMap<&'static str, Validator>,
     /// Selected profile name -> negotiated features.
@@ -154,14 +178,14 @@ impl Provider {
     pub fn new(
         store: Store,
         mutants: Mutants,
-        principal: String,
+        identity: Identity,
         limits: Limits,
         validators: HashMap<&'static str, Validator>,
     ) -> Self {
         Self {
             store,
             mutants,
-            principal,
+            identity,
             limits,
             validators,
             selected: None,
@@ -246,6 +270,27 @@ impl Provider {
         }
 
         if !operation.command {
+            if self.mutants.on("leak-existence")
+                && matches!(
+                    operation.name,
+                    "core-test.subject.get" | "core-test.subject.applied_count"
+                )
+            {
+                let subject = &params["payload"]["subject"];
+                let exists = self
+                    .store
+                    .subject(
+                        subject["kind"].as_str().unwrap_or_default(),
+                        subject["id"].as_str().unwrap_or_default(),
+                    )
+                    .map_err(storage)?
+                    .is_some();
+                if !exists {
+                    return Err(reject("not_found", json!({})));
+                }
+            }
+            // Step 6 for queries.
+            self.authorize(operation.name, &params)?;
             return self.query(operation.name, &params);
         }
 
@@ -268,7 +313,11 @@ impl Provider {
             }
         }
 
-        let scope = self.principal.clone();
+        let scope = if self.mutants.on("global-dedupe-scope") {
+            "global".to_string()
+        } else {
+            self.identity.principal.clone()
+        };
         let key = if self.mutants.on("dedupe-by-transport-id") {
             format!("rpc:{id}")
         } else {
@@ -281,6 +330,10 @@ impl Provider {
 
         if self.mutants.on("checks-before-dedupe") {
             self.check_epoch_and_preconditions(operation.name, &params)?;
+        }
+
+        if self.mutants.on("deny-replay-after-revocation") {
+            self.authorize(operation.name, &params)?;
         }
 
         // Step 5: deduplication.
@@ -309,6 +362,11 @@ impl Provider {
             }
         }
 
+        // Step 6: authorization.
+        if !self.mutants.on("deny-replay-after-revocation") {
+            self.authorize(operation.name, &params)?;
+        }
+
         // Step 7: epoch and preconditions.
         if !self.mutants.on("checks-before-dedupe")
             && let Err(rejection) = self.check_epoch_and_preconditions(operation.name, &params)
@@ -326,56 +384,174 @@ impl Provider {
 
         // Steps 8-9: commit and acknowledge.
         let subject = params["subject"].clone();
-        let (kind, subject_id) = (
-            subject["kind"].as_str().unwrap_or_default().to_string(),
-            subject["id"].as_str().unwrap_or_default().to_string(),
-        );
-        let value = if operation.name == "core-test.subject.put" {
-            params["payload"]["value"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string()
-        } else {
-            String::new()
-        };
+        let subject_id = subject["id"].as_str().unwrap_or_default().to_string();
         let command_id = params["command_id"].clone();
-        let is_claim = operation.name == "core-test.authority.claim";
-        let digest_for_ack = digest.clone();
+        let principal = self.identity.principal.clone();
+        let revoke_ids = if operation.name == "core.grant.revoke" {
+            self.revocation_set(&subject_id)?
+        } else {
+            Vec::new()
+        };
+        let operation_name = operation.name;
+        let payload = params["payload"].clone();
         let response = self
             .store
-            .commit(
-                &scope,
-                &key,
-                generation,
-                &digest,
-                &kind,
-                &subject_id,
-                &value,
-                |sequence, revision| {
-                    let outcome = if is_claim {
-                        json!({"epoch": revision})
-                    } else {
-                        json!({"value": value})
-                    };
-                    json!({
-                        "acknowledgment": {
-                            "command_id": command_id,
-                            "command_digest": digest_for_ack,
-                            "operation_ref": format!("op-{sequence}"),
-                            "subject": subject,
-                            "revision": revision,
-                            "effect_refs": [],
-                        },
-                        "outcome": outcome,
-                    })
-                    .to_string()
-                },
-            )
+            .commit_with(&scope, &key, generation, &digest, |tx, sequence| {
+                let (revision, outcome) = apply_change(
+                    tx,
+                    operation_name,
+                    &subject,
+                    &payload,
+                    &principal,
+                    &revoke_ids,
+                )?;
+                Ok(json!({
+                    "acknowledgment": {
+                        "command_id": command_id,
+                        "command_digest": digest,
+                        "operation_ref": format!("op-{sequence}"),
+                        "subject": subject,
+                        "revision": revision,
+                        "effect_refs": [],
+                    },
+                    "outcome": outcome,
+                })
+                .to_string())
+            })
             .map_err(storage)?;
         let mut result: Value =
             serde_json::from_str(&response).map_err(|_| reject("internal_error", json!({})))?;
         result["replay"] = json!(false);
         Ok(result)
+    }
+
+    /// The target grant plus, unless mutated, every grant delegated from it.
+    fn revocation_set(&self, target: &str) -> Result<Vec<String>, Reject> {
+        let mut ids = vec![target.to_string()];
+        if self.mutants.on("no-revocation-cascade") {
+            return Ok(ids);
+        }
+        let all = self.store.all_grants().map_err(storage)?;
+        let mut index = 0;
+        while index < ids.len() {
+            let parent = ids[index].clone();
+            for (_, grant) in &all {
+                if grant["parent"] == parent && grant["state"] == "active" {
+                    let id = grant["id"].as_str().unwrap_or_default().to_string();
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+            index += 1;
+        }
+        Ok(ids)
+    }
+
+    fn is_authority(&self) -> bool {
+        self.identity.authorities.contains(&self.identity.principal)
+    }
+
+    /// A grant the session principal may act under right now (CORE section 15.5).
+    fn usable_grant(&self, id: &str) -> Result<Value, Reject> {
+        let denied = |reason: &str| reject("permission_denied", json!({"reason": reason}));
+        let Some((_, grant)) = self.store.grant(id).map_err(storage)? else {
+            return Err(denied("grant_not_found"));
+        };
+        if grant["holder"] != self.identity.principal.as_str()
+            && !self.mutants.on("accept-any-holder")
+        {
+            return Err(denied("grant_not_found"));
+        }
+        if grant["state"] != "active" && !self.mutants.on("ignore-revocation") {
+            return Err(denied("revoked"));
+        }
+        if let Some(expiry) = grant.get("expires_at").and_then(Value::as_str)
+            && !self.mutants.on("ignore-expiry")
+            && expiry <= grants::now(self.identity.fixed_clock.as_deref()).as_str()
+        {
+            return Err(denied("expired"));
+        }
+        if let Some(binding) = grant.get("authority_binding")
+            && !self.mutants.on("ignore-grant-epoch-binding")
+        {
+            let current = if binding["scope"] == AUTHORITY_ID {
+                self.store
+                    .revision(AUTHORITY_KIND, AUTHORITY_ID)
+                    .map_err(storage)?
+            } else {
+                -1
+            };
+            if binding["epoch"].as_i64() != Some(current) {
+                return Err(denied("authority_epoch_stale"));
+            }
+        }
+        Ok(grant)
+    }
+
+    /// Step 6 (CORE section 15.5).
+    fn authorize(&self, operation: &str, params: &Value) -> Result<(), Reject> {
+        if self.mutants.on("ignore-grants") {
+            return Ok(());
+        }
+        let denied = |reason: &str| Err(reject("permission_denied", json!({"reason": reason})));
+        match operation {
+            "core.grant.issue" => {
+                let payload = &params["payload"];
+                match payload.get("parent").and_then(Value::as_str) {
+                    None if self.is_authority() => Ok(()),
+                    None => denied("not_authority"),
+                    Some(parent_id) => {
+                        let parent = self.usable_grant(parent_id)?;
+                        let allowed = parent["delegation"]["allowed"].as_bool().unwrap_or(false)
+                            && parent["delegation"]["max_depth"].as_i64().unwrap_or(0) >= 1;
+                        if !self.mutants.on("allow-delegation-escalation")
+                            && !(allowed && grants::within_parent(&parent, payload))
+                        {
+                            return denied("delegation_exceeded");
+                        }
+                        Ok(())
+                    }
+                }
+            }
+            "core.grant.revoke" => {
+                if self.is_authority() {
+                    return Ok(());
+                }
+                let id = params["subject"]["id"].as_str().unwrap_or_default();
+                let issuer = self
+                    .store
+                    .grant(id)
+                    .map_err(storage)?
+                    .is_some_and(|(_, grant)| grant["issuer"] == self.identity.principal.as_str());
+                if issuer {
+                    Ok(())
+                } else {
+                    denied("not_authority")
+                }
+            }
+            _ => {
+                let Some(needed) = grants::required_rights(operation, params) else {
+                    return Ok(());
+                };
+                match params.get("grant").and_then(Value::as_str) {
+                    None if self.is_authority() => Ok(()),
+                    None => denied("grant_required"),
+                    Some(grant_id) => {
+                        let grant = self.usable_grant(grant_id)?;
+                        if self.mutants.on("ignore-grant-scope") {
+                            return Ok(());
+                        }
+                        for (right, subject) in &needed {
+                            if let Err(reason) = grants::grant_covers(&grant, right, subject) {
+                                return denied(reason);
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+            }
+        }
     }
 
     fn intent_digest(&self, params: &Value) -> String {
@@ -482,6 +658,29 @@ impl Provider {
                 json!({"path": path, "reason": reason}),
             ))
         };
+        if params.get("grant").is_some() && !self.mutants.on("accept-unknown-fields") {
+            let negotiated = self
+                .selected
+                .as_ref()
+                .and_then(|selected| selected.get("core"))
+                .is_some_and(|features| features.iter().any(|f| f == "core.grants"));
+            if !negotiated {
+                return invalid("/grant", "feature core.grants was not negotiated");
+            }
+        }
+        if operation.name == "core.grant.issue" {
+            let payload = &params["payload"];
+            if payload["audience"] != self.identity.provider_id.as_str()
+                && !self.mutants.on("ignore-audience")
+            {
+                return invalid("/payload/audience", "audience is not this provider");
+            }
+            if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str)
+                && expiry <= grants::now(self.identity.fixed_clock.as_deref()).as_str()
+            {
+                return invalid("/payload/expires_at", "grant would already be expired");
+            }
+        }
         let extensions = params.get("extensions").and_then(Value::as_object);
         for entry in params
             .get("requires")
@@ -616,6 +815,21 @@ impl Provider {
         match operation {
             "core.describe" => self.describe(),
             "core.negotiate" => self.negotiate(&params["payload"]),
+            "core.grant.get" => {
+                let id = params["payload"]["grant"].as_str().unwrap_or_default();
+                let found = self.store.grant(id).map_err(storage)?;
+                match found {
+                    Some((revision, grant))
+                        if self.is_authority()
+                            || grant["holder"] == self.identity.principal.as_str()
+                            || grant["issuer"] == self.identity.principal.as_str()
+                            || self.mutants.on("grant-visible-to-all") =>
+                    {
+                        Ok(json!({"grant": grant, "revision": revision}))
+                    }
+                    _ => Err(reject("not_found", json!({}))),
+                }
+            }
             "core-test.subject.get" => {
                 let subject = &params["payload"]["subject"];
                 let found = self
@@ -839,4 +1053,80 @@ fn replay(stored: &str) -> Result<Value, Reject> {
 fn storage(error: rusqlite::Error) -> Reject {
     eprintln!("storage error: {error}");
     reject("unavailable", json!({}))
+}
+
+/// Apply one accepted command inside the owner transaction; returns (revision, outcome).
+fn apply_change(
+    tx: &rusqlite::Transaction,
+    operation: &str,
+    subject: &Value,
+    payload: &Value,
+    principal: &str,
+    revoke_ids: &[String],
+) -> rusqlite::Result<(i64, Value)> {
+    use rusqlite::{OptionalExtension, params};
+    let kind = subject["kind"].as_str().unwrap_or_default();
+    let id = subject["id"].as_str().unwrap_or_default();
+    match operation {
+        "core.grant.issue" => {
+            let mut record = payload.clone();
+            record["id"] = json!(id);
+            record["issuer"] = json!(principal);
+            record["state"] = json!("active");
+            tx.execute(
+                "INSERT INTO grants VALUES (?1, 1, ?2)",
+                params![id, record.to_string()],
+            )?;
+            Ok((1, json!({"grant": record})))
+        }
+        "core.grant.revoke" => {
+            let mut target_revision = 0;
+            for grant_id in revoke_ids {
+                let row: Option<(i64, String)> = tx
+                    .query_row(
+                        "SELECT revision, record FROM grants WHERE id=?1",
+                        [grant_id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((revision, record)) = row else {
+                    continue;
+                };
+                let mut record: Value = serde_json::from_str(&record).unwrap_or(Value::Null);
+                record["state"] = json!("revoked");
+                tx.execute(
+                    "UPDATE grants SET revision=?1, record=?2 WHERE id=?3",
+                    params![revision + 1, record.to_string(), grant_id],
+                )?;
+                if grant_id == id {
+                    target_revision = revision + 1;
+                }
+            }
+            Ok((target_revision, json!({"revoked": revoke_ids})))
+        }
+        _ => {
+            let value = payload["value"].as_str().unwrap_or_default();
+            let revision: i64 = tx
+                .query_row(
+                    "SELECT revision FROM subjects WHERE kind=?1 AND id=?2",
+                    params![kind, id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .unwrap_or(0)
+                + 1;
+            tx.execute(
+                "INSERT INTO subjects VALUES (?1, ?2, ?3, ?4, 1)
+                 ON CONFLICT (kind, id) DO UPDATE SET revision=excluded.revision, value=excluded.value,
+                 applied_count=applied_count+1",
+                params![kind, id, revision, value],
+            )?;
+            let outcome = if operation == "core-test.authority.claim" {
+                json!({"epoch": revision})
+            } else {
+                json!({"value": value})
+            };
+            Ok((revision, outcome))
+        }
+    }
 }

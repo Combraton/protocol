@@ -36,6 +36,8 @@ impl Store {
              CREATE TABLE IF NOT EXISTS subjects (
                kind TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
                value TEXT NOT NULL, applied_count INTEGER NOT NULL, PRIMARY KEY (kind, id));
+             CREATE TABLE IF NOT EXISTS grants (
+               id TEXT PRIMARY KEY, revision INTEGER NOT NULL, record TEXT NOT NULL);
              INSERT OR IGNORE INTO meta VALUES ('dedupe_oldest', 1), ('dedupe_current', 1), ('operation_seq', 0);",
         )?;
         Ok(Self {
@@ -120,6 +122,9 @@ impl Store {
     }
 
     pub fn revision(&self, kind: &str, id: &str) -> rusqlite::Result<i64> {
+        if kind == "core.grant" {
+            return Ok(self.grant(id)?.map_or(0, |(revision, _)| revision));
+        }
         Ok(self
             .subject(kind, id)?
             .map_or(0, |(revision, _, _)| revision))
@@ -162,19 +167,15 @@ impl Store {
         Ok(())
     }
 
-    /// Apply one change and bind the command identity atomically. `build_response`
-    /// receives the new operation sequence number and subject revision.
-    #[allow(clippy::too_many_arguments)]
-    pub fn commit(
+    /// Apply one change and bind the command identity atomically. `apply` runs inside the
+    /// owner transaction with the new operation sequence number and returns the stored response.
+    pub fn commit_with(
         &mut self,
         scope: &str,
         command_id: &str,
         generation: i64,
         digest: &str,
-        kind: &str,
-        id: &str,
-        value: &str,
-        build_response: impl FnOnce(i64, i64) -> String,
+        apply: impl FnOnce(&rusqlite::Transaction, i64) -> rusqlite::Result<String>,
     ) -> rusqlite::Result<String> {
         let volatile = self.volatile_commands.is_some();
         let tx = self.connection.transaction()?;
@@ -187,22 +188,7 @@ impl Store {
             "UPDATE meta SET value=?1 WHERE key='operation_seq'",
             [sequence],
         )?;
-        let revision: i64 = tx
-            .query_row(
-                "SELECT revision FROM subjects WHERE kind=?1 AND id=?2",
-                params![kind, id],
-                |r| r.get(0),
-            )
-            .optional()?
-            .unwrap_or(0)
-            + 1;
-        tx.execute(
-            "INSERT INTO subjects VALUES (?1, ?2, ?3, ?4, 1)
-             ON CONFLICT (kind, id) DO UPDATE SET revision=excluded.revision, value=excluded.value,
-             applied_count=applied_count+1",
-            params![kind, id, revision, value],
-        )?;
-        let response = build_response(sequence, revision);
+        let response = apply(&tx, sequence)?;
         if !volatile {
             tx.execute(
                 "INSERT OR REPLACE INTO commands VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -214,5 +200,40 @@ impl Store {
             self.insert_command(scope, command_id, generation, digest, &response)?;
         }
         Ok(response)
+    }
+
+    pub fn grant(&self, id: &str) -> rusqlite::Result<Option<(i64, serde_json::Value)>> {
+        let row: Option<(i64, String)> = self
+            .connection
+            .query_row(
+                "SELECT revision, record FROM grants WHERE id=?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.map(|(revision, record)| {
+            (
+                revision,
+                serde_json::from_str(&record).unwrap_or(serde_json::Value::Null),
+            )
+        }))
+    }
+
+    pub fn all_grants(&self) -> rusqlite::Result<Vec<(i64, serde_json::Value)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT revision, record FROM grants ORDER BY id")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            row.map(|(revision, record)| {
+                (
+                    revision,
+                    serde_json::from_str(&record).unwrap_or(serde_json::Value::Null),
+                )
+            })
+        })
+        .collect()
     }
 }

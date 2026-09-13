@@ -4,6 +4,7 @@
 //! implements core/1 plus the conformance-only core-test/1 profile.
 
 mod frames;
+mod grants;
 mod json;
 mod mutants;
 mod provider;
@@ -136,6 +137,23 @@ fn run(args: Args) -> Result<(), String> {
         .as_str()
         .unwrap_or("conformance-caller")
         .to_string();
+    let authorities = match config["authority_principals"].as_array() {
+        Some(list) => list
+            .iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect(),
+        None => vec![principal.clone()],
+    };
+    let identity = provider::Identity {
+        provider_id: config["provider_id"]
+            .as_str()
+            .unwrap_or("conformance-provider")
+            .to_string(),
+        fixed_clock: config["clock"]["fixed"].as_str().map(String::from),
+        authorities,
+        principal,
+    };
     let limits = config_limits(&config);
     let validators = load_validators(&args.schemas)?;
 
@@ -150,7 +168,7 @@ fn run(args: Args) -> Result<(), String> {
     reader.unbounded = mutant_set.on("unbounded-frames");
     reader.parse_unterminated = mutant_set.on("parse-unterminated");
     reader.off_by_one = mutant_set.on("strict-off-by-one-limit");
-    let mut provider = Provider::new(store, mutant_set, principal, limits, validators);
+    let mut provider = Provider::new(store, mutant_set, identity, limits, validators);
     let mut out = std::io::stdout().lock();
 
     let mut send = |value: &Value| -> bool {

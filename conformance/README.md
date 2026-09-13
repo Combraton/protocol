@@ -6,12 +6,12 @@ This directory holds the normative, language-neutral conformance material for Pr
 
 | Path | Contents |
 |---|---|
-| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 57 fixtures in M1: `stream/` for the binding, `core/` for Core. |
+| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 72 fixtures: `stream/` for the binding, `core/` for Core (grants fixtures are M2). |
 | `vectors/` | Encoding and digest test vectors |
 | `schemas/` | Schema for fixture files |
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |
 | `runner/` | The black-box runner (Rust crate `combraton-conformance`) |
-| `reference/` | The reference provider and its 32 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product) |
+| `reference/` | The reference provider and its 45 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product) |
 | `crosscheck/` | Independent non-Rust checks of the encoding vectors (Python `rfc8785`, Node `canonicalize`) |
 
 ## How it works

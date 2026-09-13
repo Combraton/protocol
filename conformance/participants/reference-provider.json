@@ -15,6 +15,9 @@
         "name": "core-test",
         "major": 1
       }
+    ],
+    "features": [
+      "core.grants"
     ]
   },
   "launch": {
@@ -34,6 +37,19 @@
       "{mutant}"
     ],
     "names": [
+      "ignore-grants",
+      "ignore-grant-scope",
+      "ignore-revocation",
+      "ignore-expiry",
+      "no-revocation-cascade",
+      "allow-delegation-escalation",
+      "leak-existence",
+      "global-dedupe-scope",
+      "ignore-grant-epoch-binding",
+      "deny-replay-after-revocation",
+      "accept-any-holder",
+      "ignore-audience",
+      "grant-visible-to-all",
       "reexecute-duplicates",
       "ignore-command-digest",
       "dedupe-by-transport-id",

@@ -21,9 +21,10 @@ use frames::{FrameReader, Next};
 use json::{FrameFault, Laxness};
 use provider::{Limits, Provider, error_response};
 
-const USAGE: &str = "usage: combraton-reference-provider --data-dir DIR --config FILE --schemas DIR [--mutant NAME]... | --list-mutants";
+const USAGE: &str = "usage: combraton-reference-provider --data-dir DIR --config FILE --schemas DIR [--socket PATH] [--mutant NAME]... | --list-mutants";
 
 struct Args {
+    socket: Option<PathBuf>,
     data_dir: PathBuf,
     config: PathBuf,
     schemas: PathBuf,
@@ -34,6 +35,7 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut data_dir = None;
     let mut config = None;
     let mut schemas = None;
+    let mut socket = None;
     let mut mutants = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -47,12 +49,14 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--data-dir" => data_dir = args.next().map(PathBuf::from),
             "--config" => config = args.next().map(PathBuf::from),
             "--schemas" => schemas = args.next().map(PathBuf::from),
+            "--socket" => socket = args.next().map(PathBuf::from),
             "--mutant" => mutants.push(args.next().ok_or("--mutant needs a name")?),
             other => return Err(format!("unexpected argument {other}")),
         }
     }
     match (data_dir, config, schemas) {
         (Some(data_dir), Some(config), Some(schemas)) => Ok(Some(Args {
+            socket,
             data_dir,
             config,
             schemas,
@@ -115,6 +119,16 @@ fn config_limits(config: &Value) -> Limits {
     }
 }
 
+/// Everything a session needs that is shared across connections of one process.
+struct Shared {
+    data_dir: PathBuf,
+    mutant_names: Vec<String>,
+    identity: provider::Identity,
+    limits: Limits,
+    validators: std::sync::Arc<HashMap<&'static str, jsonschema::Validator>>,
+    credentials: std::sync::Arc<Vec<provider::Credential>>,
+}
+
 fn run(args: Args) -> Result<(), String> {
     let mutant_set = mutants::Mutants::parse(&args.mutants)?;
     let config: Value =
@@ -175,16 +189,161 @@ fn run(args: Args) -> Result<(), String> {
             mutant_set.on("capability-revision-static"),
         )
         .map_err(|e| e.to_string())?;
-    let identity = provider::Identity {
-        provider_id,
-        fixed_clock,
-        capabilities,
-        authorities,
-        principal,
+    let credentials: Vec<provider::Credential> = config["credentials"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let credential = entry["credential"].as_str()?;
+            let principal = credential.split('.').nth(1)?.to_string();
+            Some(provider::Credential {
+                principal,
+                digest: json::sha256_digest(credential.as_bytes()),
+                revoked: entry["revoked"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect();
+    let shared = Shared {
+        data_dir: args.data_dir.clone(),
+        mutant_names: args.mutants.clone(),
+        identity: provider::Identity {
+            provider_id,
+            fixed_clock,
+            capabilities,
+            authorities,
+            principal,
+        },
+        limits: config_limits(&config),
+        validators: std::sync::Arc::new(load_validators(&args.schemas)?),
+        credentials: std::sync::Arc::new(credentials),
     };
-    let limits = config_limits(&config);
-    let validators = load_validators(&args.schemas)?;
+    match &args.socket {
+        None => {
+            let provider = Provider::new(
+                store,
+                mutant_set,
+                shared.identity.clone(),
+                shared.limits,
+                shared.validators.clone(),
+                false,
+                shared.credentials.clone(),
+            );
+            serve(
+                std::io::stdin().lock(),
+                std::io::stdout().lock(),
+                provider,
+                &shared,
+                false,
+            )
+        }
+        Some(socket) => {
+            drop(store);
+            serve_unix(socket, std::sync::Arc::new(shared))
+        }
+    }
+}
 
+/// Unix-socket form (STREAM section 6): checked directory, peer check, one thread per session.
+/// The process lives until its standard input ends (conformance lifecycle).
+fn serve_unix(socket: &std::path::Path, shared: std::sync::Arc<Shared>) -> Result<(), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::io::AsRawFd;
+    let mutant_set = mutants::Mutants::parse(&shared.mutant_names)?;
+    let directory = socket.parent().ok_or("socket path has no directory")?;
+    let metadata =
+        std::fs::symlink_metadata(directory).map_err(|e| format!("socket directory: {e}"))?;
+    // SAFETY: geteuid has no preconditions.
+    let own_uid = unsafe { libc::geteuid() };
+    let safe = metadata.is_dir()
+        && !metadata.file_type().is_symlink()
+        && metadata.uid() == own_uid
+        && metadata.mode() & 0o077 == 0;
+    if !safe && !mutant_set.on("unchecked-socket-directory") {
+        return Err(format!(
+            "unsafe socket directory {}: it must be a directory owned by this user with no group or other permissions",
+            directory.display()
+        ));
+    }
+    let _ = std::fs::remove_file(socket);
+    let listener =
+        std::os::unix::net::UnixListener::bind(socket).map_err(|e| format!("bind: {e}"))?;
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())?;
+    std::thread::spawn(|| {
+        let mut sink = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut sink);
+        std::process::exit(0);
+    });
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        if peer_uid(stream.as_raw_fd()) != Some(own_uid) {
+            continue; // Different user: close without a frame.
+        }
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let Ok(mutant_set) = mutants::Mutants::parse(&shared.mutant_names) else {
+                return;
+            };
+            let Ok(store) =
+                store::Store::open(&shared.data_dir, mutant_set.on("lose-dedupe-on-restart"))
+            else {
+                return;
+            };
+            let Ok(writer) = stream.try_clone() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(40)));
+            let provider = Provider::new(
+                store,
+                mutant_set,
+                shared.identity.clone(),
+                shared.limits,
+                shared.validators.clone(),
+                true,
+                shared.credentials.clone(),
+            );
+            let _ = serve(stream, writer, provider, &shared, true);
+        });
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn peer_uid(fd: std::os::unix::io::RawFd) -> Option<u32> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the buffer and length describe a valid ucred for SO_PEERCRED.
+    let status = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut credentials as *mut libc::ucred).cast(),
+            &mut length,
+        )
+    };
+    (status == 0).then_some(credentials.uid)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peer_uid(fd: std::os::unix::io::RawFd) -> Option<u32> {
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: getpeereid writes two integers through valid pointers.
+    let status = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+    (status == 0).then_some(uid)
+}
+
+/// One session over one connection. `poll` connections wake periodically to deliver
+/// notifications for events committed by other sessions.
+fn serve<R: std::io::Read, W: Write>(
+    input: R,
+    mut out: W,
+    mut provider: Provider,
+    shared: &Shared,
+    poll: bool,
+) -> Result<(), String> {
+    let mutant_set = mutants::Mutants::parse(&shared.mutant_names)?;
     let lax = Laxness {
         duplicate_members: mutant_set.on("accept-duplicate-members"),
         numbers: mutant_set.on("lax-numbers"),
@@ -198,12 +357,11 @@ fn run(args: Args) -> Result<(), String> {
     let lenient_shape = mutant_set.on("lenient-jsonrpc-shape");
     let exit_nonzero = mutant_set.on("exit-nonzero-at-end-of-input");
     let frame_limit_fixed = mutant_set.on("frame-limit-never-raised");
-    let mut reader = FrameReader::new(std::io::stdin().lock());
+    let cross_session = !mutant_set.on("no-cross-session-delivery");
+    let mut reader = FrameReader::new(input);
     reader.unbounded = mutant_set.on("unbounded-frames");
     reader.parse_unterminated = mutant_set.on("parse-unterminated");
     reader.off_by_one = mutant_set.on("strict-off-by-one-limit");
-    let mut provider = Provider::new(store, mutant_set, identity, limits, validators);
-    let mut out = std::io::stdout().lock();
 
     let mut send = |value: &Value| -> bool {
         out.write_all(&json::encode_frame(value))
@@ -215,9 +373,29 @@ fn run(args: Args) -> Result<(), String> {
         if provider.negotiated() && !frame_limit_fixed {
             reader.limit = provider.frame_limit();
         }
-        let frame = match reader.next().map_err(|e| e.to_string())? {
+        let next = match reader.next() {
+            Ok(next) => next,
+            Err(error)
+                if poll
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+            {
+                if cross_session {
+                    for notification in provider.drain_notifications() {
+                        if !send(&notification) {
+                            return Ok(());
+                        }
+                    }
+                }
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let frame = match next {
             Next::End => {
-                if exit_nonzero {
+                if exit_nonzero && !poll {
                     std::process::exit(3);
                 }
                 return Ok(());

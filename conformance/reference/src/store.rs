@@ -27,7 +27,8 @@ impl Store {
     pub fn open(data_dir: &Path, volatile_commands: bool) -> rusqlite::Result<Self> {
         let connection = Connection::open(data_dir.join("reference-provider.sqlite3"))?;
         connection.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA busy_timeout = 5000;
+             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
              CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS commands (

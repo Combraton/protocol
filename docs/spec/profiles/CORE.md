@@ -1,6 +1,6 @@
 # Core profile `core/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events and §17 capabilities are proposed M2 drafts.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are M2 drafts (§18 accepted by decision 006).** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
 This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and effect reconciliation are Core too; they are specified in milestone M2 and marked **reserved** below.
 
@@ -41,7 +41,7 @@ A retransmitted command keeps its `command_id` and content and gets a new `messa
 
 A session is one authenticated connection under the transport binding.
 
-1. **Before negotiation**, a provider MUST answer only `core.describe` and `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
+1. **Before negotiation**, a provider MUST answer only `core.describe` and `core.negotiate` (and `core.authenticate`, §18). A socket session must also authenticate before `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
 2. **`core.negotiate` succeeds at most once per session.** A second call gets `already_negotiated`. To change the negotiated set, open a new session.
 3. **After negotiation**, an operation of a profile that was not selected gets `profile_not_negotiated`. This applies even when the provider supports that profile.
 4. **Session state is not durable.** Closing a session neither cancels nor confirms anything in flight. Callers reconcile by command identity after reconnecting ([STREAM](../bindings/STREAM.md)).
@@ -296,6 +296,9 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
 | `precondition_failed` | `after_reconcile` | One or more revision preconditions unsatisfied | `failed`: entries with `subject`, `expected`, and `current` if permitted |
 | `invalid_cursor` | `no` | Cursor malformed, from another stream, or beyond the stream's end (§16) | `reason` |
+| `authentication_required` | `no` | A socket session called an operation other than `core.describe` or `core.authenticate` before authenticating (§18) | — |
+| `authentication_failed` | `no` | The credential is unknown, malformed or revoked; these cases are indistinguishable (§18) | — |
+| `already_authenticated` | `no` | The session already has a principal (§18) | — |
 | `not_found` | `no` | Query target absent or not visible to this principal | — |
 | `permission_denied` | `no` | The principal is not authorized for this operation on this subject (§15.5) | `reason` |
 | `unavailable` | `same_command` | Provider temporarily cannot process; nothing was bound | — |
@@ -550,3 +553,27 @@ A new store's initial snapshot, revision 1, is not a change and appends no event
 ### 17.5 What capabilities do not establish
 
 A `supported` predicate is the provider's current observation with its stated evidence. It is not a guarantee that a later operation succeeds, and not proof about systems the provider does not observe.
+
+## 18. Principal credentials on shared connections
+
+Accepted by [decision 006](../../decisions/006-unix-socket-principal-credential.md) (owner decision U12). Transports that many processes can reach — in 0.1, the [Unix-socket binding](../bindings/STREAM.md#6-unix-domain-socket-form) — need an application-level credential to establish a session principal. The stdio binding needs none, because its principal is assigned by the process that launched the provider.
+
+### 18.1 Credentials
+
+- **Format.** A credential is `ccred1.<principal>.<secret>`: the principal ID, then 32 bytes from a cryptographically secure random source, encoded as unpadded base64url (43 characters).
+- **Storage.** Providers store only the SHA-256 digest of the whole credential string, together with its principal and revocation state.
+- **Handoff.** A provider that hands a credential to a local caller writes it, followed by one line feed, to a file with mode `0600` inside a directory with mode `0700` owned by the user.
+- **Administration.** Issuing, rotating and revoking credentials is provider administration. It is outside the protocol operations in 0.1, but every provider supporting a shared transport MUST support revocation and rotation.
+- **Secrecy.** A credential MUST NOT appear in logs, error messages, error details, events, results or process command lines. It MUST NOT be passed to child processes through the environment.
+
+### 18.2 `core.authenticate`
+
+- **Payload:** `{ "credential": string }`. **Result:** `{ "principal": id }`.
+- **Order.** A shared-transport session starts unauthenticated. Before `core.authenticate` succeeds, the only operations allowed are `core.describe` and `core.authenticate`. Anything else is refused with `authentication_required`, before §10 step 1's negotiation check.
+- **Success.** A valid, unrevoked credential binds its principal to the session for the connection's lifetime. The principal then governs authorities (§15.1), grants, deduplication scope (§6.2) and event visibility.
+- **Failure.** The provider compares digests in constant time. Unknown, malformed and revoked credentials all produce `authentication_failed` with empty `details`, and the same timing class where practical. After three failures on one connection the provider MAY close it.
+- **Repeats.** A session that already has a principal gets `already_authenticated` on another `core.authenticate`. This includes every stdio session.
+
+### 18.3 What credentials do not establish
+
+A successful authentication proves that the caller possessed the credential. It does not prove which program the caller is. On a machine where coding agents run as the same user without file-access enforcement, an agent that can read the credential file can act as that principal. Execution providers must report the enforcement level protecting credential files (`enforced`, `mediated` or `cooperative`) in their capabilities. Revoking a credential stops future authentications. It does not end sessions already authenticated with it; the provider's administration may close those explicitly.

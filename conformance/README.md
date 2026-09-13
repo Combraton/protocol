@@ -58,3 +58,5 @@ A participant under test is launched with a data directory and a JSON launch con
 | `clock.fixed` | Fixed provider clock instant `YYYY-MM-DDTHH:MM:SSZ` (CORE §15.2) |
 
 Keys a participant does not support make it unable to run fixtures that use them. It should refuse to start (nonzero exit) rather than silently ignore them.
+
+**Socket participants.** For `binding: unix`, the runner creates a `0700` socket directory for each launch. It writes deterministic per-run credentials into the launch configuration and authenticates each session unless a step sets `auto_authenticate: false`. Transcripts therefore contain these synthetic test credentials; never point the runner at a provider holding real credentials.

@@ -161,7 +161,7 @@ Outcomes recorded on 2026-09-13. Choices marked **owner** were decided by the ow
 | U9 | Framing and local channel authentication | Framing accepted: [decision 004](../../decisions/004-local-stream-binding.md). The application-level principal credential for Unix sockets is still open; see U12. | owner approval of PR #2 |
 | U10 | Runner and reference implementation language | Accepted: Rust, with non-Rust cross-checks ([decision 001](../../decisions/001-conformance-suite-architecture.md)) | owner input and approval |
 | U11 | Release and profile version numbering | Accepted: semantic versioning for the release; integer profile majors plus named features on the wire | owner approval |
-| U12 | Unix-socket principal credential form | **Open.** The M2 task will bring a concrete recommendation to the owner before sockets are implemented. | owner |
+| U12 | Unix-socket principal credential form | **Credential file + `core.authenticate`** ([decision 006](../../decisions/006-unix-socket-principal-credential.md)) | owner, explicit |
 
 ## 7. Risks
 

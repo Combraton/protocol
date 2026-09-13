@@ -5,6 +5,27 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "skip-authentication",
+        "lets unauthenticated socket sessions negotiate and operate",
+    ),
+    (
+        "distinguishable-auth-failure",
+        "tells callers whether a credential was unknown or revoked",
+    ),
+    ("revoked-credential-accepted", "accepts revoked credentials"),
+    (
+        "echo-credential",
+        "echoes the presented credential in authentication errors",
+    ),
+    (
+        "unchecked-socket-directory",
+        "listens in a socket directory with group or other permissions",
+    ),
+    (
+        "no-cross-session-delivery",
+        "delivers subscription notifications only after the subscriber's own requests",
+    ),
+    (
         "unknown-method-negotiation-required",
         "answers negotiation_required instead of method_not_found for unknown operations before negotiation",
     ),

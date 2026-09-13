@@ -127,6 +127,25 @@
               },
               "config": {
                 "type": "object"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "auto_authenticate": {
+                "type": "boolean"
+              },
+              "credential_principals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "revoked_principals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": false
@@ -155,6 +174,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -183,6 +206,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -212,7 +239,11 @@
               "note": {
                 "type": "string"
               },
-              "payload": {}
+              "payload": {},
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
             },
             "additionalProperties": false
           },
@@ -247,7 +278,11 @@
                 "type": "string"
               },
               "params": {},
-              "id": {}
+              "id": {},
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
             },
             "additionalProperties": false
           },
@@ -310,6 +345,10 @@
                   "string",
                   "boolean"
                 ]
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -357,6 +396,10 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -429,6 +472,10 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -516,6 +563,10 @@
               },
               "terminate": {
                 "type": "boolean"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -545,6 +596,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -573,6 +628,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -601,6 +660,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -630,6 +693,10 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -658,12 +725,145 @@
               },
               "note": {
                 "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "session"
+            ],
+            "properties": {
+              "step": {
+                "const": "connect"
+              },
+              "auto_authenticate": {
+                "type": "boolean"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "principal": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "session"
+            ],
+            "properties": {
+              "step": {
+                "const": "disconnect"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "expect_start_failure"
+              },
+              "config": {
+                "type": "object"
+              },
+              "unsafe_socket_directory": {
+                "type": "boolean"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "credential_principals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "revoked_principals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": false
           }
         ]
       }
+    },
+    "binding": {
+      "enum": [
+        "stdio",
+        "unix"
+      ],
+      "description": "Restrict the fixture to one binding; absent means any."
     }
   },
   "additionalProperties": false,
@@ -680,7 +880,11 @@
         "id_null": {
           "type": "boolean"
         },
-        "params": {}
+        "params": {},
+        "frame_text_excludes": {
+          "type": "array",
+          "items": {}
+        }
       },
       "additionalProperties": false
     }

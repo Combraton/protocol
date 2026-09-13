@@ -36,6 +36,8 @@ cargo test --workspace --locked
 ./target/debug/combraton-conformance check-fixtures
 ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json
 ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json
+./target/debug/combraton-conformance run --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
+./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
 ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
 ```
 
@@ -68,7 +70,9 @@ The **Conformance** GitHub Actions workflow runs all of the above: the Rust job 
 
 ### Limits of this evidence
 
-- Only the stdio form of the stream binding is exercised. Unix sockets, peer-credential authentication, grants, events and subscriptions, capability snapshots and effects are M2 work.
+- **Bindings.** Both the stdio and Unix-socket forms are exercised; the socket participant runs every applicable fixture after automatic authentication.
+- **Socket identity.** Rejecting a peer of a different operating-system user is not tested, because CI has one account (decision 006).
+- **Deferred to M3.** Effects, telemetry lost ranges and backpressure.
 - Two providers are tested: the reference provider (written by the fixture author) and an independent Python provider written from the documents only. The independent one covers Core without `core.grants`, `core.events` or `core.capabilities`, so those M2 features have only one implementation.
 - States reached through launch configuration (restart, generation advancement) are test-environment control, not product operations.
 - No PIO, CBR or benchmark integration has run.

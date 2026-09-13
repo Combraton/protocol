@@ -1,0 +1,52 @@
+{
+  "format": "combraton-conformance-participant/1",
+  "name": "combraton-reference-provider-unix",
+  "version": "0.1.0-dev.0",
+  "description": "Reference Core provider over the Unix-socket binding (not a product). Build first: cargo build -p combraton-reference-provider",
+  "role": "provider",
+  "binding": "unix",
+  "claims": {
+    "profiles": [
+      {
+        "name": "core",
+        "major": 1
+      },
+      {
+        "name": "core-test",
+        "major": 1
+      }
+    ],
+    "features": [
+      "core.grants",
+      "core.events",
+      "core.capabilities"
+    ]
+  },
+  "launch": {
+    "argv": [
+      "{repo}/target/debug/combraton-reference-provider",
+      "--data-dir",
+      "{data_dir}",
+      "--config",
+      "{config_file}",
+      "--schemas",
+      "{repo}/schemas",
+      "--socket",
+      "{socket_path}"
+    ]
+  },
+  "mutants": {
+    "argv": [
+      "--mutant",
+      "{mutant}"
+    ],
+    "names": [
+      "skip-authentication",
+      "distinguishable-auth-failure",
+      "revoked-credential-accepted",
+      "echo-credential",
+      "unchecked-socket-directory",
+      "no-cross-session-delivery"
+    ]
+  }
+}

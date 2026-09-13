@@ -1,6 +1,6 @@
 # Local stream binding `stream/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (stdio form); Unix-socket form in M2.** Supported platforms: macOS and Linux. Milestone M1 specifies the stdio form. M2 adds Unix domain sockets. Evidence and alternatives: [decision 004](../../decisions/004-local-stream-binding.md). Domain semantics: [Core](../profiles/CORE.md).
+> **Status: accepted draft for Protocol 0.1.** Supported platforms: macOS and Linux. §1–§5 (stdio) from M1; §6 (Unix domain sockets) from M2. Evidence and alternatives: [decision 004](../../decisions/004-local-stream-binding.md). Domain semantics: [Core](../profiles/CORE.md).
 
 This binding carries JSON-RPC 2.0 messages over a reliable, ordered byte stream between two local processes. The domain envelope does not depend on it: another binding could carry the same envelopes.
 
@@ -68,14 +68,20 @@ The `data` object always has the members `code`, `retry` and `details` defined i
 - **Inherited descriptors.** A provider MUST NOT let child processes inherit its protocol standard input or output. A harness or tool child writing to the protocol stream would corrupt or inject frames.
 - **Exit.** On end of standard input, after the drain period, the provider exits with status 0. After closing on a frame-level failure (§2) it also exits with status 0. A nonzero status means the provider could not start or failed. Durable state is kept; a new process is a new session over the same state.
 
-## 6. Unix domain socket form (reserved for M2)
+## 6. Unix domain socket form
 
-The planned form, not yet specified normatively:
+Accepted by [decision 006](../../decisions/006-unix-socket-principal-credential.md). Framing, frame-level failures, the JSON-RPC mapping and disconnect rules (§1–§4) are identical to stdio. Each accepted connection is one session.
 
-- A pathname socket, never an abstract one, created with mode `0600` inside a directory with mode `0700` owned by the provider's user.
-- Rejection of peers whose effective user ID differs from the provider's.
+- **Socket placement.**
+  - The provider listens on a pathname socket (never an abstract one) with mode `0600`.
+  - The socket's directory must be owned by the provider's effective user, must not be a symbolic link, and must grant no group or other permissions (mode `0700` or stricter).
+  - Otherwise the provider refuses to start and exits with a nonzero status.
+- **Peer check.** For each accepted connection the provider reads the peer's effective user ID with the operating system's peer-credential facility (`SO_PEERCRED` on Linux, `getpeereid` on macOS). If it differs from the provider's own, the provider closes the connection without reading or writing a frame.
+- **Authentication.** A socket session starts unauthenticated and must authenticate before negotiating ([Core §18](../profiles/CORE.md#18-principal-credentials-on-shared-connections)).
+- **Concurrent sessions.** Many sessions may be open at once, for the same or different principals. They observe one provider state. Commands from different sessions are serialized by the provider's owner transactions.
+- **Lifetime.** Closing one connection does not stop the provider or affect other sessions. How the provider process itself is started and stopped is outside this binding. Conformance launches tie it to the provider's standard input ([conformance README](../../../conformance/README.md#launch-configuration)).
 
-A peer credential proves only "same operating-system user at connect time". It does not distinguish a trusted caller from a coding agent running as the same user. Mapping a connection to a protocol principal therefore needs an application-level credential presented during the handshake. That credential's form is an open owner decision (release plan U12). Windows is unsupported in 0.1 (U4).
+**Security limit.** The socket permissions and peer check establish "same operating-system user". The application-level credential distinguishes principals only if other same-user processes cannot read it (Core §18.3). Windows is unsupported in 0.1 (U4).
 
 ## 7. What this binding does not establish
 

@@ -120,6 +120,15 @@ fn matrix_ids(repo: &Path) -> Result<BTreeSet<String>, String> {
 fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> {
     let fixtures = load_fixtures(&options.repo, None)?;
     let known = matrix_ids(&options.repo)?;
+    let mut known_mutants = BTreeSet::new();
+    for entry in std::fs::read_dir(options.repo.join("conformance/participants"))
+        .map_err(|e| e.to_string())?
+    {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            known_mutants.extend(Descriptor::load(&path)?.mutants);
+        }
+    }
     let mut ok = true;
     let mut ids = BTreeSet::new();
     for fixture in &fixtures {
@@ -139,6 +148,17 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
         {
             if !known.contains(requirement.as_str().unwrap_or_default()) {
                 println!("{label}: requirement {requirement} is not in MATRIX.md");
+                ok = false;
+            }
+        }
+        for mutant in fixture.value["kills"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !known_mutants.contains(mutant) {
+                println!("{label}: declares mutant {mutant} that no participant descriptor lists");
                 ok = false;
             }
         }
@@ -323,22 +343,16 @@ fn real_main() -> Result<bool, String> {
         }
         "check-mutants" => {
             let mut ok = true;
-            for fixture in &fixtures {
-                for mutant in fixture.value["kills"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                {
-                    if !descriptor.mutants.iter().any(|m| m == mutant) {
-                        println!("{}: declares unknown mutant {mutant}", fixture.id());
-                        ok = false;
-                    }
-                }
-            }
+            // Declared kills are checked against all participant descriptors by check-fixtures;
+            // here only fixtures applicable to this participant are run.
+            let fixtures: Vec<&Fixture> = fixtures
+                .iter()
+                .filter(|f| exec::applicable(&f.value, &descriptor).is_ok())
+                .collect();
             for mutant in &descriptor.mutants {
                 let targets: Vec<&Fixture> = fixtures
                     .iter()
+                    .copied()
                     .filter(|f| {
                         f.value["kills"]
                             .as_array()

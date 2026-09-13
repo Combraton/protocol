@@ -1,6 +1,8 @@
 //! Launching a participant under test over the stdio binding, with a transcript.
 
 use std::io::{Read, Write};
+use std::net::Shutdown;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
@@ -13,6 +15,7 @@ const RUNNER_FRAME_LIMIT: usize = 64 * 1024 * 1024;
 
 pub struct Descriptor {
     pub raw: Value,
+    pub binding: String,
     pub name: String,
     pub version: String,
     pub argv: Vec<String>,
@@ -32,8 +35,8 @@ impl Descriptor {
                 path.display()
             ));
         }
-        if raw["binding"] != "stdio" || raw["role"] != "provider" {
-            return Err("only stdio providers are supported in M1".into());
+        if !matches!(raw["binding"].as_str(), Some("stdio" | "unix")) || raw["role"] != "provider" {
+            return Err("participants must be providers with binding stdio or unix".into());
         }
         let strings = |value: &Value| -> Vec<String> {
             value
@@ -45,6 +48,7 @@ impl Descriptor {
                 .collect()
         };
         Ok(Self {
+            binding: raw["binding"].as_str().unwrap_or("stdio").to_string(),
             name: raw["name"].as_str().unwrap_or_default().into(),
             version: raw["version"].as_str().unwrap_or_default().into(),
             argv: strings(&raw["launch"]["argv"]),
@@ -78,12 +82,15 @@ enum Event {
     Eof,
 }
 
+/// One connection to a participant: the stdio pipes of a process it owns, or a Unix socket.
 pub struct Session {
-    child: Child,
-    stdin: Option<ChildStdin>,
+    child: Option<Child>,
+    writer: Option<Box<dyn Write + Send>>,
+    stream: Option<UnixStream>,
     events: Receiver<Event>,
     closed: bool,
     started: Instant,
+    label: String,
     transcript: Vec<Value>,
 }
 
@@ -92,82 +99,169 @@ pub struct Launch<'a> {
     pub repo: &'a Path,
     pub data_dir: &'a Path,
     pub config_file: &'a Path,
+    pub socket_path: Option<&'a Path>,
     pub stderr_file: PathBuf,
     pub mutant: Option<&'a str>,
 }
 
-impl Session {
-    pub fn start(launch: &Launch, started: Instant) -> Result<Self, String> {
-        let substitute = |arg: &str| {
-            arg.replace("{repo}", &launch.repo.display().to_string())
-                .replace("{data_dir}", &launch.data_dir.display().to_string())
-                .replace("{config_file}", &launch.config_file.display().to_string())
-                .replace("{mutant}", launch.mutant.unwrap_or_default())
-        };
-        let mut argv: Vec<String> = launch
-            .descriptor
-            .argv
-            .iter()
-            .map(|a| substitute(a))
-            .collect();
-        if launch.mutant.is_some() {
-            argv.extend(launch.descriptor.mutant_argv.iter().map(|a| substitute(a)));
-        }
-        let (program, rest) = argv
-            .split_first()
-            .ok_or("participant launch argv is empty")?;
-        let stderr = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&launch.stderr_file)
-            .map_err(|e| e.to_string())?;
-        let mut child = Command::new(program)
-            .args(rest)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr))
-            .spawn()
-            .map_err(|e| format!("cannot launch {program}: {e}"))?;
-        let mut stdout = child.stdout.take().ok_or("no stdout")?;
-        let stdin = child.stdin.take();
-        let (sender, events) = channel();
-        thread::spawn(move || {
-            let mut buffer = Vec::new();
-            let mut chunk = [0u8; 65_536];
-            loop {
-                match stdout.read(&mut chunk) {
-                    Ok(0) | Err(_) => {
-                        let _ = sender.send(Event::Eof);
-                        return;
-                    }
-                    Ok(read) => {
-                        buffer.extend_from_slice(&chunk[..read]);
-                        while let Some(newline) = buffer.iter().position(|b| *b == b'\n') {
-                            let frame: Vec<u8> = buffer.drain(..=newline).collect();
-                            if sender
-                                .send(Event::Frame(frame[..frame.len() - 1].to_vec()))
-                                .is_err()
-                            {
-                                return;
-                            }
-                        }
-                        if buffer.len() > RUNNER_FRAME_LIMIT {
-                            let _ = sender.send(Event::Eof);
+fn spawn(launch: &Launch, stdout: Stdio) -> Result<(Child, Vec<String>), String> {
+    let socket = launch
+        .socket_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let substitute = |arg: &str| {
+        arg.replace("{repo}", &launch.repo.display().to_string())
+            .replace("{data_dir}", &launch.data_dir.display().to_string())
+            .replace("{config_file}", &launch.config_file.display().to_string())
+            .replace("{socket_path}", &socket)
+            .replace("{mutant}", launch.mutant.unwrap_or_default())
+    };
+    let mut argv: Vec<String> = launch
+        .descriptor
+        .argv
+        .iter()
+        .map(|a| substitute(a))
+        .collect();
+    if launch.mutant.is_some() {
+        argv.extend(launch.descriptor.mutant_argv.iter().map(|a| substitute(a)));
+    }
+    let (program, rest) = argv
+        .split_first()
+        .ok_or("participant launch argv is empty")?;
+    let stderr = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&launch.stderr_file)
+        .map_err(|e| e.to_string())?;
+    let child = Command::new(program)
+        .args(rest)
+        .stdin(Stdio::piped())
+        .stdout(stdout)
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .map_err(|e| format!("cannot launch {program}: {e}"))?;
+    Ok((child, argv))
+}
+
+fn frame_reader(mut input: impl Read + Send + 'static) -> Receiver<Event> {
+    let (sender, events) = channel();
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 65_536];
+        loop {
+            match input.read(&mut chunk) {
+                Ok(0) | Err(_) => {
+                    let _ = sender.send(Event::Eof);
+                    return;
+                }
+                Ok(read) => {
+                    buffer.extend_from_slice(&chunk[..read]);
+                    while let Some(newline) = buffer.iter().position(|b| *b == b'\n') {
+                        let frame: Vec<u8> = buffer.drain(..=newline).collect();
+                        if sender
+                            .send(Event::Frame(frame[..frame.len() - 1].to_vec()))
+                            .is_err()
+                        {
                             return;
                         }
                     }
+                    if buffer.len() > RUNNER_FRAME_LIMIT {
+                        let _ = sender.send(Event::Eof);
+                        return;
+                    }
                 }
             }
-        });
+        }
+    });
+    events
+}
+
+/// A Unix-socket participant process; it runs until its standard input is closed.
+pub struct Process {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    pub argv: Vec<String>,
+}
+
+impl Process {
+    pub fn spawn(launch: &Launch) -> Result<Self, String> {
+        let (mut child, argv) = spawn(launch, Stdio::null())?;
+        let stdin = child.stdin.take();
+        Ok(Self { child, stdin, argv })
+    }
+
+    pub fn exited(&mut self) -> Option<i32> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
+            _ => None,
+        }
+    }
+
+    /// Close the lifecycle pipe and wait; returns the exit status if the process exited in time.
+    pub fn stop(&mut self, timeout: Duration) -> Option<i32> {
+        self.stdin = None;
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if let Some(code) = self.exited() {
+                return Some(code);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        None
+    }
+
+    pub fn kill(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        if self.stop(Duration::from_millis(500)).is_none() {
+            self.kill();
+        }
+    }
+}
+
+impl Session {
+    pub fn start(launch: &Launch, started: Instant) -> Result<Self, String> {
+        let (mut child, argv) = spawn(launch, Stdio::piped())?;
+        let stdout = child.stdout.take().ok_or("no stdout")?;
+        let stdin = child
+            .stdin
+            .take()
+            .map(|stdin| Box::new(stdin) as Box<dyn Write + Send>);
         let mut session = Self {
-            child,
-            stdin,
-            events,
+            child: Some(child),
+            writer: stdin,
+            stream: None,
+            events: frame_reader(stdout),
             closed: false,
             started,
+            label: "main".into(),
             transcript: Vec::new(),
         };
         session.note("start", &json!({"argv": argv}));
+        Ok(session)
+    }
+
+    pub fn connect(path: &Path, label: &str, started: Instant) -> Result<Self, String> {
+        let stream = UnixStream::connect(path)
+            .map_err(|e| format!("cannot connect to {}: {e}", path.display()))?;
+        let reader = stream.try_clone().map_err(|e| e.to_string())?;
+        let writer = stream.try_clone().map_err(|e| e.to_string())?;
+        let mut session = Self {
+            child: None,
+            writer: Some(Box::new(writer)),
+            stream: Some(stream),
+            events: frame_reader(reader),
+            closed: false,
+            started,
+            label: label.to_string(),
+            transcript: Vec::new(),
+        };
+        session.note("connect", &json!({"socket": path.display().to_string()}));
         Ok(session)
     }
 
@@ -176,7 +270,7 @@ impl Session {
     }
 
     pub fn note(&mut self, event: &str, detail: &Value) {
-        let entry = json!({"t_ms": self.elapsed() as u64, "event": event, "detail": detail});
+        let entry = json!({"t_ms": self.elapsed() as u64, "session": self.label, "event": event, "detail": detail});
         self.transcript.push(entry);
     }
 
@@ -201,8 +295,11 @@ impl Session {
     /// Write bytes; a peer that has already closed is not a runner error.
     pub fn send(&mut self, bytes: &[u8]) {
         self.record_bytes("send", bytes);
-        let failed = match self.stdin.as_mut() {
-            Some(stdin) => stdin.write_all(bytes).and_then(|()| stdin.flush()).is_err(),
+        let failed = match self.writer.as_mut() {
+            Some(writer) => writer
+                .write_all(bytes)
+                .and_then(|()| writer.flush())
+                .is_err(),
             None => true,
         };
         if failed {
@@ -212,7 +309,10 @@ impl Session {
 
     pub fn close_input(&mut self) {
         self.note("close_input", &json!({}));
-        self.stdin = None;
+        self.writer = None;
+        if let Some(stream) = &self.stream {
+            let _ = stream.shutdown(Shutdown::Write);
+        }
     }
 
     pub fn receive(&mut self, timeout: Duration) -> Received {
@@ -233,10 +333,11 @@ impl Session {
         }
     }
 
+    /// Exit status of the owned stdio process, if it exits within `timeout`.
     pub fn wait_exit(&mut self, timeout: Duration) -> Option<i32> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if let Ok(Some(status)) = self.child.try_wait() {
+            if let Some(Ok(Some(status))) = self.child.as_mut().map(Child::try_wait) {
                 self.note("exit", &json!({"code": status.code()}));
                 return Some(status.code().unwrap_or(-1));
             }
@@ -245,12 +346,17 @@ impl Session {
         None
     }
 
-    /// Stop the process and return the transcript.
+    /// Close the connection (and stop an owned stdio process); return the transcript.
     pub fn finish(mut self) -> Vec<Value> {
-        self.stdin = None;
-        if self.wait_exit(Duration::from_millis(2000)).is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+        self.writer = None;
+        if let Some(stream) = &self.stream {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+        if self.child.is_some() && self.wait_exit(Duration::from_millis(2000)).is_none() {
+            if let Some(child) = self.child.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             self.note(
                 "killed",
                 &json!({"reason": "did not exit after input closed"}),

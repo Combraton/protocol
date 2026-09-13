@@ -1,13 +1,13 @@
 //! Executing one fixture against one participant.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
 use crate::matcher::{Vars, matches, render};
-use crate::participant::{Descriptor, Launch, Received, Session};
+use crate::participant::{Descriptor, Launch, Process, Received, Session};
 use crate::schemas::{Schemas, jsonrpc_code, retry_class};
 use crate::strict;
 
@@ -63,31 +63,55 @@ struct State<'a> {
     vars: Vars,
     counter: u64,
     next_id: i64,
-    session: Option<Session>,
-    notifications: VecDeque<Value>,
+    sessions: BTreeMap<String, Session>,
+    active: String,
+    process: Option<Process>,
+    socket_path: Option<PathBuf>,
+    launches: u32,
+    config_principal: String,
+    notifications: BTreeMap<String, VecDeque<Value>>,
     transcript: Vec<Value>,
     started: Instant,
 }
 
-pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
+/// Deterministic per-run credential for a principal (CORE section 18.1 format).
+fn credential_for(work_dir: &Path, principal: &str) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(format!("{}:{principal}", work_dir.display()).as_bytes());
+    format!("ccred1.{principal}.{}", base64_url_nopad(&digest))
+}
+
+fn base64_url_nopad(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let value = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+        let symbols = chunk.len() + 1;
+        for index in 0..symbols {
+            out.push(ALPHABET[((value >> (18 - 6 * index)) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
+/// Whether a fixture applies to a participant (profiles, features, binding).
+pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), String> {
     for profile in fixture["profiles"].as_array().into_iter().flatten() {
         let wanted = (
             profile["name"].as_str().unwrap_or_default().to_string(),
             profile["major"].as_i64().unwrap_or_default(),
         );
-        if !ctx.descriptor.profiles.contains(&wanted) {
-            return CaseResult {
-                outcome: Outcome::NotApplicable,
-                step: None,
-                reason: Some(format!(
-                    "participant does not claim {}/{}",
-                    wanted.0, wanted.1
-                )),
-                transcript: vec![],
-            };
+        if !descriptor.profiles.contains(&wanted) {
+            return Err(format!(
+                "participant does not claim {}/{}",
+                wanted.0, wanted.1
+            ));
         }
     }
-    let claimed_features: Vec<&str> = ctx.descriptor.raw["claims"]["features"]
+    let claimed: Vec<&str> = descriptor.raw["claims"]["features"]
         .as_array()
         .into_iter()
         .flatten()
@@ -99,14 +123,26 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         .flatten()
         .filter_map(Value::as_str)
     {
-        if !claimed_features.contains(&feature) {
-            return CaseResult {
-                outcome: Outcome::NotApplicable,
-                step: None,
-                reason: Some(format!("participant does not claim feature {feature}")),
-                transcript: vec![],
-            };
+        if !claimed.contains(&feature) {
+            return Err(format!("participant does not claim feature {feature}"));
         }
+    }
+    if let Some(binding) = fixture["binding"].as_str()
+        && binding != descriptor.binding
+    {
+        return Err(format!("fixture requires the {binding} binding"));
+    }
+    Ok(())
+}
+
+pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
+    if let Err(reason) = applicable(fixture, ctx.descriptor) {
+        return CaseResult {
+            outcome: Outcome::NotApplicable,
+            step: None,
+            reason: Some(reason),
+            transcript: vec![],
+        };
     }
     if let Err(error) = std::fs::create_dir_all(ctx.work_dir.join("data")) {
         return CaseResult {
@@ -122,8 +158,13 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         vars: Vars::new(),
         counter: 0,
         next_id: 0,
-        session: None,
-        notifications: VecDeque::new(),
+        sessions: BTreeMap::new(),
+        active: "main".into(),
+        process: None,
+        socket_path: None,
+        launches: 0,
+        config_principal: "conformance-caller".into(),
+        notifications: BTreeMap::new(),
         transcript: vec![],
         started: Instant::now(),
     };
@@ -139,9 +180,7 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
             break;
         }
     }
-    if let Some(session) = state.session.take() {
-        state.transcript.extend(session.finish());
-    }
+    state.shutdown();
     let (outcome, step, reason) = match failure {
         None => (Outcome::Pass, None, None),
         Some((index, Fail(reason))) => (Outcome::Fail, Some(index), Some(reason)),
@@ -172,9 +211,42 @@ fn deep_merge(base: &mut Value, overlay: &Value) {
 
 impl State<'_> {
     fn session(&mut self) -> Result<&mut Session, StepError> {
-        self.session
-            .as_mut()
-            .ok_or_else(|| Harness("no participant session; add a start step".into()))
+        let name = self.active.clone();
+        self.sessions.get_mut(&name).ok_or_else(|| {
+            Harness(format!(
+                "no participant session {name:?}; add a start or connect step"
+            ))
+        })
+    }
+
+    fn unix(&self) -> bool {
+        self.ctx.descriptor.binding == "unix"
+    }
+
+    /// Close every session and stop a Unix-socket process; used before relaunching and at the end.
+    fn shutdown(&mut self) {
+        let names: Vec<String> = self.sessions.keys().cloned().collect();
+        for name in names {
+            if let Some(session) = self.sessions.remove(&name) {
+                self.transcript.extend(session.finish());
+            }
+        }
+        if let Some(mut process) = self.process.take()
+            && process.stop(Duration::from_millis(3000)).is_none()
+        {
+            process.kill();
+        }
+    }
+
+    fn authenticate_session(&mut self, principal: &str) -> Result<(), StepError> {
+        let credential = credential_for(&self.ctx.work_dir, principal);
+        let params = json!({"operation": "core.authenticate", "message_id": self.unique("auth"), "payload": {"credential": credential}});
+        self.call(
+            "core.authenticate",
+            params,
+            &json!({"expect": {"ok": {"principal": principal}}}),
+        )
+        .map(|_| ())
     }
 
     fn render(&mut self, template: &Value) -> Result<Value, StepError> {
@@ -183,7 +255,35 @@ impl State<'_> {
 
     fn step(&mut self, step: &Value) -> Result<(), StepError> {
         let kind = step["step"].as_str().unwrap_or_default();
+        self.active = step["session"].as_str().unwrap_or("main").to_string();
         match kind {
+            "connect" => {
+                if !self.unix() {
+                    return Err(Harness("connect needs a unix-binding participant".into()));
+                }
+                let path = self
+                    .socket_path
+                    .clone()
+                    .ok_or_else(|| Harness("connect before start".into()))?;
+                let session = Session::connect(&path, &self.active, self.started).map_err(Fail)?;
+                self.sessions.insert(self.active.clone(), session);
+                if step["auto_authenticate"].as_bool().unwrap_or(true) {
+                    let principal = step["principal"]
+                        .as_str()
+                        .map(String::from)
+                        .unwrap_or_else(|| self.config_principal.clone());
+                    self.authenticate_session(&principal)?;
+                }
+                Ok(())
+            }
+            "disconnect" => {
+                let name = self.active.clone();
+                if let Some(session) = self.sessions.remove(&name) {
+                    self.transcript.extend(session.finish());
+                }
+                Ok(())
+            }
+            "expect_start_failure" => self.expect_start_failure(step),
             "start" => self.start(step),
             "stop" => self.stop(),
             "describe" => {
@@ -240,8 +340,9 @@ impl State<'_> {
                 let timeout = duration(step, Duration::from_millis(3000));
                 match self.session()?.receive(timeout) {
                     Received::Closed => {
-                        // The connection is over: the process may be relaunched by a later start.
-                        if let Some(session) = self.session.take() {
+                        // The connection is over: a later start relaunches the participant.
+                        let name = self.active.clone();
+                        if let Some(session) = self.sessions.remove(&name) {
                             self.transcript.extend(session.finish());
                         }
                         Ok(())
@@ -267,7 +368,12 @@ impl State<'_> {
                 // Barrier: a describe round trip flushes any notification owed before it.
                 let params = json!({"operation": "core.describe", "message_id": self.unique("barrier"), "payload": {}});
                 self.call("core.describe", params, &json!({}))?;
-                match self.notifications.pop_front() {
+                match self
+                    .notifications
+                    .entry(self.active.clone())
+                    .or_default()
+                    .pop_front()
+                {
                     None => Ok(()),
                     Some(frame) => Err(Fail(format!("unexpected notification {frame}"))),
                 }
@@ -285,15 +391,48 @@ impl State<'_> {
         format!("{prefix}-{}", self.counter)
     }
 
-    fn start(&mut self, step: &Value) -> Result<(), StepError> {
-        if self.session.is_some() {
-            return Err(Harness("participant already started".into()));
-        }
+    fn launch_config(&mut self, step: &Value) -> Result<Value, StepError> {
         let mut config =
             json!({"format": "combraton-conformance-config/1", "principal": "conformance-caller"});
         deep_merge(&mut config, &self.fixture["config"]);
         if step.get("config").is_some() {
             deep_merge(&mut config, &step["config"]);
+        }
+        self.config_principal = config["principal"]
+            .as_str()
+            .unwrap_or("conformance-caller")
+            .to_string();
+        if self.unix() {
+            let mut principals: Vec<String> = vec![self.config_principal.clone()];
+            for list in [
+                &config["authority_principals"],
+                &step["credential_principals"],
+                &step["revoked_principals"],
+            ] {
+                principals.extend(
+                    list.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(String::from),
+                );
+            }
+            principals.sort();
+            principals.dedup();
+            let revoked: Vec<&str> = step["revoked_principals"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let mut credentials = Vec::new();
+            for principal in &principals {
+                let credential = credential_for(&self.ctx.work_dir, principal);
+                self.vars
+                    .insert(format!("credential.{principal}"), json!(credential));
+                credentials.push(json!({"credential": credential, "revoked": revoked.contains(&principal.as_str())}));
+            }
+            config["credentials"] = json!(credentials);
         }
         if let Some(error) = self.ctx.schemas.launch_config.iter_errors(&config).next() {
             return Err(Harness(format!(
@@ -301,24 +440,171 @@ impl State<'_> {
                 error.instance_path()
             )));
         }
+        Ok(config)
+    }
+
+    fn prepare_socket_directory(&mut self, unsafe_mode: bool) -> Result<PathBuf, StepError> {
+        use std::os::unix::fs::PermissionsExt;
+        self.launches += 1;
+        let directory = self.ctx.work_dir.join(format!("s{}", self.launches));
+        std::fs::create_dir_all(&directory).map_err(|e| Harness(e.to_string()))?;
+        let mode = if unsafe_mode { 0o777 } else { 0o700 };
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(mode))
+            .map_err(|e| Harness(e.to_string()))?;
+        Ok(directory.join("p.sock"))
+    }
+
+    fn start(&mut self, step: &Value) -> Result<(), StepError> {
+        let config = self.launch_config(step)?;
         let config_file = self.ctx.work_dir.join("config.json");
         std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())
             .map_err(|e| Harness(e.to_string()))?;
+        let data_dir = self.ctx.work_dir.join("data");
+        let stderr_file = self.ctx.work_dir.join("participant-stderr.log");
+        self.notifications.clear();
+        self.vars.remove("negotiation");
+        if !self.unix() {
+            if self.sessions.contains_key("main") {
+                return Err(Harness("participant already started".into()));
+            }
+            let launch = Launch {
+                descriptor: self.ctx.descriptor,
+                repo: self.ctx.repo,
+                data_dir: &data_dir,
+                config_file: &config_file,
+                socket_path: None,
+                stderr_file,
+                mutant: self.ctx.mutant,
+            };
+            self.sessions.insert(
+                "main".into(),
+                Session::start(&launch, self.started).map_err(Harness)?,
+            );
+            return Ok(());
+        }
+        self.shutdown();
+        let socket = self.prepare_socket_directory(false)?;
+        let launch = Launch {
+            descriptor: self.ctx.descriptor,
+            repo: self.ctx.repo,
+            data_dir: &data_dir,
+            config_file: &config_file,
+            socket_path: Some(&socket),
+            stderr_file,
+            mutant: self.ctx.mutant,
+        };
+        let mut process = Process::spawn(&launch).map_err(Harness)?;
+        let deadline = Instant::now() + Duration::from_millis(5000);
+        while !socket.exists() {
+            if let Some(code) = process.exited() {
+                return Err(Fail(format!(
+                    "participant exited with status {code} before listening"
+                )));
+            }
+            if Instant::now() > deadline {
+                return Err(Timeout(
+                    "participant socket did not appear within 5000 ms".into(),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.transcript.push(json!({"t_ms": self.started.elapsed().as_millis() as u64, "event": "start", "detail": {"argv": process.argv}}));
+        self.process = Some(process);
+        self.socket_path = Some(socket.clone());
+        self.active = "main".into();
+        // The socket file can exist a moment before the provider accepts connections.
+        let session = loop {
+            match Session::connect(&socket, "main", self.started) {
+                Ok(session) => break session,
+                Err(error) if Instant::now() > deadline => return Err(Fail(error)),
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+        self.sessions.insert("main".into(), session);
+        if step["auto_authenticate"].as_bool().unwrap_or(true) {
+            let principal = self.config_principal.clone();
+            self.authenticate_session(&principal)?;
+        }
+        Ok(())
+    }
+
+    fn expect_start_failure(&mut self, step: &Value) -> Result<(), StepError> {
+        if !self.unix() {
+            return Err(Harness(
+                "expect_start_failure needs a unix-binding participant".into(),
+            ));
+        }
+        self.shutdown();
+        let config = self.launch_config(step)?;
+        let config_file = self.ctx.work_dir.join("config.json");
+        std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())
+            .map_err(|e| Harness(e.to_string()))?;
+        let socket = self
+            .prepare_socket_directory(step["unsafe_socket_directory"].as_bool().unwrap_or(false))?;
         let data_dir = self.ctx.work_dir.join("data");
         let launch = Launch {
             descriptor: self.ctx.descriptor,
             repo: self.ctx.repo,
             data_dir: &data_dir,
             config_file: &config_file,
+            socket_path: Some(&socket),
             stderr_file: self.ctx.work_dir.join("participant-stderr.log"),
             mutant: self.ctx.mutant,
         };
-        self.session = Some(Session::start(&launch, self.started).map_err(Harness)?);
-        self.vars.remove("negotiation");
-        Ok(())
+        let mut process = Process::spawn(&launch).map_err(Harness)?;
+        let deadline = Instant::now() + Duration::from_millis(5000);
+        loop {
+            if let Some(code) = process.exited() {
+                return if code != 0 && !socket.exists() {
+                    Ok(())
+                } else {
+                    Err(Fail(format!(
+                        "participant exited with status {code}; expected a refusal to start"
+                    )))
+                };
+            }
+            if socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+                process.kill();
+                return Err(Fail(
+                    "participant listened despite the unsafe socket directory".into(),
+                ));
+            }
+            if Instant::now() > deadline {
+                process.kill();
+                return Err(Fail(
+                    "participant neither refused to start nor listened".into(),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn stop(&mut self) -> Result<(), StepError> {
+        if self.unix() {
+            let names: Vec<String> = self.sessions.keys().cloned().collect();
+            for name in names {
+                if let Some(session) = self.sessions.remove(&name) {
+                    self.transcript.extend(session.finish());
+                }
+            }
+            let mut process = self
+                .process
+                .take()
+                .ok_or_else(|| Harness("stop before start".into()))?;
+            return match process.stop(Duration::from_millis(5000)) {
+                Some(0) => Ok(()),
+                Some(code) => Err(Fail(format!(
+                    "participant exited with status {code} after its input ended; 0 is required"
+                ))),
+                None => {
+                    process.kill();
+                    Err(Fail(
+                        "participant did not exit after its input ended".into(),
+                    ))
+                }
+            };
+        }
+        self.active = "main".into();
         let session = self.session()?;
         session.close_input();
         match session.receive(Duration::from_millis(5000)) {
@@ -339,7 +625,7 @@ impl State<'_> {
                 )));
             }
         }
-        let session = self.session.take().unwrap();
+        let session = self.sessions.remove("main").unwrap();
         self.transcript.extend(session.finish());
         Ok(())
     }
@@ -482,7 +768,10 @@ impl State<'_> {
                 self.receive_raw_frame(deadline.saturating_duration_since(Instant::now()))?;
             if frame.get("id").is_none() && frame.get("method").is_some() {
                 self.ctx.schemas.check_notification(&frame).map_err(Fail)?;
-                self.notifications.push_back(frame);
+                self.notifications
+                    .entry(self.active.clone())
+                    .or_default()
+                    .push_back(frame);
                 continue;
             }
             return Ok(frame);
@@ -490,7 +779,12 @@ impl State<'_> {
     }
 
     fn next_notification(&mut self, timeout: Duration) -> Result<Value, StepError> {
-        if let Some(frame) = self.notifications.pop_front() {
+        if let Some(frame) = self
+            .notifications
+            .entry(self.active.clone())
+            .or_default()
+            .pop_front()
+        {
             return Ok(frame);
         }
         let frame = self.receive_raw_frame(timeout)?;
@@ -551,6 +845,17 @@ impl State<'_> {
             .schemas
             .check_response(frame, method)
             .map_err(Fail)?;
+        if let Some(excluded) = expect.get("frame_text_excludes").and_then(Value::as_array) {
+            let text = frame.to_string();
+            for item in excluded {
+                let rendered = render(item, &self.vars, &mut 0).map_err(Harness)?;
+                if let Some(needle) = rendered.as_str()
+                    && text.contains(needle)
+                {
+                    return Err(Fail("frame contains text it must not reveal".into()));
+                }
+            }
+        }
         if let Some(pattern) = expect.get("ok") {
             let result = frame.get("result").ok_or_else(|| {
                 Fail(format!(

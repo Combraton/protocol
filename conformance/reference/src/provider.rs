@@ -53,6 +53,11 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.authenticate",
+        profile: "core",
+        command: false,
+    },
+    Operation {
         name: "core.grant.issue",
         profile: "core",
         command: true,
@@ -177,7 +182,18 @@ pub fn error_response(id: Value, code: &str, details: Value) -> Value {
     })
 }
 
+/// A credential accepted on shared transports (CORE section 18); only its digest is kept.
+pub struct Credential {
+    pub principal: String,
+    pub digest: String,
+    pub revoked: bool,
+}
+
+/// Serializes command and query processing across sessions of one process (CORE section 10).
+static PROCESSING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Session principal and provider-local authority configuration (CORE section 15.1).
+#[derive(Clone)]
 pub struct Identity {
     /// Current capability predicates (CORE section 17).
     pub capabilities: Value,
@@ -192,7 +208,11 @@ pub struct Provider {
     mutants: Mutants,
     identity: Identity,
     limits: Limits,
-    validators: HashMap<&'static str, Validator>,
+    validators: std::sync::Arc<HashMap<&'static str, Validator>>,
+    requires_authentication: bool,
+    authenticated: bool,
+    credentials: std::sync::Arc<Vec<Credential>>,
+    authentication_failures: u32,
     /// Selected profile name -> negotiated features.
     selected: Option<BTreeMap<String, Vec<String>>>,
     subscriptions: Vec<Subscription>,
@@ -215,7 +235,9 @@ impl Provider {
         mutants: Mutants,
         identity: Identity,
         limits: Limits,
-        validators: HashMap<&'static str, Validator>,
+        validators: std::sync::Arc<HashMap<&'static str, Validator>>,
+        requires_authentication: bool,
+        credentials: std::sync::Arc<Vec<Credential>>,
     ) -> Self {
         Self {
             store,
@@ -223,6 +245,10 @@ impl Provider {
             identity,
             limits,
             validators,
+            requires_authentication,
+            authenticated: false,
+            credentials,
+            authentication_failures: 0,
             selected: None,
             subscriptions: Vec::new(),
             next_subscription: 0,
@@ -244,6 +270,9 @@ impl Provider {
 
     /// Handle one request. `id` is the validated JSON-RPC id.
     pub fn handle(&mut self, id: Value, method: &str, params: Value) -> Value {
+        let _guard = PROCESSING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match self.process(&id, method, params) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
             Err(Reject { code, details }) => error_response(id, code, details),
@@ -271,7 +300,17 @@ impl Provider {
             .iter()
             .find(|op| op.name == route)
             .ok_or_else(|| reject("method_not_found", json!({"operation": route})))?;
-        let pre_negotiation = matches!(operation.name, "core.describe" | "core.negotiate");
+        if self.requires_authentication
+            && !self.authenticated
+            && !matches!(operation.name, "core.describe" | "core.authenticate")
+            && !self.mutants.on("skip-authentication")
+        {
+            return Err(reject("authentication_required", json!({})));
+        }
+        let pre_negotiation = matches!(
+            operation.name,
+            "core.describe" | "core.negotiate" | "core.authenticate"
+        );
         if !pre_negotiation {
             match &self.selected {
                 None if !self.mutants.on("no-negotiation-gate") => {
@@ -567,6 +606,47 @@ impl Provider {
             index += 1;
         }
         Ok(ids)
+    }
+
+    /// CORE section 18.2. Failures are indistinguishable and never echo the credential.
+    fn authenticate(&mut self, payload: &Value) -> Result<Value, Reject> {
+        if !self.requires_authentication || self.authenticated {
+            return Err(reject("already_authenticated", json!({})));
+        }
+        let credential = payload["credential"].as_str().unwrap_or_default();
+        let digest = sha256_digest(credential.as_bytes());
+        let mut found: Option<&Credential> = None;
+        for candidate in self.credentials.iter() {
+            let equal = candidate.digest.len() == digest.len()
+                && candidate
+                    .digest
+                    .bytes()
+                    .zip(digest.bytes())
+                    .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                    == 0;
+            if equal {
+                found = Some(candidate);
+            }
+        }
+        match found {
+            Some(entry) if !entry.revoked || self.mutants.on("revoked-credential-accepted") => {
+                self.identity.principal = entry.principal.clone();
+                self.authenticated = true;
+                Ok(json!({"principal": entry.principal}))
+            }
+            other => {
+                self.authentication_failures += 1;
+                let mut details = json!({});
+                if self.mutants.on("distinguishable-auth-failure") {
+                    details =
+                        json!({"reason": if other.is_some() { "revoked" } else { "unknown" }});
+                }
+                if self.mutants.on("echo-credential") {
+                    details = json!({"credential": credential});
+                }
+                Err(reject("authentication_failed", details))
+            }
+        }
     }
 
     fn check_capabilities(&self, operation: &str) -> Result<(), Reject> {
@@ -996,6 +1076,7 @@ impl Provider {
         match operation {
             "core.describe" => self.describe(),
             "core.negotiate" => self.negotiate(&params["payload"]),
+            "core.authenticate" => self.authenticate(&params["payload"]),
             "core.events.read" => self.events_read(params),
             "core.capabilities" => Ok(json!({
                 "revision": self.store.capability_revision().map_err(storage)?,

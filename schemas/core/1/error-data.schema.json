@@ -37,7 +37,10 @@
         "unavailable",
         "internal_error",
         "invalid_cursor",
-        "capability_unavailable"
+        "capability_unavailable",
+        "authentication_required",
+        "authentication_failed",
+        "already_authenticated"
       ]
     },
     "retry": {

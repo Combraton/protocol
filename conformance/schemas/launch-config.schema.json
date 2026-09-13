@@ -100,6 +100,26 @@
         }
       },
       "additionalProperties": false
+    },
+    "credentials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "type": "string",
+            "pattern": "^ccred1\\.[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}\\.[A-Za-z0-9_-]{43}$",
+            "maxLength": 200
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

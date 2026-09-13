@@ -1,6 +1,6 @@
 # Canonical encoding and digests `encoding/1` — release draft
 
-> **Status: proposed draft for Protocol 0.1, milestone M1.** Evidence and alternatives: [decision 003](../../decisions/003-canonical-encoding-and-digests.md). Test vectors: `conformance/vectors/encoding.json`, added with the M1 implementation.
+> **Status: accepted draft for Protocol 0.1.** Not yet released. Evidence and alternatives: [decision 003](../../decisions/003-canonical-encoding-and-digests.md). Test vectors: `conformance/vectors/encoding.json`, added with the M1 implementation.
 
 ## 1. The JSON value domain
 

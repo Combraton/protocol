@@ -1,6 +1,6 @@
 # 005: Deduplication identity, binding and generations
 
-- **Status:** proposed. This is a public-semantics choice and needs owner review.
+- **Status:** accepted on 2026-09-13. Owner approval on 2026-09-13 ("yes things looks good"), with the instruction to merge PR #2. Changes need a new versioned decision.
 - **Date:** 2026-09-13.
 - **Owner/authority:** Protocol session under the Protocol 0.1 kickoff; [tracking issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Affects:** [Core §6 and §10](../spec/profiles/CORE.md#6-command-identity-and-idempotency); every command operation in every profile. Matrix rows CORE-7, CORE-8, CORE-9, CORE-10.
@@ -32,7 +32,7 @@ Inference from these sources:
 - Comparing request content under a key (Stripe, EC2) is established practice, and so is not recording requests that never began executing (Stripe).
 - Time-based pruning with treat-as-new is exactly the behavior SPEC rules out. Any time-to-live scheme also needs synchronized or trusted clocks to decide whether a token is too old.
 
-## Decision (proposed)
+## Decision
 
 1. **Command intent digest.** Two transmissions are the same command when they have the same deduplication key and the same digest over these intent members: `operation`, `subject`, `preconditions`, `requires`, `payload`, and the required extensions.
    - Transmission metadata is excluded: message ID, transport ID, authority epoch, correlation, causation, optional extensions and generation. A reconnecting caller can retransmit under a new epoch without creating a conflict.

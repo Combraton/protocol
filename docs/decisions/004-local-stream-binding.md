@@ -1,6 +1,6 @@
 # 004: Local stream binding and framing
 
-- **Status:** proposed. Needs owner review before release; the Unix-socket principal credential is an open owner decision.
+- **Status:** accepted on 2026-09-13 for framing, JSON-RPC mapping and stdio (Owner approval on 2026-09-13 ("yes things looks good"), with the instruction to merge PR #2). The Unix-socket principal credential remains open (release plan U12).
 - **Date:** 2026-09-13.
 - **Owner/authority:** Protocol session under the Protocol 0.1 kickoff; [tracking issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Affects:** [STREAM binding](../spec/bindings/STREAM.md); matrix rows TRN-1, TRN-2, TRN-3, TRN-5, CORE-1, CORE-5.
@@ -40,7 +40,7 @@ The following are inference from these sources:
 - Operating-system peer credentials establish only "same user". Coding agents launched by PIO usually run as that user, so a same-user check cannot tell PIO's client from an agent.
 - Silently skipping invalid lines, as MCP-TS and Codex do, hides bugs and stdout pollution on a local link.
 
-## Decision (proposed)
+## Decision
 
 - **Framing: bounded newline-delimited JSON**, identical over stdio and Unix sockets.
   - Strict UTF-8 and I-JSON.
@@ -56,8 +56,8 @@ The following are inference from these sources:
   - Binding errors use reserved or implementation-defined codes, avoiding `−32001` because Codex uses it differently.
 - **Disconnect** is neither cancellation nor confirmation; callers reconcile by command identity.
 - **stdio principal:** assigned by the spawner's launch configuration. Protocol descriptors must not be inherited by children.
-- **Unix sockets (M2):** 0700 directory, 0600 pathname socket and a same-user check, **plus** an application-level credential in the handshake to establish the protocol principal. The credential's form is open for the owner (release plan U3/U9).
-- **Windows named pipes:** deferred (U4).
+- **Unix sockets (M2):** 0700 directory, 0600 pathname socket and a same-user check, **plus** an application-level credential in the handshake to establish the protocol principal. The credential's form is open for the owner (release plan U12).
+- **Windows:** unsupported in 0.1; the owner selected macOS and Linux only (U4).
 
 ## Alternatives
 

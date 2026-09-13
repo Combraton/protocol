@@ -7,3 +7,4 @@ edition = "2024"
 version = "0.1.0-dev.0"
 publish = false
 rust-version = "1.97"
+license = "MIT"

@@ -47,11 +47,11 @@ Define a minimal versioned schema slice and deterministic conformance fixtures f
 
 Keep schemas language-neutral, with separately versioned bindings and a tested consumer compatibility matrix. Local JSON-RPC over bounded authenticated transport is a starting preference; encoding, framing and digest rules must be specified and tested.
 
-See [BOOTSTRAP](https://github.com/Combraton/combraton/blob/main/BOOTSTRAP.md). This bootstrap contains no generated SDK or selected license; the repository is public and its project license remains to be selected.
+See [BOOTSTRAP](https://github.com/Combraton/combraton/blob/main/BOOTSTRAP.md). This repository contains no generated SDK. It is licensed under the [MIT License](LICENSE), selected by the owner on 2026-09-13.
 
 ## Working on this repository
 
-Read [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md), [the documentation map](docs/README.md), and [verification](docs/VERIFICATION.md). Use existing native harnesses for development. **Combraton self-development is deferred until usable v0.1 releases of all four projects.** Public visibility does not select a license; no project license has been added yet.
+Read [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md), [the documentation map](docs/README.md), and [verification](docs/VERIFICATION.md). Use existing native harnesses for development. **Combraton self-development is deferred until usable v0.1 releases of all four projects.** Contributions are accepted under the [MIT License](LICENSE).
 
 ## Standalone-first validation
 

@@ -3,6 +3,7 @@ name = "combraton-crosscheck"
 version = "0.1.0.dev0"
 description = "Independent (non-Rust) cross-checks for Combraton Protocol conformance vectors"
 requires-python = ">=3.12"
+license = "MIT"
 dependencies = ["rfc8785==0.1.4"]
 
 [build-system]

@@ -1,6 +1,6 @@
 # 002: Schema language and extensibility rules
 
-- **Status:** proposed. Needs owner review before release.
+- **Status:** accepted on 2026-09-13. Owner approval on 2026-09-13 ("yes things looks good"), with the instruction to merge PR #2. Changes need a new versioned decision.
 - **Date:** 2026-09-13.
 - **Owner/authority:** Protocol session under the Protocol 0.1 kickoff; [tracking issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Affects:** every file under `schemas/`; [Core §5](../spec/profiles/CORE.md#5-envelopes); matrix rows REL-1, CORE-3, CORE-4.
@@ -29,7 +29,7 @@ A read-only research pass on 2026-09-13 inspected:
   - [RFC 8446 §4.2](https://www.rfc-editor.org/rfc/rfc8446#section-4.2).
   - Kubernetes strict field validation, per [API concepts](https://github.com/kubernetes/website/blob/8650a29/content/en/docs/reference/using-api/api-concepts.md).
 
-## Decision (proposed)
+## Decision
 
 1. **Schema language.** Normative schemas use JSON Schema 2020-12, one file per message type, organized as `schemas/<profile>/<major>/`.
    - Core and profile objects are closed with `unevaluatedProperties: false`.

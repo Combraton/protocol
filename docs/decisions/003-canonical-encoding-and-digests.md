@@ -1,6 +1,6 @@
 # 003: Canonical encoding and digest representation
 
-- **Status:** proposed. Needs owner review before release.
+- **Status:** accepted on 2026-09-13. Owner approval on 2026-09-13 ("yes things looks good"), with the instruction to merge PR #2. Changes need a new versioned decision.
 - **Date:** 2026-09-13.
 - **Owner/authority:** Protocol session under the Protocol 0.1 kickoff; [tracking issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Affects:** [ENCODING](../spec/bindings/ENCODING.md), the JSON value rules in [STREAM](../spec/bindings/STREAM.md), the command digest in [Core §6](../spec/profiles/CORE.md#6-command-identity-and-idempotency), and later content digests. Matrix rows CORE-6, CORE-7.
@@ -28,7 +28,7 @@ A read-only research pass on 2026-09-13, including a local interoperability prob
   - [in-toto DigestSet](https://github.com/in-toto/attestation/blob/2dcd055e9f72e746687c306e35f4e59720ff45be/spec/v1/digest_set.md): algorithm map, consumers ignore unrecognized algorithms.
   - [SRI 2](https://www.w3.org/TR/sri-2/): unknown algorithms fail open.
 
-## Decision (proposed)
+## Decision
 
 1. **Value domain stricter than I-JSON.**
    - Integers only, within ±(2^53 − 1), without fraction, exponent or `-0`. Decimals and large numbers go in strings.

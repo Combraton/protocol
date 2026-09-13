@@ -1,6 +1,6 @@
 # Local stream binding `stream/1` — release draft
 
-> **Status: proposed draft for Protocol 0.1.** Milestone M1 specifies the stdio form. M2 adds Unix domain sockets. Evidence and alternatives: [decision 004](../../decisions/004-local-stream-binding.md). Domain semantics: [Core](../profiles/CORE.md).
+> **Status: accepted draft for Protocol 0.1 (stdio form); Unix-socket form in M2.** Supported platforms: macOS and Linux. Milestone M1 specifies the stdio form. M2 adds Unix domain sockets. Evidence and alternatives: [decision 004](../../decisions/004-local-stream-binding.md). Domain semantics: [Core](../profiles/CORE.md).
 
 This binding carries JSON-RPC 2.0 messages over a reliable, ordered byte stream between two local processes. The domain envelope does not depend on it: another binding could carry the same envelopes.
 
@@ -74,7 +74,7 @@ The planned form, not yet specified normatively:
 - A pathname socket, never an abstract one, created with mode `0600` inside a directory with mode `0700` owned by the provider's user.
 - Rejection of peers whose effective user ID differs from the provider's.
 
-A peer credential proves only "same operating-system user at connect time". It does not distinguish a trusted caller from a coding agent running as the same user. Mapping a connection to a protocol principal therefore needs an application-level credential presented during the handshake. That credential's form is an open owner decision (release plan U3/U9). Windows is deferred (U4).
+A peer credential proves only "same operating-system user at connect time". It does not distinguish a trusted caller from a coding agent running as the same user. Mapping a connection to a protocol principal therefore needs an application-level credential presented during the handshake. That credential's form is an open owner decision (release plan U12). Windows is unsupported in 0.1 (U4).
 
 ## 7. What this binding does not establish
 

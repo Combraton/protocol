@@ -1,6 +1,6 @@
 # Protocol 0.1 requirements-to-acceptance matrix
 
-**Status:** proposed with the [release plan](PLAN.md); not accepted. Requirement text summarizes the cited source and does not replace it. Fixture IDs are assigned when fixtures are written; until then the acceptance column states what the evidence must distinguish.
+**Status:** accepted with the [release plan](PLAN.md) scope on 2026-09-13; rows are satisfied only by the evidence described. Requirement text summarizes the cited source and does not replace it. Fixture IDs are assigned when fixtures are written; until then the acceptance column states what the evidence must distinguish.
 
 ## How to read this
 

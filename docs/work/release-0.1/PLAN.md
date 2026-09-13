@@ -1,6 +1,6 @@
 # Protocol 0.1 standalone release plan
 
-- **Status:** **proposed** by the Protocol session on 2026-09-13. The owner has not accepted this scope. Nothing here is a released contract.
+- **Status:** proposed by the Protocol session on 2026-09-13; **scope accepted** by the owner the same day (Owner approval on 2026-09-13 ("yes things looks good"), with the instruction to merge PR #2). Owner decisions are recorded in §6. Accepting the scope is not a release: nothing here is a released contract until the owner accepts the 0.1 release itself.
 - **Tracking issue:** [Combraton/protocol#1](https://github.com/Combraton/protocol/issues/1) owns live progress. This file explains how the work fits together; it is not a second task board.
 - **Requirements-to-acceptance matrix:** [MATRIX](MATRIX.md). **Handoff:** [HANDOFF](HANDOFF.md).
 - **Working branch:** `release-0.1/foundation`, based on `main` at `f654a29bd6574a75d8ce7c7b76d6a67ef22b45ea`.
@@ -65,7 +65,7 @@ These are absent from 0.1. Absence is declared in the manifest and returns an ex
 | Signed envelopes and offline signature verification | Deferred with Remote trust | [SPEC §10](../../spec/SPEC.md#10-artifacts-and-attestations) requires signatures only across trust boundaries. Local authenticated provenance stays in scope. |
 | Observing an external controller's reliance decisions (`observe_decision` from a Coordination authority) | Deferred with Coordination | Standalone 0.1 uses a local authority binding. |
 | in-toto/SLSA export shapes | Deferred optional feature | Useful for exchange, not needed by standalone PIO/CBR interoperability. |
-| Windows named-pipe transport binding | Proposed deferral; see [open choices](#6-unresolved-choices-that-affect-scope-or-public-semantics) | Needs a consumer that targets Windows and platform tests. |
+| Windows (named pipes or AF_UNIX) transport and Windows CI | Unsupported in 0.1: the owner selected macOS and Linux only (U4) | Needs a consumer that targets Windows and platform tests. |
 | Generated language SDKs as normative artifacts | Proposed deferral; see open choices | Schemas and fixtures are the contract. Bindings are versioned separately. |
 | MCP/ACP wrappers, OTLP telemetry mapping | Out of scope | Integration options at other boundaries ([SPEC §1](../../spec/SPEC.md#1-purpose)), not protocol profiles. |
 | Performance or task-quality thresholds | Out of scope | They belong to declared evaluation plans in benchmarks. |
@@ -134,23 +134,24 @@ All KNW and VER rows. Adds scenarios for a provider reconnecting with a changed 
 
 Compatibility fixtures across versions, the minimal third-party executor and evidence publisher, consumer compatibility matrix, complete operation documentation, license, release record and checksums. Owner review and acceptance. Publishing or tagging the release requires the owner's authorization.
 
-## 6. Unresolved choices that affect scope or public semantics
+## 6. Choices that affect scope or public semantics
 
-Each has a recommendation. Choices marked **owner** need the owner's decision; the others are recorded as proposed decision records and can change on evidence before release.
+Outcomes recorded on 2026-09-13. Choices marked **owner** were decided by the owner; the others are accepted decision records that can still change through a new versioned decision on evidence.
 
-| # | Choice | Recommendation | Who decides |
+| # | Choice | Outcome | Authority |
 |---|---|---|---|
-| U1 | Accept the profile scope in §3.2, including Knowledge and Verification in 0.1 | Accept. The PLAN's Phase 1 names both, and standalone CBR exposes Knowledge operations. | **owner** |
-| U2 | Verification depth | Receipts plus `evaluate_contract` job references. No signing, no evaluator orchestration semantics. | **owner** |
-| U3 | Grant representation for local 0.1 | Provider-held grant records referenced by ID, with audience, scope, rights, epoch, expiry and delegation bounds. The caller creates a scoped read grant at CBR for PIO before a direct fetch. Bearer capability tokens wait for Remote trust. | **owner** (public semantics) |
-| U4 | Windows named-pipe binding | Defer. Keep the binding abstract so it can be added without changing domain semantics. | **owner** (affects PIO/CBR platform matrix) |
-| U5 | Normative language bindings | None normative in 0.1. Consumers generate or hand-write from schemas; any published binding is separately versioned. | **owner** |
-| U6 | Project license | Required before a usable public release. The owner selects it; this plan does not. | **owner** |
-| U7 | Schema language and fixture format | See the schema decision record (proposed). | Protocol, with owner review |
-| U8 | Canonical encoding and digest grammar | See the digest decision record (proposed). | Protocol, with owner review |
-| U9 | Framing and local channel authentication | See the transport decision record (proposed). | Protocol, with owner review |
-| U10 | Runner and reference implementation language and packaging | Rust runner and reference provider (one Cargo workspace), because the owner stated on 2026-09-13 that PIO, CBR and the control plane are Rust. Encoding vectors are also checked by Python and Node, and the M2 independent implementation is non-Rust. See decision 001. | Protocol, with owner review |
-| U11 | Release and profile version numbering | Release uses semantic versioning (`0.1.0`). Each profile has an integer major version on the wire plus named features for additive changes. | Protocol, with owner review |
+| U1 | Profile scope in §3.2, including Knowledge and Verification | **Accepted** as recommended | owner approval |
+| U2 | Verification depth | **Accepted:** receipts plus `evaluate_contract` job references; no signing or evaluator orchestration | owner approval |
+| U3 | Grant representation for local 0.1 | **Accepted:** provider-held grant records referenced by ID, with audience, scope, rights, epoch, expiry and delegation bounds. Bearer tokens wait for Remote trust. | owner approval |
+| U4 | Supported platforms and transports | **macOS and Linux only** for 0.1. Windows is unsupported; the binding stays abstract so it can be added later. | owner, explicit |
+| U5 | Normative language bindings | **Accepted:** none normative in 0.1 | owner approval |
+| U6 | Project license | **MIT** ([LICENSE](../../../LICENSE)) | owner, explicit |
+| U7 | Schema language and fixture format | Accepted: [decision 002](../../decisions/002-schema-language-and-extensibility.md) | owner approval of PR #2 |
+| U8 | Canonical encoding and digest grammar | Accepted: [decision 003](../../decisions/003-canonical-encoding-and-digests.md) | owner approval of PR #2 |
+| U9 | Framing and local channel authentication | Framing accepted: [decision 004](../../decisions/004-local-stream-binding.md). The application-level principal credential for Unix sockets is still open; see U12. | owner approval of PR #2 |
+| U10 | Runner and reference implementation language | Accepted: Rust, with non-Rust cross-checks ([decision 001](../../decisions/001-conformance-suite-architecture.md)) | owner input and approval |
+| U11 | Release and profile version numbering | Accepted: semantic versioning for the release; integer profile majors plus named features on the wire | owner approval |
+| U12 | Unix-socket principal credential form | **Open.** The M2 task will bring a concrete recommendation to the owner before sockets are implemented. | owner |
 
 ## 7. Risks
 

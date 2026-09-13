@@ -1,6 +1,6 @@
 # 001: Conformance suite architecture
 
-- **Status:** proposed. Needs owner review before release.
+- **Status:** accepted on 2026-09-13. Owner approval on 2026-09-13 ("yes things looks good"), with the instruction to merge PR #2. Changes need a new versioned decision.
 - **Date:** 2026-09-13.
 - **Owner/authority:** Protocol session under the Protocol 0.1 kickoff; [tracking issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Affects:** every release fixture, the result manifest and how PIO, CBR and benchmarks run conformance. Matrix rows REL-5, REL-6, REL-8, CMP-4.
@@ -27,7 +27,7 @@ A read-only research pass on 2026-09-13 inspected these sources at pinned commit
 
 Inference drawn from these sources, not stated by any of them: once fixtures are data, the runner's language matters mainly for reuse and for avoiding shared libraries with the implementations under test.
 
-## Decision (proposed)
+## Decision
 
 1. **Fixtures are declarative JSON data** with their own schema. Each carries:
    - a stable ID and integer version;

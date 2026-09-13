@@ -219,7 +219,7 @@ class Provider:
             return
         rid = msg["id"]
         if not valid_request_id(rid):
-            self.write_frame(error_object(None, "invalid_request", {}, "request id must be a 1-128 byte string or a safe integer"))
+            self.write_frame(error_object(None, "invalid_request", {}, "request id must be a 1-128 code point string or a safe integer"))
             return
         if (
             msg.get("jsonrpc") != "2.0"
@@ -499,7 +499,7 @@ def valid_request_id(rid) -> bool:
     if isinstance(rid, int):
         return -V.MAX_SAFE <= rid <= V.MAX_SAFE
     if isinstance(rid, str):
-        return 1 <= len(rid.encode("utf-8")) <= 128
+        return 1 <= len(rid) <= 128  # code points (STREAM §3 as resolved in M2-DIVERGENCES D-STREAM-ID)
     return False
 
 

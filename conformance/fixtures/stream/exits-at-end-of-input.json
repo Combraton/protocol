@@ -1,8 +1,8 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "stream.exits-at-end-of-input",
-  "version": 1,
-  "title": "The provider closes its output and exits when its input ends",
+  "version": 2,
+  "title": "The provider closes its output and exits with status 0 when its input ends",
   "requirements": [
     "TRN-2",
     "TRN-5"
@@ -17,8 +17,10 @@
       "major": 1
     }
   ],
-  "polarity": "positive",
-  "kills": [],
+  "polarity": "negative",
+  "kills": [
+    "exit-nonzero-at-end-of-input"
+  ],
   "steps": [
     {
       "step": "start"

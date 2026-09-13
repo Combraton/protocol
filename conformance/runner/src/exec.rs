@@ -239,7 +239,13 @@ impl State<'_> {
             "expect_close" => {
                 let timeout = duration(step, Duration::from_millis(3000));
                 match self.session()?.receive(timeout) {
-                    Received::Closed => Ok(()),
+                    Received::Closed => {
+                        // The connection is over: the process may be relaunched by a later start.
+                        if let Some(session) = self.session.take() {
+                            self.transcript.extend(session.finish());
+                        }
+                        Ok(())
+                    }
                     Received::Timeout => Err(Fail("connection was not closed".into())),
                     Received::Frame(frame) => Err(Fail(format!(
                         "expected the connection to close, received {}",
@@ -324,8 +330,14 @@ impl State<'_> {
             }
             Received::Frame(_) => return Err(Fail("unexpected frame after input ended".into())),
         }
-        if session.wait_exit(Duration::from_millis(5000)).is_none() {
-            return Err(Fail("participant did not exit after input ended".into()));
+        match session.wait_exit(Duration::from_millis(5000)) {
+            None => return Err(Fail("participant did not exit after input ended".into())),
+            Some(0) => {}
+            Some(code) => {
+                return Err(Fail(format!(
+                    "participant exited with status {code} after input ended; STREAM section 5 requires 0"
+                )));
+            }
         }
         let session = self.session.take().unwrap();
         self.transcript.extend(session.finish());
@@ -581,6 +593,9 @@ impl State<'_> {
             }
             if expect.get("id_null") == Some(&json!(true)) && frame["id"] != Value::Null {
                 return Err(Fail("error must have id null".into()));
+            }
+            if let Some(pattern) = expect.get("frame") {
+                matches(pattern, Some(frame), &self.vars, "frame").map_err(Fail)?;
             }
             return Ok(());
         }

@@ -1,5 +1,7 @@
 # Divergences, ambiguities and unchecked requirements
 
+> Resolutions of these findings are recorded in [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md).
+>
 > Findings from writing an independent Core provider using only the published documents (CORE, STREAM, ENCODING, schemas, fixtures, vectors). Protocol 0.1 draft at base commit `f42d21a`. See [README](README.md) for what was and was not read.
 
 ## How to read this
@@ -47,6 +49,7 @@ Other work around the runs:
 - **Chosen:** bytes, following the prose. The request gets `invalid_request` with `id: null`.
 - **Fixtures:** none. `stream.whitespace-blank-frames-and-string-ids` uses a short non-ASCII id.
 - **Basis:** spec text. The schema and the prose should agree.
+- **Resolution (2026-09-13):** the specification now says code points, matching the schema ([resolution record](../../../docs/work/release-0.1/M2-DIVERGENCES.md)). The Protocol session changed this implementation's one-line check to follow it; no other code was changed.
 
 ### D-TESTCTL — test control: a channel or launch configuration?
 

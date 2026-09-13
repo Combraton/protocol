@@ -83,7 +83,12 @@ impl Store {
     }
 
     /// Launch-configuration retention policy: advance generations and discard old records.
-    pub fn apply_retention(&mut self, advance: i64, retain: i64) -> rusqlite::Result<()> {
+    pub fn apply_retention(
+        &mut self,
+        advance: i64,
+        retain: i64,
+        off_by_one: bool,
+    ) -> rusqlite::Result<()> {
         let tx = self.connection.transaction()?;
         let current: i64 = tx.query_row(
             "SELECT value FROM meta WHERE key='dedupe_current'",
@@ -96,7 +101,7 @@ impl Store {
             |r| r.get(0),
         )?;
         let current = current + advance;
-        let oldest = oldest.max(current - retain + 1);
+        let oldest = oldest.max(current - retain + if off_by_one { 0 } else { 1 });
         tx.execute(
             "UPDATE meta SET value=?1 WHERE key='dedupe_current'",
             [current],

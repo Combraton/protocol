@@ -131,7 +131,7 @@ fn run(args: Args) -> Result<(), String> {
         .as_i64()
         .unwrap_or(1_000_000);
     store
-        .apply_retention(advance, retain.max(1))
+        .apply_retention(advance, retain.max(1), mutant_set.on("retain-off-by-one"))
         .map_err(|e| e.to_string())?;
     store
         .apply_event_config(
@@ -188,10 +188,16 @@ fn run(args: Args) -> Result<(), String> {
     let lax = Laxness {
         duplicate_members: mutant_set.on("accept-duplicate-members"),
         numbers: mutant_set.on("lax-numbers"),
+        surrogates: mutant_set.on("accept-lone-surrogates"),
+        noncharacters: mutant_set.on("accept-noncharacters"),
     };
     let skip_invalid = mutant_set.on("skip-invalid-frames");
     let process_notifications = mutant_set.on("process-notifications");
     let close_on_invalid_request = mutant_set.on("close-on-invalid-request");
+    let ignore_idless_garbage = mutant_set.on("ignore-idless-garbage");
+    let lenient_shape = mutant_set.on("lenient-jsonrpc-shape");
+    let exit_nonzero = mutant_set.on("exit-nonzero-at-end-of-input");
+    let frame_limit_fixed = mutant_set.on("frame-limit-never-raised");
     let mut reader = FrameReader::new(std::io::stdin().lock());
     reader.unbounded = mutant_set.on("unbounded-frames");
     reader.parse_unterminated = mutant_set.on("parse-unterminated");
@@ -206,11 +212,16 @@ fn run(args: Args) -> Result<(), String> {
     };
 
     loop {
-        if provider.negotiated() {
+        if provider.negotiated() && !frame_limit_fixed {
             reader.limit = provider.frame_limit();
         }
         let frame = match reader.next().map_err(|e| e.to_string())? {
-            Next::End => return Ok(()),
+            Next::End => {
+                if exit_nonzero {
+                    std::process::exit(3);
+                }
+                return Ok(());
+            }
             Next::TooLarge => {
                 send(&error_response(Value::Null, "frame_too_large", json!({})));
                 return Ok(());
@@ -246,7 +257,18 @@ fn run(args: Args) -> Result<(), String> {
             continue;
         };
         let Some(id) = object.get("id").cloned() else {
-            // Notification: never processed or answered (STREAM section 3).
+            // Notification: never processed or answered (STREAM section 3). Any other id-less
+            // object is invalid_request with id null.
+            let is_notification = object.get("jsonrpc") == Some(&json!("2.0"))
+                && object.get("method").is_some_and(Value::is_string);
+            if !is_notification && !ignore_idless_garbage {
+                if !send(&error_response(Value::Null, "invalid_request", json!({})))
+                    || close_on_invalid_request
+                {
+                    return Ok(());
+                }
+                continue;
+            }
             if process_notifications
                 && let (Some(method), Some(params)) = (
                     object.get("method").and_then(Value::as_str),
@@ -258,8 +280,11 @@ fn run(args: Args) -> Result<(), String> {
             continue;
         };
         let id_valid = match &id {
-            Value::String(text) => (1..=128).contains(&text.len()),
+            Value::String(text) => {
+                (1..=128).contains(&text.chars().count()) || (lenient_shape && !text.is_empty())
+            }
             Value::Number(number) => number.is_i64(),
+            Value::Bool(_) => lenient_shape,
             _ => false,
         };
         let shape_valid = object.get("jsonrpc") == Some(&json!("2.0"))
@@ -268,9 +293,10 @@ fn run(args: Args) -> Result<(), String> {
                 .and_then(Value::as_str)
                 .is_some_and(|m| (1..=128).contains(&m.len()))
             && object.get("params").is_some_and(Value::is_object)
-            && object
-                .keys()
-                .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "method" | "params"));
+            && (lenient_shape
+                || object
+                    .keys()
+                    .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "method" | "params")));
         if !id_valid || !shape_valid {
             let reply_id = if id_valid { id } else { Value::Null };
             if !send(&error_response(

@@ -197,6 +197,8 @@ pub struct Provider {
     selected: Option<BTreeMap<String, Vec<String>>>,
     subscriptions: Vec<Subscription>,
     next_subscription: u64,
+    /// Mutant `failed-negotiation-blocks-retry` only.
+    negotiation_refused: bool,
 }
 
 #[derive(Clone)]
@@ -224,6 +226,7 @@ impl Provider {
             selected: None,
             subscriptions: Vec::new(),
             next_subscription: 0,
+            negotiation_refused: false,
         }
     }
 
@@ -257,8 +260,11 @@ impl Provider {
         } else {
             method.to_string()
         };
-        if self.mutants.on("expose-control-endpoint") && route.starts_with("control.") {
-            return Ok(json!({}));
+        if self.mutants.on("unknown-method-negotiation-required")
+            && self.selected.is_none()
+            && !OPERATIONS.iter().any(|op| op.name == route)
+        {
+            return Err(reject("negotiation_required", json!({})));
         }
         // Step 1: operation known; negotiated; profile selected.
         let operation = OPERATIONS
@@ -301,7 +307,9 @@ impl Provider {
 
         // Step 3: required features and extensions, including the feature an operation belongs to.
         if !self.mutants.on("ignore-requires") {
-            self.check_requires(&params)?;
+            if operation.command || !self.mutants.on("requires-commands-only") {
+                self.check_requires(&params)?;
+            }
             let feature = if operation.name.starts_with("core.grant.") {
                 Some("core.grants")
             } else if operation.name.starts_with("core.events.") {
@@ -705,7 +713,7 @@ impl Provider {
                 }
             }
         }
-        let intent = json!({
+        let mut intent = json!({
             "operation": params["operation"],
             "subject": params["subject"],
             "preconditions": params["preconditions"],
@@ -713,6 +721,11 @@ impl Provider {
             "payload": params["payload"],
             "extensions": extensions,
         });
+        if self.mutants.on("correlation-in-digest")
+            && let Some(correlation) = params.get("correlation")
+        {
+            intent["correlation"] = correlation.clone();
+        }
         let flaws = CanonicalFlaws {
             code_point_order: self.mutants.on("canonical-code-point-order"),
             ascii_escape: self.mutants.on("canonical-ascii-escape"),
@@ -722,7 +735,9 @@ impl Provider {
 
     fn check_limits(&self, params: &Value) -> Result<(), Reject> {
         fn walk(value: &Value, depth: i64, max: &mut (i64, i64, i64)) {
-            max.0 = max.0.max(depth);
+            if value.is_object() || value.is_array() {
+                max.0 = max.0.max(depth);
+            }
             match value {
                 Value::Object(map) => {
                     for (key, member) in map {
@@ -748,13 +763,20 @@ impl Provider {
                 json!({"limit": limit, "maximum": maximum}),
             ))
         };
-        if max.0 > self.limits.max_depth {
+        let over = |value: i64, limit: i64| {
+            if self.mutants.on("limits-off-by-one") {
+                value >= limit
+            } else {
+                value > limit
+            }
+        };
+        if over(max.0, self.limits.max_depth) {
             return exceeded("max_depth", self.limits.max_depth);
         }
-        if max.1 > self.limits.max_string_bytes {
+        if over(max.1, self.limits.max_string_bytes) {
             return exceeded("max_string_bytes", self.limits.max_string_bytes);
         }
-        if max.2 > self.limits.max_array_items {
+        if over(max.2, self.limits.max_array_items) {
             return exceeded("max_array_items", self.limits.max_array_items);
         }
         if let Some(payload) = params.get("payload")
@@ -769,12 +791,23 @@ impl Provider {
     fn check_schema(&self, operation: &str, params: &Value) -> Result<(), Reject> {
         let validator = &self.validators[operation];
         let ignore_unknown = self.mutants.on("accept-unknown-fields");
-        let first = validator.iter_errors(params).find(|error| {
-            !(ignore_unknown
-                && matches!(
-                    error.kind().keyword(),
-                    "unevaluatedProperties" | "additionalProperties"
-                ))
+        // Mutant `ignore-unique-items` validates a copy with duplicate requires entries removed.
+        let mut deduplicated = params.clone();
+        if self.mutants.on("ignore-unique-items")
+            && let Some(requires) = deduplicated
+                .get_mut("requires")
+                .and_then(Value::as_array_mut)
+        {
+            let mut seen = Vec::new();
+            requires.retain(|entry| {
+                let fresh = !seen.contains(entry);
+                seen.push(entry.clone());
+                fresh
+            });
+        }
+        let first = validator.iter_errors(&deduplicated).find(|error| {
+            let keyword = error.kind().keyword();
+            !(ignore_unknown && matches!(keyword, "unevaluatedProperties" | "additionalProperties"))
         });
         match first {
             None => Ok(()),
@@ -869,7 +902,7 @@ impl Provider {
             }
             seen.push(entry["subject"].clone());
         }
-        if !seen.contains(&params["subject"]) {
+        if !seen.contains(&params["subject"]) && !self.mutants.on("no-primary-precondition-check") {
             return invalid("/preconditions", "the primary subject needs a precondition");
         }
         Ok(())
@@ -908,6 +941,9 @@ impl Provider {
     }
 
     fn check_epoch_and_preconditions(&self, operation: &str, params: &Value) -> Result<(), Reject> {
+        if self.mutants.on("preconditions-before-epoch") {
+            self.check_preconditions_only(params)?;
+        }
         let epoch = self
             .store
             .revision(AUTHORITY_KIND, AUTHORITY_ID)
@@ -924,8 +960,15 @@ impl Provider {
                 return Err(reject("unknown_authority_epoch", json!({})));
             }
         }
+        self.check_preconditions_only(params)
+    }
+
+    fn check_preconditions_only(&self, params: &Value) -> Result<(), Reject> {
         let mut failed = Vec::new();
         for entry in params["preconditions"].as_array().into_iter().flatten() {
+            if self.mutants.on("first-precondition-failure-only") && !failed.is_empty() {
+                break;
+            }
             if self.mutants.on("ignore-preconditions") {
                 break;
             }
@@ -1044,9 +1087,36 @@ impl Provider {
     }
 
     fn negotiate(&mut self, payload: &Value) -> Result<Value, Reject> {
-        if self.selected.is_some() && !self.mutants.on("allow-renegotiation") {
+        if (self.selected.is_some() || self.negotiation_refused)
+            && !self.mutants.on("allow-renegotiation")
+        {
             return Err(reject("already_negotiated", json!({})));
         }
+        let mut seen_names = Vec::new();
+        for (index, request) in payload["profiles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            if seen_names.contains(&request["name"])
+                && !self.mutants.on("accept-duplicate-profiles")
+            {
+                return Err(reject(
+                    "invalid_envelope",
+                    json!({"path": format!("/payload/profiles/{index}/name"), "reason": "profile listed twice"}),
+                ));
+            }
+            seen_names.push(request["name"].clone());
+        }
+        let result = self.negotiate_profiles(payload);
+        if result.is_err() && self.mutants.on("failed-negotiation-blocks-retry") {
+            self.negotiation_refused = true;
+        }
+        result
+    }
+
+    fn negotiate_profiles(&mut self, payload: &Value) -> Result<Value, Reject> {
         let accept_unsupported = self.mutants.on("accept-unsupported-profile");
         let ignore_major = self.mutants.on("ignore-major-version");
         let ignore_features = self.mutants.on("ignore-negotiation-features");
@@ -1059,7 +1129,8 @@ impl Provider {
         let mut unsatisfied = Vec::new();
         for request in &requests {
             let name = request["name"].as_str().unwrap_or_default().to_string();
-            let required = request["required"].as_bool().unwrap_or(false);
+            let required = request["required"].as_bool().unwrap_or(false)
+                || (name == "core" && !self.mutants.on("core-optional"));
             let mut fail = |reason: &str, feature: Option<&str>| {
                 let mut item = json!({"profile": name, "reason": reason});
                 if let Some(feature) = feature {
@@ -1164,7 +1235,10 @@ impl Provider {
                 .iter()
                 .filter_map(|item| item["reason"].as_str())
                 .collect();
-            let code = if reasons.iter().any(|r| {
+            let reversed = self.mutants.on("reversed-negotiation-precedence");
+            let code = if reversed && reasons.contains(&"no_common_major") {
+                "unsupported_version"
+            } else if reasons.iter().any(|r| {
                 matches!(
                     *r,
                     "unknown_profile" | "declared_unsupported" | "dependency_not_selected"

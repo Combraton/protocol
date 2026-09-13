@@ -5,6 +5,73 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "unknown-method-negotiation-required",
+        "answers negotiation_required instead of method_not_found for unknown operations before negotiation",
+    ),
+    (
+        "ignore-idless-garbage",
+        "silently ignores id-less objects that are not notifications",
+    ),
+    (
+        "lenient-jsonrpc-shape",
+        "accepts extra request members and boolean ids",
+    ),
+    (
+        "accept-lone-surrogates",
+        "replaces unpaired surrogate escapes instead of closing the connection",
+    ),
+    ("accept-noncharacters", "accepts noncharacters in strings"),
+    (
+        "exit-nonzero-at-end-of-input",
+        "exits with a nonzero status at end of input",
+    ),
+    (
+        "frame-limit-never-raised",
+        "keeps the pre-negotiation frame limit after negotiation",
+    ),
+    (
+        "limits-off-by-one",
+        "refuses values exactly at a declared limit",
+    ),
+    (
+        "ignore-unique-items",
+        "does not refuse duplicate requires entries",
+    ),
+    (
+        "preconditions-before-epoch",
+        "checks preconditions before the authority epoch",
+    ),
+    (
+        "first-precondition-failure-only",
+        "lists only the first failed precondition",
+    ),
+    (
+        "accept-duplicate-profiles",
+        "accepts the same profile listed twice in negotiation",
+    ),
+    (
+        "failed-negotiation-blocks-retry",
+        "answers already_negotiated after a refused negotiation",
+    ),
+    ("core-optional", "lets a caller make core optional"),
+    (
+        "reversed-negotiation-precedence",
+        "prefers unsupported_version over unsupported_profile",
+    ),
+    (
+        "no-primary-precondition-check",
+        "accepts puts without a primary-subject precondition",
+    ),
+    ("requires-commands-only", "checks requires only on commands"),
+    (
+        "correlation-in-digest",
+        "includes correlation in the command intent digest",
+    ),
+    (
+        "retain-off-by-one",
+        "retains one generation fewer than retain_generations",
+    ),
+    (
         "ignore-capability-loss",
         "admits commands whose capability is unsupported",
     ),
@@ -206,10 +273,6 @@ pub const ALL: &[(&str, &str)] = &[
     (
         "ignore-preconditions",
         "applies commands without checking any precondition",
-    ),
-    (
-        "expose-control-endpoint",
-        "answers test-control method names on the product endpoint",
     ),
     (
         "close-on-invalid-request",

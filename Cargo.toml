@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["conformance/runner", "conformance/reference"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0-dev.0"
+publish = false
+rust-version = "1.97"

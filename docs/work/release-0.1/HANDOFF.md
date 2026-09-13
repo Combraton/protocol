@@ -24,7 +24,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 ## Git state
 
 - **Branches.** `main` at `f42d21a`. `release-0.1/m2` is pushed; its head is in `git log`.
-- **No PR for M2 yet.**
+- **M2 PR:** [#3](https://github.com/Combraton/protocol/pull/3), open for owner review.
 - **Latest M2 commits (oldest first):**
 
 | Commit | Change |
@@ -66,7 +66,7 @@ Local run on macOS arm64 of the working tree committed as the section F resoluti
 | `run` with `independent-python-core.json` | 0 not passing (socket fixtures not applicable) |
 | `python3 scripts/check_docs.py` | 0 errors |
 
-- **CI:** `6c64ae4` failed only the independent step, as expected. Confirm the result for the section F head.
+- **CI:** `6c64ae4` failed only the independent step, as expected. At `eabfd8e`, Conformance run 34777724435 succeeded on Ubuntu and macOS, including the cross-checks, and Documentation run 34777724430 succeeded.
 - **Kill reasons.** The kill reasons of 11 new mutants were inspected one by one; each fails its fixture at the intended step.
 
 **Independence notes:**
@@ -94,6 +94,5 @@ None. Conformance runs spawn short-lived providers in temporary directories.
 
 ## Next action
 
-1. Confirm CI is green for the branch head.
-2. Open the M2 PR for owner review. Do not merge without authorization.
-3. Detail M3 ([draft](M3.md)) as a task.
+1. Owner review of [PR #3](https://github.com/Combraton/protocol/pull/3). Address comments; do not merge without authorization.
+2. Detail M3 ([draft](M3.md)) as a task.

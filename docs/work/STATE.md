@@ -7,7 +7,7 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - Current milestone: [M2 task](release-0.1/M2.md).
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
 - **Merged:** PR #2 (M0 and M1) into `main` as `f42d21a`.
-- **Branch:** `release-0.1/m2`, pushed, not merged, no PR yet.
+- **Branch:** `release-0.1/m2`, in [PR #3](https://github.com/Combraton/protocol/pull/3), open for owner review and not merged. CI is green at `eabfd8e` (Conformance on Ubuntu and macOS, cross-checks, Documentation).
 - **Done in M2:**
   - Grants, events and subscriptions, and capabilities: spec, schemas, reference provider, fixtures, mutants.
   - Unix-socket binding with principal credentials ([decision 006](../decisions/006-unix-socket-principal-credential.md)).
@@ -18,7 +18,7 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
 - **Open owner decisions:** none.
 - **Prompt disposition:** the workspace-local continuation prompt points to this file.
 - **Next action:**
-  1. Confirm CI for the section F head.
-  2. Open the M2 PR for owner review.
+  1. Owner reviews PR #3. Address review comments; merge only with authorization.
+  2. Meanwhile, detail [M3](release-0.1/M3.md) as a task without changing normative text on `main`.
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

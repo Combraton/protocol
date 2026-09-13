@@ -6,7 +6,7 @@ This directory holds the normative, language-neutral conformance material for Pr
 
 | Path | Contents |
 |---|---|
-| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 52 fixtures in M1: `stream/` for the binding, `core/` for Core. |
+| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 57 fixtures in M1: `stream/` for the binding, `core/` for Core. |
 | `vectors/` | Encoding and digest test vectors |
 | `schemas/` | Schema for fixture files |
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |

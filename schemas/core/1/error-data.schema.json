@@ -3,21 +3,53 @@
   "$id": "https://github.com/Combraton/protocol/schemas/core/1/error-data.schema.json",
   "title": "Error data object (CORE section 12, STREAM section 3)",
   "type": "object",
-  "required": ["code", "retry", "details"],
+  "required": [
+    "code",
+    "retry",
+    "details"
+  ],
   "properties": {
     "code": {
       "enum": [
-        "parse_error", "invalid_utf8", "frame_too_large", "invalid_request", "overloaded",
-        "invalid_envelope", "limit_exceeded", "negotiation_required", "already_negotiated",
-        "method_not_found", "profile_not_negotiated", "unsupported_version", "unsupported_profile",
-        "unsupported_required_feature", "unsupported_digest_algorithm", "digest_mismatch",
-        "idempotency_conflict", "dedupe_history_unavailable", "stale_authority_epoch",
-        "unknown_authority_epoch", "precondition_failed", "not_found", "permission_denied",
-        "unavailable", "internal_error"
+        "parse_error",
+        "invalid_utf8",
+        "frame_too_large",
+        "invalid_request",
+        "overloaded",
+        "invalid_envelope",
+        "limit_exceeded",
+        "negotiation_required",
+        "already_negotiated",
+        "method_not_found",
+        "profile_not_negotiated",
+        "unsupported_version",
+        "unsupported_profile",
+        "unsupported_required_feature",
+        "unsupported_digest_algorithm",
+        "digest_mismatch",
+        "idempotency_conflict",
+        "dedupe_history_unavailable",
+        "stale_authority_epoch",
+        "unknown_authority_epoch",
+        "precondition_failed",
+        "not_found",
+        "permission_denied",
+        "unavailable",
+        "internal_error",
+        "invalid_cursor"
       ]
     },
-    "retry": {"enum": ["no", "same_command", "after_reconcile", "after_renegotiate"]},
-    "details": {"type": "object"}
+    "retry": {
+      "enum": [
+        "no",
+        "same_command",
+        "after_reconcile",
+        "after_renegotiate"
+      ]
+    },
+    "details": {
+      "type": "object"
+    }
   },
   "unevaluatedProperties": false
 }

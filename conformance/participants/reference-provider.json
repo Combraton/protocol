@@ -17,7 +17,8 @@
       }
     ],
     "features": [
-      "core.grants"
+      "core.grants",
+      "core.events"
     ]
   },
   "launch": {
@@ -37,6 +38,17 @@
       "{mutant}"
     ],
     "names": [
+      "events-not-recorded",
+      "event-sequence-gap",
+      "drop-caused-by",
+      "cursor-skips-last",
+      "accept-foreign-cursor",
+      "silent-retention-gap",
+      "silent-epoch-change",
+      "events-ignore-authorization",
+      "volatile-events",
+      "subscription-misses-backlog",
+      "replay-appends-event",
       "ignore-grants",
       "ignore-grant-scope",
       "ignore-revocation",

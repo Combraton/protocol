@@ -68,6 +68,21 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.events.read",
+        profile: "core",
+        command: false,
+    },
+    Operation {
+        name: "core.events.subscribe",
+        profile: "core",
+        command: false,
+    },
+    Operation {
+        name: "core.events.unsubscribe",
+        profile: "core",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -100,7 +115,7 @@ const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "core",
         majors: &[1],
-        features: &["core.grants"],
+        features: &["core.grants", "core.events"],
         depends_on: &[],
     },
     SupportedProfile {
@@ -172,6 +187,16 @@ pub struct Provider {
     validators: HashMap<&'static str, Validator>,
     /// Selected profile name -> negotiated features.
     selected: Option<BTreeMap<String, Vec<String>>>,
+    subscriptions: Vec<Subscription>,
+    next_subscription: u64,
+}
+
+#[derive(Clone)]
+struct Subscription {
+    id: String,
+    position: (i64, i64),
+    kinds: Option<Vec<String>>,
+    grant: Option<Value>,
 }
 
 impl Provider {
@@ -189,6 +214,8 @@ impl Provider {
             limits,
             validators,
             selected: None,
+            subscriptions: Vec::new(),
+            next_subscription: 0,
         }
     }
 
@@ -264,9 +291,29 @@ impl Provider {
         self.check_schema(operation.name, &params)?;
         self.check_envelope_semantics(operation, &params)?;
 
-        // Step 3: required features and extensions.
+        // Step 3: required features and extensions, including the feature an operation belongs to.
         if !self.mutants.on("ignore-requires") {
             self.check_requires(&params)?;
+            let feature = if operation.name.starts_with("core.grant.") {
+                Some("core.grants")
+            } else if operation.name.starts_with("core.events.") {
+                Some("core.events")
+            } else {
+                None
+            };
+            if let Some(feature) = feature {
+                let negotiated = self
+                    .selected
+                    .as_ref()
+                    .and_then(|selected| selected.get("core"))
+                    .is_some_and(|features| features.iter().any(|f| f == feature));
+                if !negotiated {
+                    return Err(reject(
+                        "unsupported_required_feature",
+                        json!({"features": [feature]}),
+                    ));
+                }
+            }
         }
 
         if !operation.command {
@@ -347,6 +394,26 @@ impl Provider {
         if !self.mutants.on("reexecute-duplicates") {
             if let Some(stored) = self.store.find_command(&scope, &key).map_err(storage)? {
                 if stored.digest == digest || self.mutants.on("ignore-command-digest") {
+                    if self.mutants.on("replay-appends-event")
+                        && let Ok(stored_value) = serde_json::from_str::<Value>(&stored.response)
+                        && stored_value.get("acknowledgment").is_some()
+                    {
+                        let ack = &stored_value["acknowledgment"];
+                        let record = json!({
+                            "stream": self.store.stream_id().map_err(storage)?,
+                            "type": "core-test.subject.changed",
+                            "subject": ack["subject"],
+                            "revision": ack["revision"],
+                            "operation_ref": ack["operation_ref"],
+                            "command_id": ack["command_id"],
+                            "caused_by": [],
+                            "recorded_at": grants::now(self.identity.fixed_clock.as_deref()),
+                            "payload": stored_value["outcome"],
+                        });
+                        self.store
+                            .append_standalone_event(record, false)
+                            .map_err(storage)?;
+                    }
                     return replay(&stored.response);
                 }
                 return Err(reject(
@@ -394,10 +461,22 @@ impl Provider {
         };
         let operation_name = operation.name;
         let payload = params["payload"].clone();
+        let stream = self.store.stream_id().map_err(storage)?;
+        let recorded_at = grants::now(self.identity.fixed_clock.as_deref());
+        let caused_by = if self.mutants.on("drop-caused-by") {
+            json!([])
+        } else {
+            params
+                .get("caused_by")
+                .cloned()
+                .unwrap_or_else(|| json!([]))
+        };
+        let record_events = !self.mutants.on("events-not-recorded");
+        let sequence_gap = self.mutants.on("event-sequence-gap");
         let response = self
             .store
             .commit_with(&scope, &key, generation, &digest, |tx, sequence| {
-                let (revision, outcome) = apply_change(
+                let (revision, outcome, events) = apply_change(
                     tx,
                     operation_name,
                     &subject,
@@ -405,6 +484,22 @@ impl Provider {
                     &principal,
                     &revoke_ids,
                 )?;
+                if record_events {
+                    for (event_type, event_subject, event_revision, event_payload) in events {
+                        let record = json!({
+                            "stream": stream,
+                            "type": event_type,
+                            "subject": event_subject,
+                            "revision": event_revision,
+                            "operation_ref": format!("op-{sequence}"),
+                            "command_id": command_id,
+                            "caused_by": caused_by,
+                            "recorded_at": recorded_at,
+                            "payload": event_payload,
+                        });
+                        crate::store::append_event(tx, record, sequence_gap)?;
+                    }
+                }
                 Ok(json!({
                     "acknowledgment": {
                         "command_id": command_id,
@@ -815,6 +910,20 @@ impl Provider {
         match operation {
             "core.describe" => self.describe(),
             "core.negotiate" => self.negotiate(&params["payload"]),
+            "core.events.read" => self.events_read(params),
+            "core.events.subscribe" => self.events_subscribe(params),
+            "core.events.unsubscribe" => {
+                let id = params["payload"]["subscription"]
+                    .as_str()
+                    .unwrap_or_default();
+                let before = self.subscriptions.len();
+                self.subscriptions.retain(|sub| sub.id != id);
+                if self.subscriptions.len() == before {
+                    Err(reject("not_found", json!({})))
+                } else {
+                    Ok(json!({}))
+                }
+            }
             "core.grant.get" => {
                 let id = params["payload"]["grant"].as_str().unwrap_or_default();
                 let found = self.store.grant(id).map_err(storage)?;
@@ -1038,6 +1147,286 @@ impl Provider {
     }
 }
 
+impl Provider {
+    /// Who may read events and which subjects they see (CORE section 16.6).
+    fn event_access(&self, params: &Value) -> Result<Option<Value>, Reject> {
+        if self.mutants.on("events-ignore-authorization") {
+            return Ok(None);
+        }
+        match params.get("grant").and_then(Value::as_str) {
+            Some(id) => {
+                let grant = self.usable_grant(id)?;
+                let can_read = grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "core.events.read");
+                if can_read {
+                    Ok(Some(grant))
+                } else {
+                    Err(reject(
+                        "permission_denied",
+                        json!({"reason": "right_missing"}),
+                    ))
+                }
+            }
+            None if self.is_authority() => Ok(None),
+            None => Err(reject(
+                "permission_denied",
+                json!({"reason": "grant_required"}),
+            )),
+        }
+    }
+
+    fn head(&self) -> Result<(i64, i64), Reject> {
+        let epoch = self.store.stream_epoch().map_err(storage)?;
+        Ok((epoch, self.store.assigned_through(epoch).map_err(storage)?))
+    }
+
+    fn start_position(&self, payload: &Value) -> Result<(i64, i64), Reject> {
+        match (
+            payload.get("cursor").and_then(Value::as_str),
+            payload.get("from").and_then(Value::as_str),
+        ) {
+            (Some(cursor), _) => match self.parse_cursor(cursor) {
+                Ok(position) => Ok(position),
+                Err(_) if self.mutants.on("accept-foreign-cursor") => Ok((1, 0)),
+                Err(reason) => Err(reject("invalid_cursor", json!({"reason": reason}))),
+            },
+            (None, Some("now")) => self.head(),
+            _ => Ok((1, 0)),
+        }
+    }
+
+    fn parse_cursor(&self, cursor: &str) -> Result<(i64, i64), &'static str> {
+        let parts: Vec<&str> = cursor.split(':').collect();
+        if parts.len() != 4 || parts[0] != "ev1" {
+            return Err("malformed");
+        }
+        let stream = self.store.stream_id().map_err(|_| "unavailable")?;
+        if parts[1] != stream {
+            return Err("foreign_stream");
+        }
+        let epoch: i64 = parts[2].parse().map_err(|_| "malformed")?;
+        let sequence: i64 = parts[3].parse().map_err(|_| "malformed")?;
+        let (current, head) = self.head().map_err(|_| "unavailable")?;
+        let limit = if epoch == current {
+            head
+        } else if (1..current).contains(&epoch) {
+            self.store
+                .vouched_through(epoch)
+                .map_err(|_| "unavailable")?
+                .unwrap_or(0)
+        } else {
+            return Err("beyond_end");
+        };
+        if !(0..=limit).contains(&sequence) {
+            return Err("beyond_end");
+        }
+        Ok((epoch, sequence))
+    }
+
+    fn cursor(&self, position: (i64, i64), advanced: bool) -> Result<String, Reject> {
+        let stream = self.store.stream_id().map_err(storage)?;
+        let skew = i64::from(advanced && self.mutants.on("cursor-skips-last"));
+        Ok(format!("ev1:{stream}:{}:{}", position.0, position.1 + skew))
+    }
+
+    fn visible(subject: &Value, kinds: &Option<Vec<String>>, grant: &Option<Value>) -> bool {
+        let kind_ok = kinds
+            .as_ref()
+            .is_none_or(|kinds| kinds.iter().any(|kind| subject["kind"] == kind.as_str()));
+        let grant_ok = grant.as_ref().is_none_or(|grant| {
+            grant["resources"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|resource| grants::resource_covers_subject(resource, subject))
+        });
+        kind_ok && grant_ok
+    }
+
+    fn snapshot_subjects(
+        &self,
+        kinds: &Option<Vec<String>>,
+        grant: &Option<Value>,
+    ) -> Result<Vec<Value>, Reject> {
+        let mut subjects = Vec::new();
+        for (kind, id, revision, value) in self.store.all_subjects().map_err(storage)? {
+            let subject = json!({"kind": kind, "id": id});
+            if Self::visible(&subject, kinds, grant) {
+                let state = if kind == AUTHORITY_KIND {
+                    json!({"epoch": revision})
+                } else {
+                    json!({"value": value})
+                };
+                subjects.push(json!({"subject": subject, "revision": revision, "state": state}));
+            }
+        }
+        for (revision, grant_record) in self.store.all_grants().map_err(storage)? {
+            let subject = json!({"kind": "core.grant", "id": grant_record["id"]});
+            if Self::visible(&subject, kinds, grant) {
+                subjects.push(json!({"subject": subject, "revision": revision, "state": {"grant": grant_record}}));
+            }
+        }
+        Ok(subjects)
+    }
+
+    /// Ordered stream items after `start` (CORE section 16.4).
+    fn collect_items(
+        &self,
+        start: (i64, i64),
+        limit: usize,
+        kinds: &Option<Vec<String>>,
+        grant: &Option<Value>,
+    ) -> Result<Collected, Reject> {
+        let current = self.store.stream_epoch().map_err(storage)?;
+        let discarded = self.store.discarded_through().map_err(storage)?;
+        let mut filtered = kinds.is_some() || grant.is_some();
+        let mut position = start;
+        let mut items = Vec::new();
+        if discarded > position && !self.mutants.on("silent-retention-gap") {
+            let head = self.head()?;
+            let as_of = json!({"epoch": head.0, "sequence": head.1});
+            items.push(json!({"gap": {
+                "kind": "retention",
+                "from": {"epoch": position.0.max(1), "sequence": position.1 + 1},
+                "to": as_of,
+                "snapshot": {"as_of": as_of, "subjects": self.snapshot_subjects(kinds, grant)?},
+            }}));
+            return Ok((items, head, filtered));
+        }
+        while items.len() < limit {
+            if position.0 < current {
+                let vouched = self
+                    .store
+                    .vouched_through(position.0)
+                    .map_err(storage)?
+                    .unwrap_or(0);
+                match self
+                    .store
+                    .next_event(position.0, position.1)
+                    .map_err(storage)?
+                {
+                    Some((sequence, event)) if sequence <= vouched => {
+                        position = (position.0, sequence);
+                        if Self::visible(&event["subject"], kinds, grant) {
+                            items.push(json!({"event": event}));
+                        } else {
+                            filtered = true;
+                        }
+                    }
+                    _ => {
+                        if !self.mutants.on("silent-epoch-change") {
+                            items.push(json!({"epoch_change": {
+                                "from_epoch": position.0,
+                                "to_epoch": position.0 + 1,
+                                "vouched_through": vouched,
+                            }}));
+                        }
+                        position = (position.0 + 1, 0);
+                    }
+                }
+            } else {
+                match self
+                    .store
+                    .next_event(current, position.1)
+                    .map_err(storage)?
+                {
+                    Some((sequence, event)) => {
+                        position = (current, sequence);
+                        if Self::visible(&event["subject"], kinds, grant) {
+                            items.push(json!({"event": event}));
+                        } else {
+                            filtered = true;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+        Ok((items, position, filtered))
+    }
+
+    fn kinds(payload: &Value) -> Option<Vec<String>> {
+        payload.get("kinds").and_then(Value::as_array).map(|kinds| {
+            kinds
+                .iter()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect()
+        })
+    }
+
+    fn events_read(&self, params: &Value) -> Result<Value, Reject> {
+        let grant = self.event_access(params)?;
+        let payload = &params["payload"];
+        let start = self.start_position(payload)?;
+        let limit = payload["limit"].as_u64().unwrap_or(100) as usize;
+        let kinds = Self::kinds(payload);
+        let (items, position, filtered) = self.collect_items(start, limit, &kinds, &grant)?;
+        Ok(json!({
+            "stream": {"id": self.store.stream_id().map_err(storage)?, "epoch": self.store.stream_epoch().map_err(storage)?},
+            "next_cursor": self.cursor(position, !items.is_empty())?,
+            "items": items,
+            "filtered": filtered,
+        }))
+    }
+
+    fn events_subscribe(&mut self, params: &Value) -> Result<Value, Reject> {
+        let grant = self.event_access(params)?;
+        let payload = &params["payload"];
+        let position = if self.mutants.on("subscription-misses-backlog") {
+            self.start_position(payload)?;
+            self.head()?
+        } else {
+            self.start_position(payload)?
+        };
+        self.next_subscription += 1;
+        let id = format!("sub-{}", self.next_subscription);
+        self.subscriptions.push(Subscription {
+            id: id.clone(),
+            position,
+            kinds: Self::kinds(payload),
+            grant,
+        });
+        Ok(json!({
+            "subscription": id,
+            "stream": {"id": self.store.stream_id().map_err(storage)?, "epoch": self.store.stream_epoch().map_err(storage)?},
+        }))
+    }
+
+    /// Notification frames owed to this session's subscriptions (sent after each response).
+    pub fn drain_notifications(&mut self) -> Vec<Value> {
+        let mut frames = Vec::new();
+        let mut subscriptions = std::mem::take(&mut self.subscriptions);
+        for subscription in &mut subscriptions {
+            while let Ok((items, position, _)) = self.collect_items(
+                subscription.position,
+                100,
+                &subscription.kinds,
+                &subscription.grant,
+            ) {
+                let advanced = !items.is_empty();
+                subscription.position = position;
+                if !advanced {
+                    break;
+                }
+                let Ok(next_cursor) = self.cursor(position, true) else {
+                    break;
+                };
+                frames.push(json!({
+                    "jsonrpc": "2.0",
+                    "method": "core.events.notify",
+                    "params": {"subscription": subscription.id, "items": items, "next_cursor": next_cursor},
+                }));
+            }
+        }
+        self.subscriptions = subscriptions;
+        frames
+    }
+}
+
 fn replay(stored: &str) -> Result<Value, Reject> {
     let mut value: Value =
         serde_json::from_str(stored).map_err(|_| reject("internal_error", json!({})))?;
@@ -1055,7 +1444,13 @@ fn storage(error: rusqlite::Error) -> Reject {
     reject("unavailable", json!({}))
 }
 
-/// Apply one accepted command inside the owner transaction; returns (revision, outcome).
+/// Stream items read, the position after them, and whether filtering hid anything.
+type Collected = (Vec<Value>, (i64, i64), bool);
+
+/// One event produced by a command: (type, subject, revision, payload).
+type EventDraft = (&'static str, Value, i64, Value);
+
+/// Apply one accepted command inside the owner transaction; returns (revision, outcome, events).
 fn apply_change(
     tx: &rusqlite::Transaction,
     operation: &str,
@@ -1063,7 +1458,7 @@ fn apply_change(
     payload: &Value,
     principal: &str,
     revoke_ids: &[String],
-) -> rusqlite::Result<(i64, Value)> {
+) -> rusqlite::Result<(i64, Value, Vec<EventDraft>)> {
     use rusqlite::{OptionalExtension, params};
     let kind = subject["kind"].as_str().unwrap_or_default();
     let id = subject["id"].as_str().unwrap_or_default();
@@ -1077,10 +1472,17 @@ fn apply_change(
                 "INSERT INTO grants VALUES (?1, 1, ?2)",
                 params![id, record.to_string()],
             )?;
-            Ok((1, json!({"grant": record})))
+            let events = vec![(
+                "core.grant.issued",
+                subject.clone(),
+                1,
+                json!({"grant": record}),
+            )];
+            Ok((1, json!({"grant": record}), events))
         }
         "core.grant.revoke" => {
             let mut target_revision = 0;
+            let mut events = Vec::new();
             for grant_id in revoke_ids {
                 let row: Option<(i64, String)> = tx
                     .query_row(
@@ -1101,8 +1503,14 @@ fn apply_change(
                 if grant_id == id {
                     target_revision = revision + 1;
                 }
+                events.push((
+                    "core.grant.revoked",
+                    json!({"kind": "core.grant", "id": grant_id}),
+                    revision + 1,
+                    json!({"state": "revoked"}),
+                ));
             }
-            Ok((target_revision, json!({"revoked": revoke_ids})))
+            Ok((target_revision, json!({"revoked": revoke_ids}), events))
         }
         _ => {
             let value = payload["value"].as_str().unwrap_or_default();
@@ -1121,12 +1529,13 @@ fn apply_change(
                  applied_count=applied_count+1",
                 params![kind, id, revision, value],
             )?;
-            let outcome = if operation == "core-test.authority.claim" {
-                json!({"epoch": revision})
+            let (outcome, event_type) = if operation == "core-test.authority.claim" {
+                (json!({"epoch": revision}), "core-test.authority.claimed")
             } else {
-                json!({"value": value})
+                (json!({"value": value}), "core-test.subject.changed")
             };
-            Ok((revision, outcome))
+            let events = vec![(event_type, subject.clone(), revision, outcome.clone())];
+            Ok((revision, outcome, events))
         }
     }
 }

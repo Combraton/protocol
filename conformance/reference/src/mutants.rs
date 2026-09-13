@@ -4,6 +4,44 @@
 use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
+    (
+        "events-not-recorded",
+        "commits commands without appending events",
+    ),
+    ("event-sequence-gap", "assigns event sequences with holes"),
+    ("drop-caused-by", "does not copy caused_by into events"),
+    (
+        "cursor-skips-last",
+        "returns a next_cursor one position past the last item",
+    ),
+    (
+        "accept-foreign-cursor",
+        "treats invalid cursors as the start of the stream",
+    ),
+    (
+        "silent-retention-gap",
+        "resumes after discarded events without a gap item",
+    ),
+    (
+        "silent-epoch-change",
+        "moves to a new epoch without an epoch_change item",
+    ),
+    (
+        "events-ignore-authorization",
+        "serves events without authorization or filtering",
+    ),
+    (
+        "volatile-events",
+        "loses recorded events when the provider restarts",
+    ),
+    (
+        "subscription-misses-backlog",
+        "starts subscriptions at the current end instead of the requested position",
+    ),
+    (
+        "replay-appends-event",
+        "appends a duplicate event when a command is replayed",
+    ),
     ("ignore-grants", "performs no authorization at all"),
     (
         "ignore-grant-scope",

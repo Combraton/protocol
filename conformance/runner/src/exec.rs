@@ -1,5 +1,6 @@
 //! Executing one fixture against one participant.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -63,6 +64,7 @@ struct State<'a> {
     counter: u64,
     next_id: i64,
     session: Option<Session>,
+    notifications: VecDeque<Value>,
     transcript: Vec<Value>,
     started: Instant,
 }
@@ -121,6 +123,7 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         counter: 0,
         next_id: 0,
         session: None,
+        notifications: VecDeque::new(),
         transcript: vec![],
         started: Instant::now(),
     };
@@ -242,6 +245,25 @@ impl State<'_> {
                         "expected the connection to close, received {}",
                         String::from_utf8_lossy(&frame[..frame.len().min(300)])
                     ))),
+                }
+            }
+            "expect_notification" => {
+                let frame = self.next_notification(duration(step, RESPONSE_TIMEOUT))?;
+                if let Some(pattern) = step["expect"].get("params") {
+                    matches(pattern, frame.get("params"), &self.vars, "params").map_err(Fail)?;
+                }
+                if let Some(pattern) = step["expect"].get("frame") {
+                    matches(pattern, Some(&frame), &self.vars, "frame").map_err(Fail)?;
+                }
+                self.capture(&frame, step)
+            }
+            "expect_no_notification" => {
+                // Barrier: a describe round trip flushes any notification owed before it.
+                let params = json!({"operation": "core.describe", "message_id": self.unique("barrier"), "payload": {}});
+                self.call("core.describe", params, &json!({}))?;
+                match self.notifications.pop_front() {
+                    None => Ok(()),
+                    Some(frame) => Err(Fail(format!("unexpected notification {frame}"))),
                 }
             }
             "close_input" => {
@@ -434,7 +456,34 @@ impl State<'_> {
         Ok(())
     }
 
+    /// Next frame that is not a provider notification; notifications are validated and queued.
     fn receive_frame(&mut self, timeout: Duration) -> Result<Value, StepError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let frame =
+                self.receive_raw_frame(deadline.saturating_duration_since(Instant::now()))?;
+            if frame.get("id").is_none() && frame.get("method").is_some() {
+                self.ctx.schemas.check_notification(&frame).map_err(Fail)?;
+                self.notifications.push_back(frame);
+                continue;
+            }
+            return Ok(frame);
+        }
+    }
+
+    fn next_notification(&mut self, timeout: Duration) -> Result<Value, StepError> {
+        if let Some(frame) = self.notifications.pop_front() {
+            return Ok(frame);
+        }
+        let frame = self.receive_raw_frame(timeout)?;
+        if frame.get("id").is_none() && frame.get("method").is_some() {
+            self.ctx.schemas.check_notification(&frame).map_err(Fail)?;
+            return Ok(frame);
+        }
+        Err(Fail(format!("expected a notification, received {frame}")))
+    }
+
+    fn receive_raw_frame(&mut self, timeout: Duration) -> Result<Value, StepError> {
         let frame = match self.session()?.receive(timeout) {
             Received::Frame(frame) => frame,
             Received::Closed => return Err(Fail("participant closed the connection".into())),

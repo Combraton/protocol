@@ -11,6 +11,7 @@ const BASE: &str = "https://github.com/Combraton/protocol/schemas";
 pub struct Schemas {
     response: Validator,
     results: HashMap<String, Validator>,
+    notifications: HashMap<String, Validator>,
     pub fixture: Validator,
 }
 
@@ -50,6 +51,13 @@ impl Schemas {
                 .build(&json!({"$ref": id}))
                 .map_err(|e| format!("{id}: {e}"))
         };
+        let mut notifications = HashMap::new();
+        for id in &ids {
+            if let Some(rest) = id.strip_suffix(".notification.schema.json") {
+                let method = rest.rsplit('/').next().unwrap_or_default().to_string();
+                notifications.insert(method, build(id)?);
+            }
+        }
         let mut results = HashMap::new();
         for id in &ids {
             if let Some(rest) = id.strip_suffix(".result.schema.json") {
@@ -62,10 +70,27 @@ impl Schemas {
                 "{BASE}/stream/1/jsonrpc.schema.json#/$defs/response"
             ))?,
             results,
+            notifications,
             fixture: build(
                 "https://github.com/Combraton/protocol/conformance/schemas/fixture.schema.json",
             )?,
         })
+    }
+
+    /// Validate a provider notification frame against its method's schema.
+    pub fn check_notification(&self, frame: &Value) -> Result<(), String> {
+        let method = frame["method"].as_str().unwrap_or_default();
+        let validator = self
+            .notifications
+            .get(method)
+            .ok_or_else(|| format!("notification with unknown method {method:?}"))?;
+        if let Some(error) = validator.iter_errors(frame).next() {
+            return Err(format!(
+                "{method} notification violates its schema at {}: {error}",
+                error.instance_path()
+            ));
+        }
+        Ok(())
     }
 
     /// Validate a response frame, including the result schema of a known operation.

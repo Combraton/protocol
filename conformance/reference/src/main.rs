@@ -133,6 +133,15 @@ fn run(args: Args) -> Result<(), String> {
     store
         .apply_retention(advance, retain.max(1))
         .map_err(|e| e.to_string())?;
+    store
+        .apply_event_config(
+            config["events"]["new_epoch_on_start"]
+                .as_bool()
+                .unwrap_or(false),
+            config["events"]["retain_last"].as_i64(),
+            mutant_set.on("volatile-events"),
+        )
+        .map_err(|e| e.to_string())?;
     let principal = config["principal"]
         .as_str()
         .unwrap_or("conformance-caller")
@@ -259,6 +268,11 @@ fn run(args: Args) -> Result<(), String> {
         let response = provider.handle(id, &method, object["params"].clone());
         if !send(&response) {
             return Ok(());
+        }
+        for notification in provider.drain_notifications() {
+            if !send(&notification) {
+                return Ok(());
+            }
         }
     }
 }

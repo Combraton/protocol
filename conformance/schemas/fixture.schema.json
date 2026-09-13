@@ -604,6 +604,63 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "expect"
+            ],
+            "properties": {
+              "step": {
+                "const": "expect_notification"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "expect_no_notification"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       }
@@ -622,7 +679,8 @@
         "frame": {},
         "id_null": {
           "type": "boolean"
-        }
+        },
+        "params": {}
       },
       "additionalProperties": false
     }

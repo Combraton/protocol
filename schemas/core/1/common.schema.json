@@ -355,6 +355,224 @@
         }
       },
       "unevaluatedProperties": false
+    },
+    "stream_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:~-]{1,128}$"
+    },
+    "cursor": {
+      "description": "Opaque; callers must not construct or interpret it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "position": {
+      "type": "object",
+      "required": [
+        "epoch",
+        "sequence"
+      ],
+      "properties": {
+        "epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sequence": {
+          "$ref": "#/$defs/safe_nonnegative_integer"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "stream",
+        "epoch",
+        "sequence",
+        "type",
+        "subject",
+        "revision",
+        "operation_ref",
+        "command_id",
+        "caused_by",
+        "recorded_at",
+        "payload"
+      ],
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_id"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "type": {
+          "$ref": "#/$defs/dotted_name"
+        },
+        "subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "operation_ref": {
+          "$ref": "#/$defs/identifier"
+        },
+        "command_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "caused_by": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "recorded_at": {
+          "$ref": "#/$defs/instant"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "stream_item": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "event"
+          ],
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/event"
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "epoch_change"
+          ],
+          "properties": {
+            "epoch_change": {
+              "type": "object",
+              "required": [
+                "from_epoch",
+                "to_epoch",
+                "vouched_through"
+              ],
+              "properties": {
+                "from_epoch": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "to_epoch": {
+                  "type": "integer",
+                  "minimum": 2
+                },
+                "vouched_through": {
+                  "$ref": "#/$defs/safe_nonnegative_integer"
+                }
+              },
+              "unevaluatedProperties": false
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "gap"
+          ],
+          "properties": {
+            "gap": {
+              "type": "object",
+              "required": [
+                "kind",
+                "from",
+                "to",
+                "snapshot"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "retention"
+                },
+                "from": {
+                  "$ref": "#/$defs/position"
+                },
+                "to": {
+                  "$ref": "#/$defs/position"
+                },
+                "snapshot": {
+                  "type": "object",
+                  "required": [
+                    "as_of",
+                    "subjects"
+                  ],
+                  "properties": {
+                    "as_of": {
+                      "$ref": "#/$defs/position"
+                    },
+                    "subjects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "subject",
+                          "revision",
+                          "state"
+                        ],
+                        "properties": {
+                          "subject": {
+                            "$ref": "#/$defs/subject"
+                          },
+                          "revision": {
+                            "$ref": "#/$defs/revision"
+                          },
+                          "state": {
+                            "type": "object"
+                          }
+                        },
+                        "unevaluatedProperties": false
+                      }
+                    }
+                  },
+                  "unevaluatedProperties": false
+                }
+              },
+              "unevaluatedProperties": false
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "stream_ref": {
+      "type": "object",
+      "required": [
+        "id",
+        "epoch"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stream_id"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "unevaluatedProperties": false
     }
   }
 }

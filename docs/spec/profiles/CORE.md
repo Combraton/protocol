@@ -1,6 +1,6 @@
 # Core profile `core/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants is a proposed M2 draft.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants and §16 events are proposed M2 drafts.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
 This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and effect reconciliation are Core too; they are specified in milestone M2 and marked **reserved** below.
 
@@ -118,7 +118,7 @@ That is how a `requires` entry is told apart.
 - An extension is **optional** unless its key appears in `requires`. A receiver MAY ignore an optional extension it does not understand. When the operation defines stored content, the receiver MUST either store the extension unchanged with that content or declare in its manifest that it drops unknown extensions.
 - An extension key or feature name listed in `requires` MUST be understood and negotiated. Otherwise the message is refused with `unsupported_required_feature`, before any state change.
 - `requires` entries MUST be unique. An entry containing a slash MUST also be present in `extensions`. A violation of either rule is `invalid_envelope`. An empty `requires` means nothing beyond the negotiated profile versions is required.
-- A caller MUST NOT send fields that belong to a feature the session did not select.
+- A caller MUST NOT send fields that belong to a feature the session did not select, or call operations that belong to one; such operations are refused with `unsupported_required_feature` naming the feature.
 
 This mirrors the "critical" marking used by JWS `crit` and X.509 critical extensions. The decision record [002](../../decisions/002-schema-language-and-extensibility.md) gives the evidence and alternatives.
 
@@ -218,7 +218,7 @@ A provider MUST apply these steps in order. The first failing step determines th
 |---|---|---|
 | 1 | In this order: operation known; session negotiated (unless the operation is `core.describe` or `core.negotiate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
 | 2 | Envelope and payload decode within limits; objects closed; types valid | `limit_exceeded`, `invalid_envelope` |
-| 3 | Every `requires` entry negotiated and understood | `unsupported_required_feature` |
+| 3 | Every `requires` entry negotiated and understood; if the operation belongs to a feature (such as `core.grants` or `core.events`), that feature is selected | `unsupported_required_feature` |
 | 4 | Digest algorithm supported; `command_digest` matches the recomputed digest | `unsupported_digest_algorithm`, `digest_mismatch` |
 | 5 | Deduplication lookup (§6) | `invalid_envelope`, `idempotency_conflict`, `dedupe_history_unavailable`; or return the stored result |
 | 6 | Authorization (§15): the principal is an authority for the operation, or names a valid grant covering it | `invalid_envelope`, `permission_denied` |
@@ -279,6 +279,7 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
 | `precondition_failed` | `after_reconcile` | One or more revision preconditions unsatisfied | `failed`: entries with `subject`, `expected`, and `current` if permitted |
+| `invalid_cursor` | `no` | Cursor malformed, from another stream, or beyond the stream's end (§16) | `reason` |
 | `not_found` | `no` | Query target absent or not visible to this principal | — |
 | `permission_denied` | `no` | The principal is not authorized for this operation on this subject (§15.5) | `reason` |
 | `unavailable` | `same_command` | Provider temporarily cannot process; nothing was bound | — |
@@ -405,3 +406,87 @@ A replay of an already-bound command skips step 6 (§10), so revocation does not
 ### 15.6 What grants do not establish
 
 A grant is authorization at one provider. It is not identity proof, is not transferable to another provider, and is not a promise that an underlying system will enforce the same limits. Execution profiles report enforcement levels separately. An expired or revoked grant does not mean nothing happened under it.
+
+## 16. Events and subscriptions (proposed M2 draft)
+
+Every provider records what it committed as an ordered, durable **event stream**. Callers read it with opaque cursors or subscribe to it on a connection. This section is negotiated as the Core feature `core.events`. Matrix rows: CORE-2, OBS-1 to OBS-6, OBS-8.
+
+### 16.1 Stream identity and positions
+
+A provider store has one semantic stream with a stable `stream` ID.
+
+- **Epochs.** Positions are `(epoch, sequence)`. Epochs start at 1. Within an epoch, sequences start at 1 and are **contiguous**: the stored stream has no holes.
+- **New epoch.** A provider starts one when it can no longer vouch for continuity, for example after restoring from a backup or rebuilding its store. The previous epoch keeps the events the provider still vouches for, through `vouched_through`. Consumers are told about the change explicitly (§16.4).
+- **Order.** Positions order events within one stream only. `recorded_at` is metadata; it neither orders events nor proves causality (CORE-2).
+
+### 16.2 Event records
+
+| Field | Meaning |
+|---|---|
+| `stream`, `epoch`, `sequence` | Position |
+| `type` | Profile-defined event type, such as `core-test.subject.changed` |
+| `subject`, `revision` | The subject that changed and its revision after the change |
+| `operation_ref`, `command_id` | The accepted command that caused the event |
+| `caused_by` | The command envelope's `caused_by`, copied unchanged; an empty array if absent |
+| `recorded_at` | Provider clock instant, metadata only |
+| `payload` | Normalized, profile-defined facts sufficient for a consumer's reducer. Never a prose summary. |
+
+**Core event types:**
+
+| Type | Payload |
+|---|---|
+| `core.grant.issued` | `{ "grant": record }` |
+| `core.grant.revoked` | `{ "state": "revoked" }`, one event per revoked grant |
+
+**core-test event types:**
+
+| Type | Payload |
+|---|---|
+| `core-test.subject.changed` | `{ "value" }` |
+| `core-test.authority.claimed` | `{ "epoch" }` |
+
+### 16.3 Recording rules
+
+- An accepted command appends its events in the same owner transaction as its state change (§10 step 8). If that transaction fails, neither exists.
+- A replay, a rejected command and a query append nothing. A duplicate transmission never produces a duplicate event.
+- A command that changes several subjects appends events in a stable order: the primary subject first.
+
+### 16.4 `core.events.read` (query)
+
+**Payload:** exactly one of `cursor` (from an earlier result) or `from` (`"start"` or `"now"`), plus optional `kinds` (subject kinds to include) and `limit` (1–1000 items).
+
+**Result:** `{ "stream": { "id", "epoch" }, "items": [...], "next_cursor", "filtered" }`.
+
+`items` is an ordered list. Each item is exactly one of:
+
+| Item | Meaning |
+|---|---|
+| `{ "event": record }` | The next event after the cursor that the principal may see |
+| `{ "epoch_change": { "from_epoch", "to_epoch", "vouched_through" } }` | The stream moved to a new epoch after `vouched_through` in `from_epoch`. Nothing after that position in the old epoch will ever be delivered. Reading continues in `to_epoch` from sequence 1. |
+| `{ "gap": { "kind": "retention", "from", "to", "snapshot" } }` | Events between positions `from` and `to` were discarded under retention. `snapshot` is `{ "as_of": position, "subjects": [ { "subject", "revision", "state" } ] }` for the visible subjects at `as_of`, which equals `to`. Reading continues after `to`. |
+
+Rules:
+
+- **Cursors.** `next_cursor` is the position after the last item. Resuming from it never repeats and never skips an item. A cursor that is malformed, belongs to another stream, or points beyond the stream's current end is `invalid_cursor`. Cursors are opaque; callers MUST NOT construct or interpret them.
+- **No silent gaps.** A provider MUST NOT present an incomplete history as complete. If events after the cursor were discarded, the first item is a `gap` with a snapshot, never the next surviving event.
+- **`from: "now"`** returns no items and a cursor at the current end.
+- **Filtering.** When authorization or `kinds` hides some events, `filtered` is `true`. The skipped sequence numbers are then not gaps.
+
+### 16.5 Subscriptions
+
+`core.events.subscribe` (query) takes the payload of `core.events.read` without `limit`. It returns `{ "subscription", "stream" }`.
+
+- **Delivery.** The provider then sends JSON-RPC notifications `core.events.notify` with params `{ "subscription", "items", "next_cursor" }` on the same connection. First comes the backlog from the requested position, then new items as commands commit.
+- **Ordering.** A notification carrying events caused by a command on the same connection is sent after that command's response.
+- **Lifetime.** A subscription ends with its session or with `core.events.unsubscribe` (payload `{ "subscription" }`).
+- **Consumers.** Semantic events are never dropped silently. Consumers deduplicate by position and resume from the last cursor they durably processed. A reconnect may therefore replay items.
+
+### 16.6 Authorization
+
+Reading or subscribing needs an authority principal, or a grant with right `core.events.read`. Under a grant, only events and snapshot subjects covered by its resources are included, and `filtered` is `true`.
+
+**Limitation:** sequence numbers reveal how many events filtering hid, though not their content or subjects. Profiles that need to hide event counts need a separate stream design.
+
+### 16.7 What events do not establish
+
+An event records a fact the provider committed. It is not delivery to any consumer, not verification of the fact's correctness, and not project acceptance. A stream position is not a global clock and says nothing about another provider's stream.

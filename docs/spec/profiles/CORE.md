@@ -52,11 +52,12 @@ A session is one authenticated connection under the transport binding.
 
 This returns the provider's manifest:
 
-- Provider name and version.
-- Every supported profile, with its supported major versions and features.
-- The profiles the provider declares **unsupported**; for a 0.1 release this includes `coordination` and `remote-trust`.
-- Limits (§9).
-- The deduplication generation window (§6.3).
+- `provider`: name and version.
+- `profiles`: every supported profile, with its supported major versions, features and `depends_on` (the profiles it requires).
+- `unsupported_profiles`: profiles the provider declares unsupported, each with `reason` `not_in_release` or `not_implemented`. For a 0.1 release this list includes at least `coordination` and `remote-trust`.
+- `limits` (§9), the provider's receive limits.
+- `dedupe_window` (§6.3). Its initial values are provider-chosen, so callers and fixtures read them rather than assume them.
+- `unknown_extensions`: `preserve` or `drop` (§5.1).
 
 A provider MUST NOT list a profile as supported unless it also supports every profile that profile depends on (REL-2).
 
@@ -75,7 +76,13 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 - Select the intersection of features.
 - **Refuse the whole negotiation** if a `required` profile cannot be selected or a required feature is missing. Use `unsupported_version` when no common major exists, `unsupported_profile` when the profile is unknown or declared unsupported, and `unsupported_required_feature` for a missing feature. The error `details.unsatisfied` lists every unsatisfied item as `{ profile, feature?, reason }`, with reasons `unknown_profile`, `declared_unsupported`, `no_common_major`, `unknown_feature` or `dependency_not_selected`. When items fail for different reasons, the code is chosen in this order: `unsupported_profile`, then `unsupported_version`, then `unsupported_required_feature`.
 - Optional profiles and features that cannot be selected are reported in `unselected` with a reason. They are not errors.
-- Include `core` implicitly; a caller cannot deselect it.
+- Include `core` implicitly; a caller cannot deselect it. A `core` entry is always treated as required, whatever its `required` flag.
+- An optional profile whose required feature is missing is not selected. Each missing feature is reported in `unselected` as `unknown_feature`; this is not a refusal.
+- A feature named under a profile it does not belong to is `unknown_feature` for the profile it was listed under.
+- The same profile listed twice is `invalid_envelope`.
+- `unsatisfied` lists only the items that caused the refusal.
+- The result's `limits` are the provider's receive limits. A response that would exceed the caller's `receive_limits` is replaced by `internal_error`; the caller cannot tell whether a command it answers was bound.
+- A refused negotiation leaves the session unnegotiated; the caller may negotiate again. `already_negotiated` applies only after a successful negotiation and is decided after steps 1–3 of §10.
 
 **Result:** the selected profiles with major version and features, `unselected` items, effective limits, and the current deduplication window.
 
@@ -176,7 +183,7 @@ Each precondition entry names a subject and the revision the caller expects:
 - `revision: 0` means the subject MUST NOT exist.
 - `revision: n > 0` means the subject MUST exist at exactly revision `n`.
 
-All preconditions of a command are checked together. If any fails, the command is refused with `precondition_failed` and **no** part of it takes effect. The error lists every failed entry. Where the principal may read the subject, the entry includes its current revision (CORE-9).
+All preconditions of a command are checked together. Two entries naming the same subject are `invalid_envelope`. A subject kind the provider does not own is a subject that does not exist. If any fails, the command is refused with `precondition_failed` and **no** part of it takes effect. The error lists every failed entry. Where the principal may read the subject, the entry includes its current revision (CORE-9).
 
 Preconditions are checked **after** the idempotency lookup. A retransmitted create whose original succeeded therefore returns the original acknowledgment, even though the subject now exists and a fresh evaluation would fail.
 
@@ -208,7 +215,15 @@ The provider declares these limits in its manifest and negotiation result:
 | `max_array_items` | Longest array. |
 | `max_depth` | Deepest nesting of objects and arrays. |
 
-A message within the frame limit that exceeds another limit is refused with `limit_exceeded`, naming the limit. Profiles may define tighter per-field limits (CORE-5).
+Limits other than the frame limit are measured over the whole `params` object of a request, including `extensions` and `correlation`:
+
+- **Depth.** `params` is depth 1; each nested object or array adds one; scalars add nothing.
+- **Strings.** Every string, member names included, counts toward `max_string_bytes`.
+- **Arrays.** Every array counts toward `max_array_items`.
+- **Payload.** `max_payload_bytes` is the canonical encoded size of `payload`.
+- **Binding fields.** JSON-RPC `id` and `method` are bounded by the binding, not by these limits.
+
+A value exactly at a limit is within it. A message within the frame limit that exceeds another limit is refused with `limit_exceeded`, naming the limit. Profiles may define tighter per-field limits (CORE-5).
 
 ## 10. Command processing order
 
@@ -216,13 +231,13 @@ A provider MUST apply these steps in order. The first failing step determines th
 
 | Step | Check | Error on failure |
 |---|---|---|
-| 1 | In this order: operation known; session negotiated (unless the operation is `core.describe` or `core.negotiate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
-| 2 | Envelope and payload decode within limits; objects closed; types valid | `limit_exceeded`, `invalid_envelope` |
-| 3 | Every `requires` entry negotiated and understood; if the operation belongs to a feature (such as `core.grants` or `core.events`), that feature is selected | `unsupported_required_feature` |
-| 4 | Digest algorithm supported; `command_digest` matches the recomputed digest | `unsupported_digest_algorithm`, `digest_mismatch` |
-| 5 | Deduplication lookup (§6) | `invalid_envelope`, `idempotency_conflict`, `dedupe_history_unavailable`; or return the stored result |
+| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe` or `core.negotiate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
+| 2 | In this order: limits (§9: depth, array items, string bytes, payload bytes); method equals `operation`; closed objects and types; envelope semantics (`requires` entries unique and extension keys present, precondition rules, known-algorithm digest length) | `limit_exceeded`, `invalid_envelope` |
+| 3 | Every `requires` entry negotiated and understood, for queries as well as commands; if the operation belongs to a feature (such as `core.grants` or `core.events`), that feature is selected | `unsupported_required_feature` |
+| 4 | Digest algorithm supported (`sha512` only when `core.digest-sha512` was negotiated); `command_digest` matches the recomputed digest. `details.expected` is the provider's recomputed digest under the caller's algorithm. | `unsupported_digest_algorithm`, `digest_mismatch` |
+| 5 | Deduplication lookup (§6). `dedupe_generation > current` is checked first, even when a record exists. Records are filed under the command's own `dedupe_generation`. A retransmission under a different digest algorithm has a different `command_digest` and is `idempotency_conflict`. | `invalid_envelope`, `idempotency_conflict`, `dedupe_history_unavailable`; or return the stored result |
 | 6 | Authorization (§15): the principal is an authority for the operation, or names a valid grant covering it | `invalid_envelope`, `permission_denied` |
-| 7 | Capabilities the operation depends on are `supported` (§17); then authority epoch (§8) and preconditions (§7) | `stale_authority_epoch`, `unknown_authority_epoch`, `precondition_failed` |
+| 7 | In this order: capabilities the operation depends on are `supported` (§17); authority epoch (§8); preconditions (§7) | `capability_unavailable`, `stale_authority_epoch`, `unknown_authority_epoch`, `precondition_failed` |
 | 8 | In one owner transaction: commit the command record binding its identity, the state change, resulting events and effect records | `unavailable` if the provider cannot commit; nothing is bound |
 | 9 | Return the acknowledgment and outcome | — |
 
@@ -298,24 +313,22 @@ Fixtures reach every domain state — revisions, epochs, bound commands — only
 |---|---|---|
 | `core-test.authority.claim` | command | Subject `{ "kind": "core-test.authority", "id": "core-test" }`. Advances the authority epoch of scope `core-test` by one; outcome `{ "epoch": n }`. Precondition on the authority subject's revision, which equals the epoch. No `authority_epoch` field. Models a controller takeover. |
 | `core-test.subject.put` | command | Payload `{ "value": string, "labels"?: { string: string } }`. `labels` exists only so fixtures can exercise canonical member ordering with arbitrary keys; it is not stored. With precondition revision `0`, creates the subject at revision 1. With precondition revision `n`, replaces its value at revision `n + 1`. Requires `authority_epoch` for scope `core-test`. Outcome `{ "value": … }`. |
-| `core-test.subject.get` | query | Payload `{ "subject": … }`. Returns `{ "revision": n, "value": … }` or `not_found`. |
-| `core-test.subject.applied_count` | query | Payload `{ "subject": … }`. Returns how many commands changed the subject. Fixtures use it to detect a re-executed duplicate without trusting the acknowledgment. |
+| `core-test.subject.get` | query | Payload `{ "subject": … }`. Returns `{ "subject": …, "revision": n, "value": … }` or `not_found`. |
+| `core-test.subject.applied_count` | query | Payload `{ "subject": … }`. Returns `{ "subject": …, "applied_count": n }`, the number of commands that changed the subject; 0 for a subject that never existed. Fixtures use it to detect a re-executed duplicate without trusting the acknowledgment. |
 
-The primary subject's precondition entry is mandatory for `core-test.subject.put`.
+The primary subject's precondition entry is mandatory for `core-test.subject.put`; without it the command is `invalid_envelope`. A provider exposes `core-test` only when launched with a conformance launch configuration.
 
 Rights (§15): `core-test.claim` on the authority subject for `claim`; `core-test.write` on the primary subject for `put`, plus `core-test.read` on every other subject named in its preconditions; `core-test.read` on the payload subject for `get` and `applied_count`. The authority scope `core-test` is the one advanced by `claim`. The authority scope starts at epoch 0, where the authority subject does not exist.
 
 ### 13.1 Test control is environment-only
 
-Conformance runs need states that ordinary operations cannot reach in bounded time, such as a provider restart or discarded deduplication history. The suite gets them from a **test-control channel** ([conformance](../../../conformance/README.md)).
+Conformance runs need states that ordinary operations cannot reach in bounded time, such as a provider restart or discarded deduplication history. The suite reaches them only through the **environment** of the process under test, never through a protocol operation:
 
-That channel:
+- **Launch.** The runner launches the provider with a data directory and a **launch configuration** file ([conformance README](../../../conformance/README.md#launch-configuration)). The file can set the session principal and authority principals, limits, deduplication retention, event retention and epoch changes, capability status, and a fixed provider clock.
+- **Restart.** A restart is ending the process and launching it again over the same data directory.
+- **No domain writes.** The launch configuration MUST NOT create, modify or delete subjects, commands, epochs or grants. Those are reached only through real operations.
 
-- Is a separate connection with its own protocol, served by a test launcher, never by the product endpoint.
-- May restart the provider (preserving durable state), advance or discard deduplication generations, drop connections, set retention configuration, choose the session principal and the configured authority principals, and fix the provider clock.
-- MUST NOT create, modify or delete subjects, commands, epochs or grants.
-
-A provider's product endpoint MUST refuse control-channel method names with `method_not_found`.
+No protocol operation or method name is reserved for testing. Product endpoints expose none.
 
 ## 14. What Core does not establish
 

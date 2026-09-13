@@ -289,6 +289,12 @@ impl State<'_> {
         if step.get("config").is_some() {
             deep_merge(&mut config, &step["config"]);
         }
+        if let Some(error) = self.ctx.schemas.launch_config.iter_errors(&config).next() {
+            return Err(Harness(format!(
+                "fixture launch configuration is invalid at {}: {error}",
+                error.instance_path()
+            )));
+        }
         let config_file = self.ctx.work_dir.join("config.json");
         std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())
             .map_err(|e| Harness(e.to_string()))?;

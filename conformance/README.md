@@ -37,3 +37,23 @@ Expectations are `{"ok": pattern}` or `{"error": code, "details": pattern}`. Pat
 Negative fixtures exercise invalid, hostile or out-of-order input. Each must list in `kills` at least one reference mutant it fails, and `check-mutants` enforces this. Changing what a fixture means requires incrementing its `version`.
 
 The M1 fixtures were first authored with a throwaway script and are maintained as data from now on.
+
+## Launch configuration
+
+A participant under test is launched with a data directory and a JSON launch configuration file. The file is test environment, not product configuration or protocol ([CORE §13.1](../docs/spec/profiles/CORE.md#131-test-control-is-environment-only)). Its schema is `schemas/launch-config.schema.json`.
+
+| Key | Meaning |
+|---|---|
+| `format` | `combraton-conformance-config/1` |
+| `principal` | Session principal for this launch (a string) |
+| `authority_principals` | Authority principals (CORE §15.1); defaults to `[principal]` |
+| `provider_id` | Provider identity used as grant audience; defaults to `conformance-provider` |
+| `limits` | Partial override of the provider's receive limits (CORE §9) |
+| `dedupe.advance_on_start` | At this start, `current += N` |
+| `dedupe.retain_generations` | At this start, `oldest_retained = max(oldest_retained, current − R + 1)`, discarding records filed under older generations |
+| `events.new_epoch_on_start` | At this start, begin a new stream epoch whose previous epoch is vouched through its last sequence (CORE §16.1) |
+| `events.retain_last` | At this start, discard all but the newest N events (CORE §16.4) |
+| `capabilities` | Map of capability name to status, such as `{"core-test.writes": "unsupported"}` (CORE §17.4) |
+| `clock.fixed` | Fixed provider clock instant `YYYY-MM-DDTHH:MM:SSZ` (CORE §15.2) |
+
+Keys a participant does not support make it unable to run fixtures that use them. It should refuse to start (nonzero exit) rather than silently ignore them.

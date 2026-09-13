@@ -13,6 +13,7 @@ pub struct Schemas {
     results: HashMap<String, Validator>,
     notifications: HashMap<String, Validator>,
     pub fixture: Validator,
+    pub launch_config: Validator,
 }
 
 fn load_dir(dir: &Path, out: &mut Vec<(String, Value)>) -> Result<(), String> {
@@ -73,6 +74,9 @@ impl Schemas {
             notifications,
             fixture: build(
                 "https://github.com/Combraton/protocol/conformance/schemas/fixture.schema.json",
+            )?,
+            launch_config: build(
+                "https://github.com/Combraton/protocol/conformance/schemas/launch-config.schema.json",
             )?,
         })
     }

@@ -1,0 +1,630 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Combraton/protocol/conformance/schemas/fixture.schema.json",
+  "title": "Conformance fixture file (combraton-conformance-fixture/1)",
+  "type": "object",
+  "required": [
+    "format",
+    "id",
+    "version",
+    "title",
+    "requirements",
+    "spec_refs",
+    "role",
+    "profiles",
+    "polarity",
+    "kills",
+    "steps"
+  ],
+  "properties": {
+    "format": {
+      "const": "combraton-conformance-fixture/1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "spec_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "role": {
+      "const": "provider"
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "major"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "major": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "polarity": {
+      "enum": [
+        "positive",
+        "negative"
+      ]
+    },
+    "kills": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "config": {
+      "type": "object"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "start"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "config": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "stop"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "describe"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "negotiate"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "payload": {}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "method",
+              "params"
+            ],
+            "properties": {
+              "step": {
+                "const": "request"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "method": {
+                "type": "string"
+              },
+              "params": {},
+              "id": {}
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "operation",
+              "command_id",
+              "subject",
+              "preconditions",
+              "payload"
+            ],
+            "properties": {
+              "step": {
+                "const": "command"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              },
+              "command_id": {},
+              "subject": {},
+              "preconditions": {},
+              "authority_epoch": {},
+              "requires": {},
+              "extensions": {},
+              "payload": {},
+              "dedupe_generation": {},
+              "method": {
+                "type": "string"
+              },
+              "id": {},
+              "set": {
+                "type": "object"
+              },
+              "remove": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "digest": {
+                "type": [
+                  "string",
+                  "boolean"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "operation",
+              "payload"
+            ],
+            "properties": {
+              "step": {
+                "const": "query"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              },
+              "payload": {},
+              "method": {
+                "type": "string"
+              },
+              "id": {},
+              "set": {
+                "type": "object"
+              },
+              "remove": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "command"
+            ],
+            "properties": {
+              "step": {
+                "const": "notify"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "command": {
+                "type": "object",
+                "required": [
+                  "operation",
+                  "command_id",
+                  "subject",
+                  "preconditions",
+                  "payload"
+                ],
+                "properties": {
+                  "operation": {
+                    "type": "string"
+                  },
+                  "command_id": {},
+                  "subject": {},
+                  "preconditions": {},
+                  "authority_epoch": {},
+                  "requires": {},
+                  "extensions": {},
+                  "payload": {},
+                  "dedupe_generation": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "id": {},
+                  "set": {
+                    "type": "object"
+                  },
+                  "remove": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "digest": {
+                    "type": [
+                      "string",
+                      "boolean"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "raw"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "hex": {
+                "type": "string"
+              },
+              "command": {
+                "type": "object",
+                "required": [
+                  "operation",
+                  "command_id",
+                  "subject",
+                  "preconditions",
+                  "payload"
+                ],
+                "properties": {
+                  "operation": {
+                    "type": "string"
+                  },
+                  "command_id": {},
+                  "subject": {},
+                  "preconditions": {},
+                  "authority_epoch": {},
+                  "requires": {},
+                  "extensions": {},
+                  "payload": {},
+                  "dedupe_generation": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "id": {},
+                  "set": {
+                    "type": "object"
+                  },
+                  "remove": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "digest": {
+                    "type": [
+                      "string",
+                      "boolean"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "padded": {
+                "type": "object",
+                "required": [
+                  "message",
+                  "frame_bytes"
+                ]
+              },
+              "terminate": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "expect"
+            ],
+            "properties": {
+              "step": {
+                "const": "expect_frame"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "expect_close"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "close_input"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "expect": {
+      "type": "object",
+      "properties": {
+        "ok": {},
+        "error": {
+          "type": "string"
+        },
+        "details": {},
+        "frame": {},
+        "id_null": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

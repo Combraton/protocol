@@ -107,6 +107,7 @@ version = "0.1.0-dev.0"
 dependencies = [
  "hex",
  "jsonschema",
+ "serde",
  "serde_json",
  "serde_json_canonicalizer",
  "sha2",

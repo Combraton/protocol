@@ -1,0 +1,201 @@
+//! Fixture patterns (conformance/schemas/fixture.schema.json) and outgoing templates.
+
+use std::collections::BTreeMap;
+
+use serde_json::Value;
+
+pub type Vars = BTreeMap<String, Value>;
+
+/// Match `actual` against `pattern`. Returns a human-readable mismatch.
+pub fn matches(
+    pattern: &Value,
+    actual: Option<&Value>,
+    vars: &Vars,
+    path: &str,
+) -> Result<(), String> {
+    if let Value::Object(map) = pattern
+        && let Some(directive) = map.keys().find(|key| key.starts_with('$'))
+    {
+        return directive_match(directive, map, actual, vars, path);
+    }
+    let Some(actual) = actual else {
+        return Err(format!("{path}: missing"));
+    };
+    match (pattern, actual) {
+        (Value::Object(expected), Value::Object(found)) => {
+            for (key, sub) in expected {
+                matches(sub, found.get(key), vars, &format!("{path}/{key}"))?;
+            }
+            Ok(())
+        }
+        (Value::Array(expected), Value::Array(found)) => {
+            if expected.len() != found.len() {
+                return Err(format!(
+                    "{path}: expected {} items, found {}",
+                    expected.len(),
+                    found.len()
+                ));
+            }
+            for (index, (sub, item)) in expected.iter().zip(found).enumerate() {
+                matches(sub, Some(item), vars, &format!("{path}/{index}"))?;
+            }
+            Ok(())
+        }
+        (expected, found) if expected == found => Ok(()),
+        (expected, found) => Err(format!("{path}: expected {expected}, found {found}")),
+    }
+}
+
+fn directive_match(
+    directive: &str,
+    map: &serde_json::Map<String, Value>,
+    actual: Option<&Value>,
+    vars: &Vars,
+    path: &str,
+) -> Result<(), String> {
+    let argument = &map[directive];
+    match directive {
+        "$absent" => match actual {
+            None => Ok(()),
+            Some(found) => Err(format!("{path}: expected absent, found {found}")),
+        },
+        "$any" => actual.map(|_| ()).ok_or_else(|| format!("{path}: missing")),
+        "$var" | "$ne_var" => {
+            let name = argument.as_str().unwrap_or_default();
+            let expected = vars
+                .get(name)
+                .ok_or_else(|| format!("{path}: unknown variable {name}"))?;
+            let found = actual.ok_or_else(|| format!("{path}: missing"))?;
+            match (directive, expected == found) {
+                ("$var", true) | ("$ne_var", false) => Ok(()),
+                ("$var", false) => Err(format!(
+                    "{path}: expected ${name} = {expected}, found {found}"
+                )),
+                _ => Err(format!(
+                    "{path}: expected a value different from ${name} = {expected}"
+                )),
+            }
+        }
+        "$exact" => {
+            let found = actual.ok_or_else(|| format!("{path}: missing"))?;
+            let expected = render(argument, vars, &mut 0)?;
+            if &expected == found {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{path}: expected exactly {expected}, found {found}"
+                ))
+            }
+        }
+        "$type" => {
+            let found = actual.ok_or_else(|| format!("{path}: missing"))?;
+            let kind = match found {
+                Value::Null => "null",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "integer",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            };
+            if argument.as_str() == Some(kind) {
+                Ok(())
+            } else {
+                Err(format!("{path}: expected {argument}, found {kind}"))
+            }
+        }
+        "$contains" => {
+            let found = actual
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{path}: expected an array"))?;
+            if found
+                .iter()
+                .any(|item| matches(argument, Some(item), vars, path).is_ok())
+            {
+                Ok(())
+            } else {
+                Err(format!("{path}: no element matches {argument}"))
+            }
+        }
+        "$len" => {
+            let found = actual
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{path}: expected an array"))?;
+            if Some(found.len() as u64) == argument.as_u64() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{path}: expected length {argument}, found {}",
+                    found.len()
+                ))
+            }
+        }
+        other => Err(format!("{path}: unknown pattern directive {other}")),
+    }
+}
+
+/// Expand outgoing templates: `{"$var": name}` and `{"$unique": prefix}`.
+pub fn render(template: &Value, vars: &Vars, counter: &mut u64) -> Result<Value, String> {
+    match template {
+        Value::Object(map) if map.len() == 1 && map.contains_key("$var") => {
+            let name = map["$var"].as_str().unwrap_or_default();
+            vars.get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown variable {name}"))
+        }
+        Value::Object(map) if map.len() == 1 && map.contains_key("$unique") => {
+            *counter += 1;
+            Ok(Value::String(format!(
+                "{}-{}",
+                map["$unique"].as_str().unwrap_or("u"),
+                counter
+            )))
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, value) in map {
+                out.insert(key.clone(), render(value, vars, counter)?);
+            }
+            Ok(Value::Object(out))
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(|item| render(item, vars, counter))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        other => Ok(other.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn subset_directives_and_variables() {
+        let mut vars = Vars::new();
+        vars.insert("ack".into(), json!({"revision": 1}));
+        let actual = json!({"a": 1, "b": [1, 2], "ack": {"revision": 1}});
+        assert!(
+            matches(
+                &json!({"a": 1, "ack": {"$var": "ack"}, "c": {"$absent": true}}),
+                Some(&actual),
+                &vars,
+                ""
+            )
+            .is_ok()
+        );
+        assert!(
+            matches(
+                &json!({"b": {"$contains": 2}, "a": {"$type": "integer"}}),
+                Some(&actual),
+                &vars,
+                ""
+            )
+            .is_ok()
+        );
+        assert!(matches(&json!({"a": 2}), Some(&actual), &vars, "").is_err());
+        assert!(matches(&json!({"b": [1]}), Some(&actual), &vars, "").is_err());
+        assert!(matches(&json!({"a": {"$absent": true}}), Some(&actual), &vars, "").is_err());
+    }
+}

@@ -1,0 +1,65 @@
+{
+  "format": "combraton-conformance-participant/1",
+  "name": "combraton-reference-provider",
+  "version": "0.1.0-dev.0",
+  "description": "Reference Core provider (not a product). Build first: cargo build -p combraton-reference-provider",
+  "role": "provider",
+  "binding": "stdio",
+  "claims": {
+    "profiles": [
+      {
+        "name": "core",
+        "major": 1
+      },
+      {
+        "name": "core-test",
+        "major": 1
+      }
+    ]
+  },
+  "launch": {
+    "argv": [
+      "{repo}/target/debug/combraton-reference-provider",
+      "--data-dir",
+      "{data_dir}",
+      "--config",
+      "{config_file}",
+      "--schemas",
+      "{repo}/schemas"
+    ]
+  },
+  "mutants": {
+    "argv": [
+      "--mutant",
+      "{mutant}"
+    ],
+    "names": [
+      "reexecute-duplicates",
+      "ignore-command-digest",
+      "dedupe-by-transport-id",
+      "ignore-generation-window",
+      "checks-before-dedupe",
+      "bind-on-rejection",
+      "lose-dedupe-on-restart",
+      "ignore-authority-epoch",
+      "partial-preconditions",
+      "accept-unknown-fields",
+      "ignore-requires",
+      "skip-digest-verification",
+      "canonical-code-point-order",
+      "canonical-ascii-escape",
+      "unbounded-frames",
+      "skip-invalid-frames",
+      "parse-unterminated",
+      "process-notifications",
+      "accept-unsupported-profile",
+      "no-negotiation-gate",
+      "ignore-limits",
+      "allow-renegotiation",
+      "ignore-profile-selection",
+      "accept-duplicate-members",
+      "lax-numbers",
+      "route-by-operation"
+    ]
+  }
+}

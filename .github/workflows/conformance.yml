@@ -34,6 +34,8 @@ jobs:
         run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json
       - name: Every negative fixture fails its declared mutants
         run: ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json
+      - name: Run suite against the independent Python implementation (built from documents only)
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
 
   crosscheck:
     name: Non-Rust encoding cross-checks

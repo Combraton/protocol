@@ -6,99 +6,91 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-13T10:50Z. **M0 done; M1 implemented and awaiting review.**
+- **Checkpoint:** 2026-09-13T13:10Z.
+- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 in progress on branch `release-0.1/m2`; see [M2 task](M2.md).
 
-## Goal and acceptance
+## Goal, decisions and constraints
 
-See [PLAN](PLAN.md) and [MATRIX](MATRIX.md).
-
-- **Status:** the release scope and decision records 001–005 are **proposed, not accepted**.
-- **Owner decisions open:** U1–U6 in [PLAN §6](PLAN.md#6-unresolved-choices-that-affect-scope-or-public-semantics).
-- **Owner input received 2026-09-13:** PIO, CBR and the control plane will be written in Rust. This led to Rust conformance tooling ([decision 001](../../decisions/001-conformance-suite-architecture.md) item 7).
-- **Preserved constraints:**
-  - Protocol owns contracts and fixtures only.
-  - No PIO, CBR, Combraton or benchmark runner implementation.
-  - Coordination and Remote trust are unsupported.
-  - Nothing is merged or released.
+- **Plan:** [PLAN](PLAN.md), [MATRIX](MATRIX.md).
+- **Owner decisions (2026-09-13):**
+  - Scope accepted.
+  - macOS and Linux only (U4).
+  - MIT license (U6).
+  - Decision records 001–005 accepted.
+  - PIO, CBR and the control plane are Rust, so the conformance tooling is Rust.
+- **Open owner decision: U12,** the Unix-socket principal credential form. The recommendation is in [M2 §Unix-socket principal credential](M2.md#unix-socket-principal-credential-u12--recommendation-for-the-owner). The Unix-socket binding and fixtures (TRN-3, CORE-15) wait for it.
+- **Constraints:** Protocol owns contracts and fixtures only. Nothing is released. Commit and push as work progresses (owner request).
 
 ## Git state
 
-- **Branch and base:** repository `Combraton/protocol`, branch `release-0.1/foundation`, base `main` at `f654a29bd6574a75d8ce7c7b76d6a67ef22b45ea`. The branch is pushed to `origin`.
-- **Commits (oldest first):**
-  - `81f21be` — M0: plan, matrix, draft Core/ENCODING/STREAM, decisions 001–005.
-  - `33d6e6b` — Core schemas, encoding vectors, Python/Node cross-checks, Rust tooling decision.
-  - `d77fc71` — Rust reference provider with mutants.
-  - `d5abb04` — Rust runner, fixture schema, first fixture.
-  - `dce3863` — 52 fixtures, 32 mutants, Conformance CI, VERIFICATION.
-  - `d0ae764` — five positive fixtures (57 total).
-  - A later docs commit updates this handoff and STATE.
-- **Uncommitted files at checkpoint:** none besides this handoff and STATE update.
+- **Branches.** `main` at `f42d21a`. `release-0.1/m2` is pushed; its head is in `git log`.
+- **M2 commits so far (oldest first):**
 
-## Dependency state
+| Commit | Change |
+|---|---|
+| `a8c27ac` | M2 task packet; effects moved to M3 |
+| `0d61154` | Grants |
+| `e96641c` | Events and subscriptions |
+| `82c5364` | Capabilities |
+| `c91bf7d` | Merge of the independent Python Core implementation |
+| `6daa3cb` | CI runs the independent implementation |
+| `ed3f494` | Spec resolutions of its findings |
+| `3b32037` | 21 new and 2 revised fixtures, 19 mutants, runner and reference fixes |
 
-Requirements were read at combraton `9af69ce`, pio `e65b7c0`, cbr `3278393` and benchmarks `c8d5878` (full SHAs in [PLAN §2](PLAN.md#2-pinned-sources)). No sibling repository was modified.
+- **No PR for M2 yet.**
+- **Worktree `.worktrees/independent-python-m2`** (git-ignored directory), branch `release-0.1/m2-independent-python-features`. A spec-only helper is extending the independent implementation to grants, events and capabilities. Review and merge its branch when it reports. Do not edit that worktree from the main checkout.
 
-## What exists now (M1)
+## What exists on `release-0.1/m2`
 
-- **Schemas:** `schemas/core/1`, `schemas/core-test/1` (conformance-only profile), `schemas/stream/1`. All JSON Schema 2020-12.
-- **Draft specs:**
-  - [Core](../../spec/profiles/CORE.md): negotiation, closed envelopes with `requires`/`extensions`, processing order, intent digest, deduplication generations, preconditions, epochs, errors, test profile, environment-only test control.
-  - [ENCODING](../../spec/bindings/ENCODING.md) and [STREAM](../../spec/bindings/STREAM.md) (stdio form; Unix socket reserved for M2).
-- **Cargo workspace** (toolchain 1.97.1, `Cargo.lock`):
-  - `conformance/runner`: black-box runner with `self-test`, `check-fixtures`, `run` and `check-mutants`.
-  - `conformance/reference`: reference provider with its own parser and canonicalizer, SQLite store and 32 mutants.
-- **Suite data:**
-  - 57 fixtures under `conformance/fixtures/`.
-  - Encoding vectors in `conformance/vectors/encoding.json`, cross-checked by Python `rfc8785` 0.1.4 and Node `canonicalize` 5.0.0 (`conformance/crosscheck`).
-- **CI:** `.github/workflows/conformance.yml` (Ubuntu and macOS, plus the cross-check job) alongside the existing Documentation workflow.
+- **Core draft:**
+  - §15 grants (provider-held records, delegation, revocation cascade, epoch binding, expiry, step-6 authorization, non-leakage);
+  - §16 events (durable stream, epochs, cursors, gap and epoch-change items, subscriptions, filtering);
+  - §17 capabilities (revisioned snapshot, loss refusal, replay preserved, change events);
+  - clarified check order, negotiation rules, limit measurement, and launch-configuration-only test control.
+- **STREAM:** code-point request IDs, malformed and ID-less object rules, binding error retry classes, exit status.
+- **Suite:**
+  - 108 fixtures; 78 reference mutants.
+  - Runner supports notifications, feature applicability, launch-configuration validation and exit status.
+  - `conformance/independent/python-core`: spec-only Python provider plus its divergence log. Its findings are resolved in [M2-DIVERGENCES](M2-DIVERGENCES.md).
 
 ## Evidence
 
-Local run on macOS arm64 at `dce3863`, then again for `d0ae764`. Log at the time: session scratchpad `verify-m1.log` (not durable). All exit 0:
+Local run on macOS arm64 at `3b32037`, all exit 0:
 
 | Command | Result |
 |---|---|
-| `cargo fmt --all -- --check` | clean |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
-| `cargo build --workspace --locked`; `cargo test --workspace --locked` | 2 test binaries, all passed |
-| `./target/debug/combraton-conformance self-test` | 31 vectors ok |
-| `./target/debug/combraton-conformance check-fixtures` | 57 fixtures ok |
-| `./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json` | 57 pass, 0 not passing |
-| `./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json` | Every mutant killed by every fixture declaring it; no survivors, no timeouts. The kill reasons were inspected and match each mutant's defect. |
-| `uv run python generate_encoding_vectors.py --check ../vectors/encoding.json`; Node cross-check | match |
-| `python3 scripts/check_docs.py --workspace ..`; `git diff --check` | clean |
+| `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
+| `cargo build --workspace --locked`; `cargo test --workspace --locked` | passed |
+| `./target/debug/combraton-conformance self-test` | vectors ok |
+| `./target/debug/combraton-conformance check-fixtures` | 108 ok |
+| `./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json` | 108 pass |
+| `./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json` | all 78 mutants killed by every declaring fixture; the reasons were inspected |
+| `./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core` | 108, 0 not passing (M2 feature fixtures not applicable until the helper's extension merges) |
+| `python3 scripts/check_docs.py --workspace ..` | clean |
 
-**GitHub CI — observed:**
-
-| Head | Runs | Result |
-|---|---|---|
-| `dce3863` | Conformance 34752476067, Documentation 34752476060 | Both succeeded. Conformance jobs `ubuntu-latest` and `macos-latest` (Rust) plus non-Rust cross-checks all passed. |
-| `d0ae764` | Conformance 34752526676, Documentation 34752526711 | Both succeeded; same three jobs passed. |
-
-CI annotation: `actions/checkout` at the pinned v4 SHA targets the deprecated Node.js 20 runtime and is forced onto Node 24. It is not a failure, but the pin should be updated in a follow-up change.
+- **CI:** Conformance run 34772340465 for `3b32037` was in progress at this checkpoint; confirm its result before relying on it. Earlier M2 heads were not individually watched.
+- **Independence notes:**
+  - The first independent implementation passed all 57 M1 fixtures, yet 19 deliberate violations also passed. This is recorded, and the new fixtures now kill equivalent reference mutants.
+  - Four new fixtures were wrong when first written. Both implementations failed them identically, and the fixtures were corrected.
 
 ## What remains uncertain
 
-- **Owner decisions U1–U6**, especially U3/U9: the Unix-socket principal credential (M2).
-- **Independence:** the fixtures and the only tested provider were written by the same session. Mutants share its assumptions. The spec-only non-Rust implementation (M2) and PIO/CBR review are the next independence evidence.
-- **Unreachable states:** environment-only control cannot yet reach crash-mid-transaction states. Nothing is marked `untestable` in M1 because no M1 fixture needs it.
-- **Coverage limits:** M1 fixtures cover the stdio binding only. CORE-2, CORE-11–13, CORE-15–17, OBS-*, EFF-* and TRN-3–5 are M2.
+- **U12** (owner). Until decided, the Unix-socket binding, CORE-15 and TRN-3 stay open.
+- **Single-implementation features:** grants, events and capabilities have only the reference implementation until the helper's work merges.
+- **Deferred:** effects, telemetry lost ranges and backpressure (M3); pipelined-request fixtures (M3); highest-common-major selection (M6); `unavailable` and `internal_error` fault injection (M3).
 
 ## Active resources
 
-No long-running process belongs to this task. Conformance runs spawn short-lived provider processes in temporary directories and clean them up. Local build output is in `target/` and results in `conformance/results/`, both git-ignored.
+- One background helper in `.worktrees/independent-python-m2`.
+- No servers or daemons. Conformance runs spawn short-lived providers in temporary directories.
 
 ## State and prompt disposition
 
-[STATE](../STATE.md) is updated. The workspace-local kickoff prompt was rewritten to a continuation pointer for M2 and owner review; it is outside Git.
+[STATE](../STATE.md) is updated. The workspace continuation prompt points here.
 
 ## Next action
 
-1. Confirm the Conformance CI result for the latest branch head.
-2. Present the M1 review packet to the owner.
-3. Unless the owner changes scope, begin M2 on this branch or a follow-up branch:
-   - grants and principal scopes;
-   - events, subscriptions, cursors and gaps;
-   - capability snapshots and effects;
-   - the Unix-socket binding, once U3/U9 is decided;
-   - the spec-only non-Rust Core implementation.
+1. Confirm CI for the branch head.
+2. Review and merge the helper's branch; resolve its findings like [M2-DIVERGENCES](M2-DIVERGENCES.md).
+3. Obtain U12 and implement the Unix-socket binding with its fixtures.
+4. Open the M2 PR for owner review.

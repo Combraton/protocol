@@ -2,6 +2,11 @@
 
 Read [repository scope](../README.md), then [protocol spec](spec/SPEC.md). These current specs are authoritative for this repository; they are not implemented APIs.
 
+**Protocol 0.1 release drafts (proposed, not released contracts):**
+- [Release plan](work/release-0.1/PLAN.md) and [requirements-to-acceptance matrix](work/release-0.1/MATRIX.md).
+- [Core profile](spec/profiles/CORE.md), [canonical encoding and digests](spec/bindings/ENCODING.md), [local stream binding](spec/bindings/STREAM.md).
+- [Conformance suite](../conformance/README.md).
+
 - [Development workflow](https://github.com/Combraton/combraton/blob/main/docs/DEVELOPMENT.md) — ownership, parallel work, reviews and fresh-session recovery.
 - [Verification](VERIFICATION.md) — commands that actually exist and their limits.
 - [Decision records](decisions/README.md) — accepted internal choices and supersessions.

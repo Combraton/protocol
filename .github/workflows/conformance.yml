@@ -1,0 +1,53 @@
+name: Conformance
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  rust:
+    name: Runner, reference provider and fixtures (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned at setup
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Unit tests (includes encoding vectors in the reference provider)
+        run: cargo test --workspace --locked
+      - name: Runner self-test against encoding vectors
+        run: ./target/debug/combraton-conformance self-test
+      - name: Check fixtures
+        run: ./target/debug/combraton-conformance check-fixtures
+      - name: Run suite against the reference provider
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json
+      - name: Every negative fixture fails its declared mutants
+        run: ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json
+
+  crosscheck:
+    name: Non-Rust encoding cross-checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned at setup
+        with:
+          persist-credentials: false
+      - name: Python rfc8785 cross-check
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet rfc8785==0.1.4
+          PYTHONPATH=conformance/crosscheck/src "$RUNNER_TEMP/venv/bin/python" conformance/crosscheck/generate_encoding_vectors.py --check conformance/vectors/encoding.json
+      - name: Node canonicalize cross-check
+        run: |
+          npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/jcs" canonicalize@5.0.0
+          node conformance/crosscheck/crosscheck_encoding_vectors.mjs "$RUNNER_TEMP/jcs/node_modules/canonicalize/lib/canonicalize.js" conformance/vectors/encoding.json

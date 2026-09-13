@@ -27,7 +27,7 @@ Changing schema/framing, digest/canonical encoding, idempotency, authority, capa
 
 ## Verify and hand off
 
-Run `python3 scripts/check_docs.py` from the repository root for documentation changes; see [verification](docs/VERIFICATION.md). Product runtime/build/test commands do not exist yet: do not invent them or report product checks as passed. Add reproducible commands when implementation introduces them.
+Run `python3 scripts/check_docs.py` from the repository root for documentation changes. The draft conformance suite has reproducible Rust build, test, fixture and mutant commands listed in [verification](docs/VERIFICATION.md); run them for schema, fixture, runner or reference-provider changes and report their exit status. They cover only the profiles and bindings that have fixtures. Do not report checks that were not run, and add commands when implementation introduces them.
 
 Future product validation must exercise positive and negative fixtures, duplicates, stale basis, unknown capabilities, missing required data and old/new supported combinations. Generated types alone do not prove semantic conformance.
 

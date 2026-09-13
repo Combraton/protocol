@@ -536,6 +536,18 @@ impl Provider {
             }
             return Err(rejection);
         }
+        if operation.name == "core.grant.revoke" && self.mutants.on("re-revoke-after-preconditions")
+        {
+            let id = params["subject"]["id"].as_str().unwrap_or_default();
+            if self
+                .store
+                .grant(id)
+                .map_err(storage)?
+                .is_some_and(|(_, grant)| grant["state"] == "revoked")
+            {
+                return Err(reject("permission_denied", json!({"reason": "revoked"})));
+            }
+        }
         if self.mutants.on("capability-after-preconditions") {
             self.check_capabilities(operation.name)?;
         }
@@ -632,7 +644,10 @@ impl Provider {
         while index < ids.len() {
             let parent = ids[index].clone();
             for (_, grant) in &all {
-                if grant["parent"] == parent && grant["state"] == "active" {
+                if grant["parent"] == parent
+                    && (grant["state"] == "active"
+                        || self.mutants.on("cascade-rerevokes-descendants"))
+                {
                     let id = grant["id"].as_str().unwrap_or_default().to_string();
                     if !ids.contains(&id) {
                         ids.push(id);
@@ -646,6 +661,9 @@ impl Provider {
 
     /// CORE section 18.2. Failures are indistinguishable and never echo the credential.
     fn authenticate(&mut self, payload: &Value) -> Result<Value, Reject> {
+        if !self.requires_authentication && self.mutants.on("stdio-authenticate-accepted") {
+            return Ok(json!({"principal": self.identity.principal}));
+        }
         if !self.requires_authentication || self.authenticated {
             return Err(reject("already_authenticated", json!({})));
         }
@@ -713,6 +731,13 @@ impl Provider {
         }
     }
 
+    fn grants_negotiated(&self) -> bool {
+        self.selected
+            .as_ref()
+            .and_then(|selected| selected.get("core"))
+            .is_some_and(|features| features.iter().any(|f| f == "core.grants"))
+    }
+
     fn is_authority(&self) -> bool {
         self.identity.authorities.contains(&self.identity.principal)
     }
@@ -765,6 +790,21 @@ impl Provider {
         Ok(grant)
     }
 
+    /// Mutant `subscription-reauth-epoch-only`: only the authority binding can end a grant.
+    fn usable_grant_epoch_only(&self, id: &str) -> bool {
+        let Ok(Some((_, grant))) = self.store.grant(id) else {
+            return false;
+        };
+        let Some(binding) = grant.get("authority_binding") else {
+            return true;
+        };
+        let current = self
+            .store
+            .revision(AUTHORITY_KIND, AUTHORITY_ID)
+            .unwrap_or(-1);
+        binding["epoch"].as_i64() == Some(current)
+    }
+
     /// Issue validation (CORE section 15.3), part of step 6 so bound issues still replay.
     fn validate_issue(&self, payload: &Value) -> Result<(), Reject> {
         let invalid = |path: &str, reason: &str| {
@@ -778,15 +818,6 @@ impl Provider {
         {
             return invalid("/payload/audience", "audience is not this provider");
         }
-        if let Some(binding) = payload.get("authority_binding")
-            && binding["scope"] != AUTHORITY_ID
-            && !self.mutants.on("unknown-binding-scope-accepted")
-        {
-            return invalid(
-                "/payload/authority_binding/scope",
-                "not an authority scope of this provider",
-            );
-        }
         if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
             let now = grants::now(self.identity.fixed_clock.as_deref());
             let too_early = if self.mutants.on("issue-at-now-accepted") {
@@ -798,6 +829,15 @@ impl Provider {
                 return invalid("/payload/expires_at", "grant would already be expired");
             }
         }
+        if let Some(binding) = payload.get("authority_binding")
+            && binding["scope"] != AUTHORITY_ID
+            && !self.mutants.on("unknown-binding-scope-accepted")
+        {
+            return invalid(
+                "/payload/authority_binding/scope",
+                "not an authority scope of this provider",
+            );
+        }
         Ok(())
     }
 
@@ -806,7 +846,9 @@ impl Provider {
         if operation == "core.grant.issue" && !self.mutants.on("issue-validation-before-dedupe") {
             self.validate_issue(&params["payload"])?;
         }
-        if self.mutants.on("ignore-grants") {
+        if self.mutants.on("ignore-grants")
+            || (self.mutants.on("authorization-needs-grants-feature") && !self.grants_negotiated())
+        {
             return Ok(());
         }
         let denied = |reason: &str| Err(reject("permission_denied", json!({"reason": reason})));
@@ -863,19 +905,37 @@ impl Provider {
                 let issuer = record
                     .as_ref()
                     .is_some_and(|(_, grant)| grant["issuer"] == self.identity.principal.as_str());
+                let already_revoked = record
+                    .as_ref()
+                    .is_some_and(|(_, grant)| grant["state"] == "revoked")
+                    && !self.mutants.on("re-revoke-accepted")
+                    && !self.mutants.on("re-revoke-after-preconditions");
+                if already_revoked && self.mutants.on("revoked-before-issuer-check") {
+                    return denied("revoked");
+                }
                 if !(self.is_authority() || issuer || self.mutants.on("anyone-may-revoke")) {
                     return denied("not_authority");
                 }
-                let already_revoked = record
-                    .as_ref()
-                    .is_some_and(|(_, grant)| grant["state"] == "revoked");
-                if already_revoked && !self.mutants.on("re-revoke-accepted") {
+                if already_revoked {
                     return denied("revoked");
                 }
                 Ok(())
             }
             _ => {
                 let Some(mut needed) = grants::required_rights(operation, params) else {
+                    let grant_id = params.get("grant").and_then(Value::as_str);
+                    if operation == "core.capabilities"
+                        && self.mutants.on("capabilities-protected")
+                        && grant_id.is_none()
+                        && !self.is_authority()
+                    {
+                        return denied("grant_required");
+                    }
+                    if let Some(id) = grant_id
+                        && self.mutants.on("grant-field-evaluated-on-unprotected")
+                    {
+                        self.usable_grant(id)?;
+                    }
                     return Ok(());
                 };
                 if (operation == "core-test.authority.claim"
@@ -1193,10 +1253,15 @@ impl Provider {
         if operation == "core-test.subject.put" && !self.mutants.on("ignore-authority-epoch") {
             let asserted = params["authority_epoch"].as_i64().unwrap_or_default();
             if asserted < epoch {
-                return Err(reject(
-                    "stale_authority_epoch",
-                    json!({"current_epoch": epoch}),
-                ));
+                let authority = json!({"kind": AUTHORITY_KIND, "id": AUTHORITY_ID});
+                let details = if self.may_read(&authority, params)?
+                    || self.mutants.on("current-epoch-always-disclosed")
+                {
+                    json!({"current_epoch": epoch})
+                } else {
+                    json!({})
+                };
+                return Err(reject("stale_authority_epoch", details));
             }
             if asserted > epoch {
                 return Err(reject("unknown_authority_epoch", json!({})));
@@ -1207,8 +1272,16 @@ impl Provider {
 
     /// Whether the principal may read `subject` in this command's authorization context (CORE section 7).
     fn may_read(&self, subject: &Value, params: &Value) -> Result<bool, Reject> {
+        let grant_operation = params["operation"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("core.grant."));
         match params.get("grant").and_then(Value::as_str) {
-            _ if subject["kind"] == "core.grant" && self.is_authority() => Ok(true),
+            _ if grant_operation && self.is_authority() => Ok(true),
+            _ if grant_operation => self.visible(
+                subject,
+                &None,
+                &Some(json!({"rights": [], "resources": []})),
+            ),
             Some(id) => match self.usable_grant(id) {
                 Ok(grant) => self.visible(subject, &None, &Some(grant)),
                 Err(_) => Ok(false),
@@ -1545,6 +1618,11 @@ impl Provider {
         match params.get("grant").and_then(Value::as_str) {
             Some(id) => {
                 let grant = self.usable_grant(id)?;
+                if self.is_authority()
+                    && self.mutants.on("authority-events-unrestricted-under-grant")
+                {
+                    return Ok(None);
+                }
                 let can_read = grant["rights"]
                     .as_array()
                     .into_iter()
@@ -1648,24 +1726,32 @@ impl Provider {
             return Ok(kind_ok && covers);
         }
         let kind = subject["kind"].as_str().unwrap_or_default();
+        let test_read = grant["rights"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|right| right == "core-test.read");
         let readable = if kind.starts_with("core-test.") {
-            covers
-                && grant["rights"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|right| right == "core-test.read")
+            let covered = covers
+                || (kind == AUTHORITY_KIND && self.mutants.on("authority-events-ignore-resources"));
+            covered && test_read
         } else if kind == "core.grant" {
             let id = subject["id"].as_str().unwrap_or_default();
-            self.store
-                .grant(id)
-                .map_err(storage)?
-                .is_some_and(|(_, record)| {
-                    record["holder"] == self.identity.principal.as_str()
-                        || record["issuer"] == self.identity.principal.as_str()
-                })
+            self.mutants.on("grant-events-visible-to-readers")
+                || self
+                    .store
+                    .grant(id)
+                    .map_err(storage)?
+                    .is_some_and(|(_, record)| {
+                        record["holder"] == self.identity.principal.as_str()
+                            || (record["issuer"] == self.identity.principal.as_str()
+                                && !self.mutants.on("grant-events-holder-only"))
+                    })
+        } else if kind == "core.capabilities" {
+            (covers || self.mutants.on("capability-events-ignore-resources"))
+                && (test_read || !self.mutants.on("capability-events-need-test-read"))
         } else {
-            covers
+            false
         };
         Ok(kind_ok && readable)
     }
@@ -1712,7 +1798,11 @@ impl Provider {
                 self,
                 json!({"kind": "core.grant", "id": record["id"]}),
                 revision,
-                json!({"grant": record}),
+                if self.mutants.on("snapshot-grant-state-only") {
+                    json!({"state": record["state"]})
+                } else {
+                    json!({"grant": record})
+                },
             )?;
         }
         Ok((subjects, hidden))
@@ -1732,11 +1822,33 @@ impl Provider {
             self.mutants.on("filtered-always-under-grant") && (kinds.is_some() || grant.is_some());
         let mut position = start;
         let mut items = Vec::new();
+        // A cursor at the vouched end of a closed epoch hears about the epoch change before any gap.
+        while discarded > position
+            && position.0 < current
+            && !self.mutants.on("gap-hides-epoch-change")
+        {
+            let vouched = self
+                .store
+                .vouched_through(position.0)
+                .map_err(storage)?
+                .unwrap_or(0);
+            if position.1 < vouched {
+                break;
+            }
+            if !self.mutants.on("silent-epoch-change") {
+                items.push(json!({"epoch_change": {
+                    "from_epoch": position.0,
+                    "to_epoch": position.0 + 1,
+                    "vouched_through": vouched,
+                }}));
+            }
+            position = (position.0 + 1, 0);
+        }
         if discarded > position && !self.mutants.on("silent-retention-gap") {
             let head = self.head()?;
             let as_of = json!({"epoch": head.0, "sequence": head.1});
             let (subjects, hidden) = self.snapshot_subjects(kinds, grant)?;
-            filtered |= hidden;
+            filtered |= hidden && !self.mutants.on("filtered-ignores-snapshot");
             items.push(json!({"gap": {
                 "kind": "retention",
                 "from": {"epoch": position.0.max(1), "sequence": position.1 + 1},
@@ -1745,6 +1857,7 @@ impl Provider {
             }}));
             return Ok((items, head, filtered));
         }
+        let mut after_last_item = position;
         while items.len() < limit {
             if position.0 < current {
                 let vouched = self
@@ -1761,6 +1874,7 @@ impl Provider {
                         position = (position.0, sequence);
                         if self.visible(&event["subject"], kinds, grant)? {
                             items.push(json!({"event": event}));
+                            after_last_item = position;
                         } else {
                             filtered = true;
                         }
@@ -1774,6 +1888,7 @@ impl Provider {
                             }}));
                         }
                         position = (position.0 + 1, 0);
+                        after_last_item = position;
                     }
                 }
             } else {
@@ -1786,6 +1901,7 @@ impl Provider {
                         position = (current, sequence);
                         if self.visible(&event["subject"], kinds, grant)? {
                             items.push(json!({"event": event}));
+                            after_last_item = position;
                         } else {
                             filtered = true;
                         }
@@ -1793,6 +1909,12 @@ impl Provider {
                     None => break,
                 }
             }
+        }
+        if items.len() == limit && self.mutants.on("filtered-counts-beyond-range") {
+            filtered |= self.collect_items(position, usize::MAX, kinds, grant)?.2;
+        }
+        if self.mutants.on("cursor-stops-at-last-item") && !items.is_empty() {
+            position = after_last_item;
         }
         Ok((items, position, filtered))
     }
@@ -1878,7 +2000,12 @@ impl Provider {
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
         subscriptions.retain(|subscription| {
             let Some(grant_id) = &subscription.grant_id else { return true };
-            if self.mutants.on("subscription-survives-authorization-loss") || self.usable_grant(grant_id).is_ok() {
+            let still_authorized = if self.mutants.on("subscription-reauth-epoch-only") {
+                self.usable_grant_epoch_only(grant_id)
+            } else {
+                self.usable_grant(grant_id).is_ok()
+            };
+            if self.mutants.on("subscription-survives-authorization-loss") || still_authorized {
                 return true;
             }
             frames.push(json!({

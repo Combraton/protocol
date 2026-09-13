@@ -6,7 +6,7 @@ This directory holds the normative, language-neutral conformance material for Pr
 
 | Path | Contents |
 |---|---|
-| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 144 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2), `socket/` for the Unix-socket binding. |
+| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 153 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2), `socket/` for the Unix-socket binding. |
 | `vectors/` | Encoding and digest test vectors |
 | `schemas/` | Schema for fixture files |
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |
@@ -53,7 +53,7 @@ A participant under test is launched with a data directory and a JSON launch con
 | `dedupe.advance_on_start` | At this start, `current += N` |
 | `dedupe.retain_generations` | At this start, `oldest_retained = max(oldest_retained, current − R + 1)`, discarding records filed under older generations |
 | `events.new_epoch_on_start` | At this start, begin a new stream epoch whose previous epoch is vouched through its last sequence (CORE §16.1) |
-| `events.unvouched_last` | With `new_epoch_on_start`, vouch for the previous epoch only through its last sequence minus this many events (default 0). Subject state is unchanged; only the vouched position moves. |
+| `events.unvouched_last` | With `new_epoch_on_start`, vouch for the previous epoch only through its last sequence minus this many events (default 0; no effect without `new_epoch_on_start`; a value above the last sequence vouches through 0). The unvouched events leave the stream: they are never delivered and do not count toward a later `retain_last`. Subject state is unchanged; only the vouched position moves. |
 | `events.retain_last` | At this start, discard all but the newest N events (CORE §16.4) |
 | `capabilities` | Map of capability name to status, such as `{"core-test.writes": "unsupported"}` (CORE §17.4) |
 | `clock.fixed` | Fixed provider clock instant `YYYY-MM-DDTHH:MM:SSZ` (CORE §15.2) |

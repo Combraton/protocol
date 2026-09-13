@@ -118,7 +118,7 @@ The same helper extended the independent provider to grants, events and capabili
 
 | Tag | Decision (spec unless noted) |
 |---|---|
-| E-AUTH-WITHOUT-FEATURE | Authorization applies without `core.grants`; a non-authority gets `grant_required`. **fixture** `core.capabilities.checked-after-authorization-before-preconditions` exercises it. |
+| E-AUTH-WITHOUT-FEATURE | Authorization applies without `core.grants`; a non-authority gets `grant_required`. **fixture** `core.grants.authorization-without-grants-feature` (added in section F; the fixture first named here negotiated `core.grants` and did not test the rule). |
 | E-UNPROTECTED | CORE §15.5 lists protected operations; `core.capabilities` and `core.events.unsubscribe` are not protected, and a `grant` field there is validated but not evaluated. |
 | E-DENIAL-ORDER | `grant_not_found`, `revoked`, `expired`, `authority_epoch_stale`, `right_missing`, `out_of_scope`. **fixture** `core.grants.denial-reason-order` with mutants `grant-state-before-holder` and `denial-order-scope-first`. |
 | E-ISSUE-VALIDATION-STEP | Audience, expiry and binding-scope checks run at step 6. **fixture** `core.grants.issue-replays-after-expiry` with mutant `issue-validation-before-dedupe`. |
@@ -133,7 +133,7 @@ The same helper extended the independent provider to grants, events and capabili
 | E-START-ORDER | **fixture docs:** the conformance README fixes the order `dedupe`, new epoch, retention, capabilities. |
 | E-CURSOR-AFTER-HIDDEN | `next_cursor` follows trailing hidden events when a read reaches the end. |
 | E-CURSOR-OLD-EPOCH | Adopted as the independent implementation chose. A cursor into an earlier epoch past `vouched_through` receives the `epoch_change`; that is the case epochs exist to report. Only a cursor past the current epoch's head, or from another stream, is `invalid_cursor`. **reference** (it refused such cursors). **launch configuration** `events.unvouched_last`. **fixtures** `core.events.cursor-past-vouched-position-gets-epoch-change` (mutant `closed-epoch-cursor-refused`) and `core.events.cursor-from-another-stream-refused` (mutant `accept-cursor-from-other-stream`). **Still unguarded:** a cursor past the current head cannot be produced without constructing a cursor, which callers must not do. |
-| E-GAP-EPOCHS | **deferred:** a discarded range spanning epochs is unreachable with current launch controls; the order of `epoch_change` and `gap` is left to M6 compatibility work. |
+| E-GAP-EPOCHS | First deferred as unreachable. That premise was wrong; resolved as F-GAP-EPOCHS-REACHABLE. |
 | E-SUB-REAUTH | A lapsed grant ends the subscription with a final `core.events.notify` carrying `"ended": {"reason": "authorization_lost"}`; the notification schema gains `ended`. **reference** plus **fixture** `core.events.subscription-ends-when-grant-stops-authorizing` with mutant `subscription-survives-authorization-loss`. |
 | E-NOTIFY-SIZE | Reads return fewer items and notifications are split to fit the caller's receive limit. An item that cannot fit alone makes a read `internal_error` and ends a subscription with reason `item_too_large`; it is never skipped. **reference** (it ignored the caller's limit). **runner:** every received frame must fit the session's advertised receive limit; `$repeat` builds large values. **fixture** `core.events.reads-and-notifications-fit-receive-limit` with mutant `ignore-caller-receive-limit`. |
 | E-UNSUBSCRIBE | An unknown subscription is `not_found`. |
@@ -167,11 +167,64 @@ Each deviation in the helper's E.4 table that passed every fixture now has a ref
 | `claim` depends on writes | `core.capabilities.claim-does-not-depend-on-writes` |
 | Duplicate precondition subjects accepted (D-PRE-DUP) | `core.preconditions.duplicate-subject-invalid` |
 
-**Independent implementation status.** These resolutions postdate the helper's pass. It currently fails the fixtures for decisions that went the other way or are new:
-- §16.6 visibility;
-- `filtered`;
-- `ended` notifications;
-- `events.unvouched_last`;
-- binding scope.
+**Independent implementation status.** These resolutions postdated the helper's second pass. A third pass (section F) brought the implementation level: it passes every applicable fixture.
 
-A further spec-only pass is needed to bring it level before M2 can claim REL-6. The divergence log's own entries are left as written, as evidence of what the documents said at `3b32037`.
+## F. Third independent pass
+
+The helper re-read the documents at `6c64ae4` before opening any fixture and brought the independent provider level with section E. It passed every applicable fixture (138 pass; 6 socket fixtures do not apply to a stdio participant). Its sensitivity harness then applied 37 deviations from the section E resolutions. 27 passed every fixture; 21 of those break stated requirements.
+
+The most important finding: E-GRANT-EVENT-LEAK was fixed in the text but unguarded against its original form. No fixture put a grant held and issued by others in a reader's range. The helper also found that its own earlier harness counted only `fail`, not `timeout`, so section E's unguarded counts may have been low for subscriptions.
+
+### F.1 Contradictions
+
+| Tag | Resolution |
+|---|---|
+| F-GRANT-VIS-AUTHORITY | **spec:** CORE §16.6 drops "matching `core.grant.get`". Under a grant, an authority sees `core.grant` events only as holder or issuer, like anyone else; `core.grant.get` still shows it every grant. **fixture** `core.events.visibility-follows-direct-read-authority` with mutant `authority-events-unrestricted-under-grant`. |
+| F-AUTH-STEP1 | **spec:** §10 step 1 exempts `core.authenticate` from negotiation, matching §3.1 and §18.2. **fixture** `core.authentication.launch-authenticated-session-refuses-authenticate`, which replaces the held-back stdio fixture and runs over both bindings, with mutant `stdio-authenticate-accepted`. |
+| F-GAP-EPOCHS-REACHABLE | **spec:** a gap may span epochs without separate epoch changes inside it. A cursor at or past a closed epoch's vouched end gets the `epoch_change` first, then a gap from sequence 1 of the next epoch. **reference:** it began the gap inside the closed epoch. **fixture** `core.events.gap-spanning-epochs` with mutant `gap-hides-epoch-change`. |
+| F-AUTH-WITHOUT-FEATURE-GUARD | **fixture** `core.grants.authorization-without-grants-feature` with mutant `authorization-needs-grants-feature`; the E record is corrected. |
+
+### F.2 Unstated expectations
+
+| Tag | Resolution |
+|---|---|
+| F-UNVOUCHED | Adopted as the helper chose. **fixture docs:** unvouched events leave the stream; they are never delivered and do not count toward a later `retain_last`; subject state is unchanged. **reference:** retention counted them. No fixture: this defines a test control, not provider behavior. |
+| F-UNVOUCHED-CONFIG | **fixture docs:** no effect without `new_epoch_on_start`; a value above the last sequence vouches through 0. |
+| F-ENDED-CURSOR | **spec:** the final notification's `next_cursor` is where delivery stopped, never past an item the subscription would still have delivered. |
+| F-CREDENTIALS-CONFIG | Agreed: a participant refuses launch keys it does not support. |
+| F-CREDENTIAL-SCHEMA | **schema:** `$defs/credential` documents the issued format and says why `core.authenticate` params accept any string. |
+
+### F.3 Open questions — decisions
+
+| Tag | Decision (spec unless noted) |
+|---|---|
+| F-PRE-CURRENT-NO-GRANT | On `core.grant.*` operations a non-authority may read only grants it holds or issued. **reference:** it already did. |
+| F-PRE-CURRENT-FOREIGN | Under a grant, a kind no profile defines is never readable. **reference:** it treated a covering resource as enough. |
+| F-CURSOR-OLD-EPOCH-PAST-END | Valid, answered with the `epoch_change`. |
+| F-SUB-END-TIMING | Authorization is re-checked after every request on the connection; a lapse ends the subscription even with nothing pending. **fixture** `core.events.subscription-ends-when-grant-revoked` (revocation, with a `kinds` filter that has nothing to deliver) with mutant `subscription-reauth-epoch-only`. |
+| F-ISSUE-CHECK-ORDER | `audience`, `expires_at`, then binding scope, before the issuing rules. **reference:** it checked the binding before the expiry. No fixture: only `details.path` differs. |
+| F-AUTH-ORDER | Agreed: steps 1–3 apply, then `already_authenticated`; the credential is never examined. |
+| F-FILTERED-RANGE | Agreed; it is what §16.4 "Cursors" and "Filtering" say together. **fixture** `core.events.filtered-and-cursor-cover-exact-range` with mutants `filtered-counts-beyond-range` and `cursor-stops-at-last-item`. |
+| F-READ-FIT | A read carries at least one item whenever the first item fits; how many more is provider-chosen. |
+
+### F.4 Deviations that passed every fixture — now guarded
+
+| Deviation | Fixture and reference mutant |
+|---|---|
+| A stranger re-revoking learns `revoked` | `core.grants.revoke-needs-issuer-or-authority` version 2, `revoked-before-issuer-check` |
+| Re-revocation checked after preconditions | same fixture (stale revision), `re-revoke-after-preconditions` |
+| Already revoked descendants re-revoked | `core.grants.cascade-skips-revoked-descendants`, `cascade-rerevokes-descendants` |
+| `current_epoch` always disclosed | `core.grants.current-epoch-needs-read`, `current-epoch-always-disclosed` (**reference** fixed: it always disclosed) |
+| `core.capabilities` protected; `grant` field evaluated on unprotected operations | `core.grants.unprotected-operations`, `capabilities-protected`, `grant-field-evaluated-on-unprotected` |
+| Authorization skipped without `core.grants` | `core.grants.authorization-without-grants-feature` |
+| Every grant event visible to `core.events.read` (the original leak); issuer not shown its grants; authority subject without a covering resource; capability events without coverage or needing `core-test.read`; authority unrestricted under a grant | `core.events.visibility-follows-direct-read-authority`, one mutant each |
+| `filtered` ignores hidden snapshot subjects; revoked grant's snapshot state | `core.events.retention-snapshot-is-filtered` version 2, `filtered-ignores-snapshot`, `snapshot-grant-state-only` |
+| `filtered` beyond the covered range; `next_cursor` at the last item | `core.events.filtered-and-cursor-cover-exact-range` |
+| Subscription survives revocation | `core.events.subscription-ends-when-grant-revoked` |
+| `core.authenticate` on stdio unknown, accepted or failing | `core.authentication.launch-authenticated-session-refuses-authenticate` |
+
+**Still unguarded, documented:**
+- a cursor past the current head, which cannot be produced without constructing a cursor;
+- capability revision on an evidence-source change, since sources are provider-chosen;
+- the issue check order, which only changes `details.path`;
+- unvouched events and retention, which is test-control semantics.

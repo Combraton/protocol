@@ -654,6 +654,7 @@
       "unevaluatedProperties": false
     },
     "credential": {
+      "description": "Format of issued principal credentials (CORE section 18.1). core.authenticate params deliberately accept any string, because a malformed credential is authentication_failed, not invalid_envelope.",
       "type": "string",
       "pattern": "^ccred1\\.[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}\\.[A-Za-z0-9_-]{43}$",
       "maxLength": 200

@@ -6,8 +6,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-13T18:50Z.
-- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 is feature-complete for the reference provider on branch `release-0.1/m2` ([M2 task](M2.md)). The independent implementation is behind the latest resolutions.
+- **Checkpoint:** 2026-09-13T20:30Z.
+- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 is complete on branch `release-0.1/m2` pending CI and owner review ([M2 task](M2.md)). Both implementations pass the suite.
 
 ## Goal, decisions and constraints
 
@@ -33,7 +33,9 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 | `668928e` | Positive fixtures for M2 rows that had only negative coverage |
 | `6ea7c67` | Draft M3 Execution task packet |
 | `561939a`, `341b363` | Independent Python provider extended to grants, events and capabilities; merged |
-| next commit | Section E resolutions: spec, schema, reference, runner, 22 new and 4 revised fixtures, 40 mutants |
+| `6c64ae4` | Section E resolutions: spec, schema, reference, runner, 22 new and 4 revised fixtures |
+| `572cd65` | Merge of the independent third pass (section F of its divergence log) |
+| next commit | Section F resolutions: spec, reference, 9 new and 2 revised fixtures, 20 mutants |
 
 ## What exists on `release-0.1/m2`
 
@@ -44,40 +46,41 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - §18 credentials.
 - **STREAM:** stdio and Unix-socket forms.
 - **Suite:**
-  - 144 fixtures; 123 reference mutants.
+  - 153 fixtures; 143 reference mutants.
   - The runner enforces the caller's receive limit on every received frame and notification-after-response ordering.
   - It supports `any_of`, fresh data directories and `$repeat` values.
   - New launch key: `events.unvouched_last`.
 
 ## Evidence
 
-Local run on macOS arm64 of the working tree committed as the section E resolution:
+Local run on macOS arm64 of the working tree committed as the section F resolution, all exit 0:
 
 | Command | Result |
 |---|---|
 | `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
 | `cargo build --workspace --locked`; `cargo test --workspace --locked` | passed |
 | `./target/debug/combraton-conformance self-test` | 31 vectors ok |
-| `./target/debug/combraton-conformance check-fixtures` | 144 ok |
-| `run` and `check-mutants` with `reference-provider.json` | 144 pass; every declared mutant killed |
-| `run` and `check-mutants` with `reference-provider-unix.json` | 144 pass; every declared mutant killed |
-| `run` with `independent-python-core.json` | exit 1; 8 not passing, all decisions made after its pass (M2-DIVERGENCES, "Independent implementation status") |
+| `./target/debug/combraton-conformance check-fixtures` | 153 ok |
+| `run` and `check-mutants` with `reference-provider.json` | 153 pass; every declared mutant killed |
+| `run` and `check-mutants` with `reference-provider-unix.json` | 153 pass; every declared mutant killed |
+| `run` with `independent-python-core.json` | 0 not passing (socket fixtures not applicable) |
 | `python3 scripts/check_docs.py` | 0 errors |
 
-- **CI:** runs up to `6ea7c67` succeeded. The pushed section E head is expected to fail only the independent step.
+- **CI:** `6c64ae4` failed only the independent step, as expected. Confirm the result for the section F head.
+- **Kill reasons.** The kill reasons of 11 new mutants were inspected one by one; each fails its fixture at the intended step.
 
 **Independence notes:**
-- The second pass found a disclosure bug in the spec: grant records and subject values leaked through events.
-- It also found that notifications could exceed the caller's receive limit, a bug the reference shared.
-- One new mutant (`denial-order-scope-first`) survived the first fixture draft, and one proposed mutant proved unobservable because the schema already enforced its rule. Both were corrected before commit.
+- The second pass found a disclosure bug in the spec: grant records and subject values leaked through events. It also found that notifications could exceed the caller's receive limit, a bug the reference shared.
+- The third pass found that this fix was unguarded against the original leak, along with 20 other unguarded requirements. All now have fixtures and mutants.
+- The 9 new fixtures pass on both implementations.
 
 ## What remains uncertain
 
-- **Single implementation:** the section E decisions have only the reference implementation until the independent implementation catches up.
+- **Single implementation:** the Unix-socket binding and credentials.
 - **Unguarded, documented:**
   - a cursor past the current head (unreachable without constructing a cursor);
   - capability revision on evidence-source change;
-  - a gap spanning epochs;
+  - the issue check order, where only `details.path` differs;
   - rejection of a different peer user on the socket (needs a second OS account).
 - **Deferred:** effects, telemetry lost ranges, backpressure, pipelined requests and fault injection (M3); highest-common-major selection (M6).
 
@@ -91,7 +94,6 @@ None. Conformance runs spawn short-lived providers in temporary directories.
 
 ## Next action
 
-1. Run a spec-only pass that brings the independent implementation level with section E. Review and merge it.
-2. Re-enable the stdio `already_authenticated` fixture once the independent implementation implements it.
-3. Confirm CI is green.
-4. Open the M2 PR for owner review.
+1. Confirm CI is green for the branch head.
+2. Open the M2 PR for owner review. Do not merge without authorization.
+3. Detail M3 ([draft](M3.md)) as a task.

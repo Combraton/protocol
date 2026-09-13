@@ -5,6 +5,86 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "current-epoch-always-disclosed",
+        "includes current_epoch in stale_authority_epoch for principals that may not read the authority subject",
+    ),
+    (
+        "re-revoke-after-preconditions",
+        "decides re-revocation after preconditions instead of at step 6",
+    ),
+    (
+        "revoked-before-issuer-check",
+        "tells a principal that is neither issuer nor authority that a grant is revoked",
+    ),
+    (
+        "cascade-rerevokes-descendants",
+        "revokes already revoked descendants again",
+    ),
+    (
+        "stdio-authenticate-accepted",
+        "accepts core.authenticate on a stdio session",
+    ),
+    (
+        "authorization-needs-grants-feature",
+        "skips authorization when core.grants was not negotiated",
+    ),
+    (
+        "capabilities-protected",
+        "requires a grant for core.capabilities",
+    ),
+    (
+        "grant-field-evaluated-on-unprotected",
+        "evaluates a grant field on unprotected operations",
+    ),
+    (
+        "authority-events-unrestricted-under-grant",
+        "shows an authority every event even when it reads under a grant",
+    ),
+    (
+        "authority-events-ignore-resources",
+        "shows core-test.authority events to core-test.read without a covering resource",
+    ),
+    (
+        "grant-events-visible-to-readers",
+        "shows every grant event to any holder of core.events.read",
+    ),
+    (
+        "grant-events-holder-only",
+        "hides grant events from the grant's issuer",
+    ),
+    (
+        "capability-events-ignore-resources",
+        "shows capability events without a resource covering core.capabilities",
+    ),
+    (
+        "capability-events-need-test-read",
+        "hides capability events unless the grant also has core-test.read",
+    ),
+    (
+        "filtered-ignores-snapshot",
+        "does not report snapshot subjects hidden by authorization in filtered",
+    ),
+    (
+        "filtered-counts-beyond-range",
+        "reports filtered for hidden events after the range a read covered",
+    ),
+    (
+        "cursor-stops-at-last-item",
+        "leaves next_cursor at the last item when trailing hidden events were covered",
+    ),
+    (
+        "snapshot-grant-state-only",
+        "reports a grant's snapshot state as its state string instead of its record",
+    ),
+    (
+        "subscription-reauth-epoch-only",
+        "ends subscriptions only for epoch-stale grants, not revoked or expired ones",
+    ),
+    (
+        "gap-hides-epoch-change",
+        "starts a retention gap inside a closed epoch instead of reporting the epoch change first",
+    ),
+    (
         "events-ignore-subject-read",
         "shows events and snapshot subjects covered by a core.events.read grant without the subject's own read authority",
     ),

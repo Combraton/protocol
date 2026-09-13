@@ -155,7 +155,27 @@
       "grant-precondition-revision-unchecked",
       "unknown-binding-scope-accepted",
       "grant-hidden-from-issuer",
-      "ignore-caller-receive-limit"
+      "ignore-caller-receive-limit",
+      "current-epoch-always-disclosed",
+      "re-revoke-after-preconditions",
+      "revoked-before-issuer-check",
+      "cascade-rerevokes-descendants",
+      "stdio-authenticate-accepted",
+      "authorization-needs-grants-feature",
+      "capabilities-protected",
+      "grant-field-evaluated-on-unprotected",
+      "authority-events-unrestricted-under-grant",
+      "authority-events-ignore-resources",
+      "grant-events-visible-to-readers",
+      "grant-events-holder-only",
+      "capability-events-ignore-resources",
+      "capability-events-need-test-read",
+      "filtered-ignores-snapshot",
+      "filtered-counts-beyond-range",
+      "cursor-stops-at-last-item",
+      "snapshot-grant-state-only",
+      "subscription-reauth-epoch-only",
+      "gap-hides-epoch-change"
     ]
   }
 }

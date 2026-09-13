@@ -49,7 +49,7 @@ What each command establishes:
 | `self-test` | The runner's strict parser and RFC 8785 canonicalization agree with the vectors | That the vectors are correct; see the cross-checks below |
 | `check-fixtures` | Every fixture validates against `conformance/schemas/fixture.schema.json`, IDs are unique, requirement IDs exist in the matrix, and negative fixtures declare mutants | That fixtures are semantically right |
 | `run` | The named participant passed every applicable fixture over the stdio binding. A result manifest with fixture digests and per-case transcripts is written to `conformance/results/<participant>/` (not committed). | Conformance for any profile without fixtures; real-adapter behavior; the Unix-socket binding |
-| `run` on `independent-python-core.json` | The spec-only Python implementation passes every fixture applicable to the profiles and features it claims (Core without grants, events or capabilities) | That it or the reference is correct where fixtures are silent; see its divergence log |
+| `run` on `independent-python-core.json` | The spec-only Python implementation passes every fixture applicable to the profiles, features and binding it claims (Core with grants, events and capabilities, over stdio) | That it or the reference is correct where fixtures are silent; see its divergence log |
 | `check-mutants` | Each of the reference provider's deliberately broken mutants fails every fixture that declares it, and every mutant is declared by at least one fixture | That no other wrong implementation can pass. Mutants share the reference author's assumptions. |
 
 To test another stdio provider, write a participant descriptor like `conformance/participants/reference-provider.json` (launch argv with `{repo}`, `{data_dir}` and `{config_file}` placeholders, plus claimed profiles) and pass it to `run`. The provider must accept a data directory and the launch configuration file ([decision 001](decisions/001-conformance-suite-architecture.md)).
@@ -73,7 +73,7 @@ The **Conformance** GitHub Actions workflow runs all of the above: the Rust job 
 - **Bindings.** Both the stdio and Unix-socket forms are exercised; the socket participant runs every applicable fixture after automatic authentication.
 - **Socket identity.** Rejecting a peer of a different operating-system user is not tested, because CI has one account (decision 006).
 - **Deferred to M3.** Effects, telemetry lost ranges and backpressure.
-- Two providers are tested: the reference provider (written by the fixture author) and an independent Python provider written from the documents only. The independent one covers Core without `core.grants`, `core.events` or `core.capabilities`, so those M2 features have only one implementation.
+- Two providers are tested: the reference provider (written by the fixture author) and an independent Python provider written from the documents only. The independent one covers Core with `core.grants`, `core.events` and `core.capabilities` over stdio. The Unix-socket binding and credentials have only the reference implementation.
 - States reached through launch configuration (restart, generation advancement) are test-environment control, not product operations.
 - No PIO, CBR or benchmark integration has run.
 

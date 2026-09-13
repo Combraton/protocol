@@ -377,7 +377,7 @@ impl Store {
         if let Some(keep) = retain_last {
             let doomed: Vec<(i64, i64)> = {
                 let mut statement = tx.prepare(
-                    "SELECT epoch, sequence FROM events ORDER BY epoch DESC, sequence DESC LIMIT -1 OFFSET ?1",
+                    "SELECT e.epoch, e.sequence FROM events e LEFT JOIN epoch_changes c ON c.from_epoch = e.epoch WHERE c.vouched_through IS NULL OR e.sequence <= c.vouched_through ORDER BY e.epoch DESC, e.sequence DESC LIMIT -1 OFFSET ?1",
                 )?;
                 let rows = statement.query_map([keep], |r| Ok((r.get(0)?, r.get(1)?)))?;
                 rows.collect::<rusqlite::Result<_>>()?

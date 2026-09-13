@@ -184,7 +184,7 @@ Each precondition entry names a subject and the revision the caller expects:
 - `revision: 0` means the subject MUST NOT exist.
 - `revision: n > 0` means the subject MUST exist at exactly revision `n`.
 
-All preconditions of a command are checked together. Two entries naming the same subject are `invalid_envelope`. A subject kind the provider does not own is a subject that does not exist. If any fails, the command is refused with `precondition_failed` and **no** part of it takes effect. The error lists every failed entry. Where the principal may read the subject, the entry includes its current revision (CORE-9); otherwise `current` is omitted. An authority principal acting without a grant may read every subject. Under a grant, the principal may read the subjects that grant would show it in events (§16.6).
+All preconditions of a command are checked together. Two entries naming the same subject are `invalid_envelope`. A subject kind the provider does not own is a subject that does not exist. If any fails, the command is refused with `precondition_failed` and **no** part of it takes effect. The error lists every failed entry. Where the principal may read the subject, the entry includes its current revision (CORE-9); otherwise `current` is omitted. An authority principal acting without a grant may read every subject. Under a grant, the principal may read the subjects that grant would show it in events (§16.6). On `core.grant.*` operations, whose `grant` field is not evaluated (§15.5), a principal that is not an authority may read only grants it holds or issued. Under a grant, a subject of a kind no profile defines is never readable.
 
 Preconditions are checked **after** the idempotency lookup. A retransmitted create whose original succeeded therefore returns the original acknowledgment, even though the subject now exists and a fresh evaluation would fail.
 
@@ -197,7 +197,7 @@ Some operations act under an authority that can be taken over, such as a control
 | Condition | Result |
 |---|---|
 | Epoch absent where the operation requires one | `invalid_envelope` |
-| Epoch lower than the current epoch | `stale_authority_epoch`. The error includes the current epoch where the principal may know it. |
+| Epoch lower than the current epoch | `stale_authority_epoch`. The error includes `current_epoch` only if the principal may read the scope's authority subject (§7 rules), such as `core-test.authority` for scope `core-test`. |
 | Epoch higher than any the provider issued | `unknown_authority_epoch` |
 
 The epoch check comes after the idempotency lookup. A retransmission of an already-accepted command still returns its stored result after an epoch change (CORE-10).
@@ -232,7 +232,7 @@ A provider MUST apply these steps in order. The first failing step determines th
 
 | Step | Check | Error on failure |
 |---|---|---|
-| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe` or `core.negotiate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
+| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe`, `core.negotiate` or `core.authenticate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
 | 2 | In this order: limits (§9: depth, array items, string bytes, payload bytes); method equals `operation`; closed objects and types; envelope semantics (`requires` entries unique and extension keys present, precondition rules, known-algorithm digest length) | `limit_exceeded`, `invalid_envelope` |
 | 3 | Every `requires` entry negotiated and understood, for queries as well as commands; if the operation belongs to a feature (such as `core.grants` or `core.events`), that feature is selected | `unsupported_required_feature` |
 | 4 | Digest algorithm supported (`sha512` only when `core.digest-sha512` was negotiated); `command_digest` matches the recomputed digest. `details.expected` is the provider's recomputed digest under the caller's algorithm. | `unsupported_digest_algorithm`, `digest_mismatch` |
@@ -390,13 +390,14 @@ A grant is a provider-owned subject of kind `core.grant`. Its record contains:
   - the child has the same `authority_binding` as the parent, if the parent has one.
 
   A violation is `permission_denied` with reason `delegation_exceeded`.
+- The step 6 validity checks on `issue` run in this order, before the issuing rules above: `audience`, `expires_at`, then `authority_binding` scope.
 - `issue` and `revoke` carry exactly one precondition, on the grant subject itself: revision `0` for `issue` and at least `1` for `revoke`. Anything else is `invalid_envelope` at step 2.
 - An `authority_binding` whose `scope` is not an authority scope the provider tracks is `invalid_envelope`, checked with `audience` and `expires_at` at step 6. A binding to a later epoch of a known scope is accepted; the grant authorizes once that epoch is current.
 - Unknown right names and resource kinds are accepted. They never match an operation or subject.
 - An `audience` other than the provider's own ID, or an `expires_at` not after the provider's current time, is `invalid_envelope`. These checks run at step 6, after deduplication, so an already-bound issue command still replays after its expiry has passed.
 - A grant is expired from the instant `expires_at` onward: it authorizes only while the provider clock is strictly before `expires_at`.
 
-**Revoking:** a grant may be revoked by its issuer or by an authority principal. Anyone else gets `permission_denied` with reason `not_authority`, whether or not the grant exists. Revoking a grant that is already revoked is `permission_denied` with reason `revoked`, decided after that check. The outcome's `revoked` lists the named grant first, then its descendants that were still active, in a provider-chosen order; each gets a new revision and one `core.grant.revoked` event. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
+**Revoking:** a grant may be revoked by its issuer or by an authority principal. Anyone else gets `permission_denied` with reason `not_authority`, whether or not the grant exists. Revoking a grant that is already revoked is `permission_denied` with reason `revoked`, decided after that check. The outcome's `revoked` lists the named grant first, then its descendants that were still active, in a provider-chosen order; each gets a new revision and one `core.grant.revoked` event. Already revoked descendants are neither listed nor changed. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
 
 ### 15.4 Grants and authority epochs
 
@@ -493,7 +494,7 @@ A provider store has one semantic stream with a stable `stream` ID.
 |---|---|
 | `{ "event": record }` | The next event after the cursor that the principal may see |
 | `{ "epoch_change": { "from_epoch", "to_epoch", "vouched_through" } }` | The stream moved to a new epoch after `vouched_through` in `from_epoch`. Nothing after that position in the old epoch will ever be delivered. Reading continues in `to_epoch` from sequence 1. |
-| `{ "gap": { "kind": "retention", "from", "to", "snapshot" } }` | Some events from `from` onward were discarded under retention, so positions `from` through `to` are not delivered as individual events. `snapshot` is `{ "as_of": position, "subjects": [ { "subject", "revision", "state" } ] }` for the visible subjects at `as_of`, which equals `to`. The provider chooses `to` anywhere from the last discarded position up to the stream head. A provider that keeps only current state uses the head; one that keeps historical snapshots may stop at the discard boundary and deliver later retained events individually. Reading continues after `to`. |
+| `{ "gap": { "kind": "retention", "from", "to", "snapshot" } }` | Some events from `from` onward were discarded under retention, so positions `from` through `to` are not delivered as individual events. `snapshot` is `{ "as_of": position, "subjects": [ { "subject", "revision", "state" } ] }` for the visible subjects at `as_of`, which equals `to`. The provider chooses `to` anywhere from the last discarded position up to the stream head. A provider that keeps only current state uses the head; one that keeps historical snapshots may stop at the discard boundary and deliver later retained events individually. Reading continues after `to`. A gap may span epochs: `from` and `to` can lie in different epochs, and epoch changes inside the gap are not reported separately, because the snapshot supersedes them. |
 
 Rules:
 
@@ -510,8 +511,8 @@ Rules:
   Other profiles define their own.
 
   `subjects` lists every visible subject changed by an event at or before `as_of`. A provider may also list visible subjects that no event changed, such as the initial capability snapshot.
-- **Cursors in earlier epochs.** A cursor into an earlier epoch is valid even when it points past that epoch's `vouched_through`. That happens when the provider lost events it had already delivered, which is what epochs exist to report. The first item is then the `epoch_change`, and a `vouched_through` below the cursor's position tells the consumer it holds events the provider no longer vouches for. A well-formed cursor from another stream, or one past the head of the current epoch, is `invalid_cursor`. `details.reason` is informative; its values are not specified.
-- **Size.** A read returns fewer than `limit` items when the whole response would exceed the caller's `receive_limits.max_frame_bytes` (§4.2). If not even one item fits, the read is `internal_error`.
+- **Cursors in earlier epochs.** A cursor into an earlier epoch is valid even when it points past that epoch's `vouched_through`, or past any sequence that epoch ever had. That happens when the provider lost events it had already delivered, which is what epochs exist to report. The first item is then the `epoch_change`, and a `vouched_through` below the cursor's position tells the consumer it holds events the provider no longer vouches for. When such a cursor is at or past the vouched end and later positions were discarded, the `epoch_change` comes first and the gap starts at sequence 1 of the next epoch. A well-formed cursor from another stream, or one past the head of the current epoch, is `invalid_cursor`. `details.reason` is informative; its values are not specified.
+- **Size.** A read returns fewer than `limit` items when the whole response would exceed the caller's `receive_limits.max_frame_bytes` (§4.2), but at least one item whenever the first item fits. If not even one item fits, the read is `internal_error`.
 
 ### 16.5 Subscriptions
 
@@ -519,8 +520,8 @@ Rules:
 
 - **Delivery.** The provider then sends JSON-RPC notifications `core.events.notify` with params `{ "subscription", "items", "next_cursor" }` on the same connection. First comes the backlog from the requested position, then new items as commands commit. Every notification frame fits the caller's receive limit; the provider splits items across notifications as needed.
 - **Ordering.** A notification carrying events caused by a command on the same connection is sent after that command's response.
-- **Lifetime.** A subscription ends with its session or with `core.events.unsubscribe` (payload `{ "subscription" }`). If the grant it was created under stops authorizing (revoked, expired or epoch-stale), the provider sends one final `core.events.notify` with `"items": []` and `"ended": { "reason": "authorization_lost" }`, then delivers nothing more on it. If a single item cannot fit the caller's receive limit even alone, the subscription ends the same way with reason `item_too_large`; the item is never skipped.
-- **Authorization.** Subscribing needs the same authorization as reading (§16.6), checked when subscribing and again before each delivery.
+- **Lifetime.** A subscription ends with its session or with `core.events.unsubscribe` (payload `{ "subscription" }`). If the grant it was created under stops authorizing (revoked, expired or epoch-stale), the provider sends one final `core.events.notify` with `"items": []` and `"ended": { "reason": "authorization_lost" }`, then delivers nothing more on it. If a single item cannot fit the caller's receive limit even alone, the subscription ends the same way with reason `item_too_large`; the item is never skipped. The final notification's `next_cursor` is where delivery stopped: after the last position the subscription covered, never past an item it would still have delivered.
+- **Authorization.** Subscribing needs the same authorization as reading (§16.6), checked when subscribing, after every request on the connection, and before each delivery. A lapse ends the subscription even when nothing is pending for it.
 - **Consumers.** Semantic events are never dropped silently. Consumers deduplicate by position and resume from the last cursor they durably processed. A reconnect may therefore replay items.
 
 ### 16.6 Authorization
@@ -530,8 +531,9 @@ Reading or subscribing needs an authority principal, or a grant with right `core
 | Subject kind | Visible under a grant when |
 |---|---|
 | A profile subject such as `core-test.subject` or `core-test.authority` | The same grant also has the profile's read right (`core-test.read`) with resources covering the subject |
-| `core.grant` | The session principal is that grant's holder or issuer, matching `core.grant.get` (§15.3) |
-| `core.capabilities` | The grant's resources cover kind `core.capabilities` |
+| `core.grant` | The session principal is that grant's holder or issuer. This holds for authority principals too: an authority reading under a grant is restricted to it (§15.5), although `core.grant.get` shows it every grant. |
+| `core.capabilities` | The grant's resources cover kind `core.capabilities`; no profile read right is needed |
+| A kind no profile defines | Never |
 
 `core.events.read` alone therefore reveals nothing the principal could not already read.
 

@@ -114,13 +114,23 @@ This plan, the [matrix](MATRIX.md), proposed [decision records](../../decisions/
 - The documentation checks still pass.
 - CI shows the same results on a clean runner.
 
-### M2 — Core authority, observation, effects and first independent implementation
+### M2 — Core authority, observation, capabilities and first independent implementation
 
-Grants and scope (issue, audience, expiry, delegation bounds, revocation), existence non-leakage, durable acknowledgment across provider restart, capability snapshots and capability loss, events/subscriptions/cursors, sequence and retention gaps, telemetry lost ranges, effect identity and reconciliation obligations, the Unix-socket binding with peer-credential authentication, and backpressure. A spec-only Core implementation in a second language starts here.
+Detailed task: [M2](M2.md). Covers:
+- grants and principal scopes (issue, audience, expiry, delegation bounds, revocation);
+- existence non-leakage;
+- durable acknowledgment across restart;
+- causation;
+- capability snapshots and capability loss;
+- events, subscriptions and cursors, with retention gaps and epoch changes;
+- the Unix-socket binding with its principal credential (after owner decision U12);
+- the independent spec-only Python Core implementation.
+
+Effects, telemetry lost ranges and backpressure moved to M3 on 2026-09-13, because their meaningful cases are execution effects.
 
 ### M3 — Execution profile
 
-All EXE rows with a deterministic reference executor (fake host), mutants and scenarios for lost acknowledgment, crash between journal and dispatch, delayed old-attempt result, two controllers and cancellation acknowledgment loss.
+All EXE rows with a deterministic reference executor (fake host), mutants and scenarios for lost acknowledgment, crash between journal and dispatch, delayed old-attempt result, two controllers and cancellation acknowledgment loss. Also the Core effect contract (EFF-1 to EFF-4), telemetry lost ranges (OBS-7) and backpressure (TRN-4), exercised through execution delivery, cancellation and output spooling.
 
 ### M4 — Evidence and Context profiles
 

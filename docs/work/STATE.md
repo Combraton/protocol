@@ -2,24 +2,23 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-13T10:55Z.
-- **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1). Plan: [release plan](release-0.1/PLAN.md). Detailed evidence and next steps: [release handoff](release-0.1/HANDOFF.md).
-- **Inspected revisions:** protocol `main` at `f654a29` (unchanged). Sibling checkouts combraton `9af69ce`, pio `e65b7c0`, cbr `3278393`, benchmarks `c8d5878`; none modified.
-- **Branch:** `release-0.1/foundation`, pushed; head recorded in the handoff. Not merged. Opened as a draft pull request for review; see issue #1.
-- **Completed:**
-  - M0: proposed scope, matrix, milestone plan and decision records 001–005.
-  - M1: Core command path and stdio binding drafts; JSON Schemas; Rust runner and reference provider with 32 mutants; 57 fixtures; encoding vectors with Python and Node cross-checks; Conformance CI.
-- **Evidence:**
-  - All documented commands in [VERIFICATION](../VERIFICATION.md) exited 0 locally on macOS arm64.
-  - GitHub Conformance CI succeeded on `dce3863` and `d0ae764` (Ubuntu and macOS Rust jobs, non-Rust cross-checks).
-  - Limits: stdio only; one provider written by the fixture author; no grants, events, sockets or non-Core profiles; no PIO/CBR integration.
-- **Remaining:** owner review of M0/M1; then M2 to M6 per the plan. The release scope is **not accepted**.
-- **Decisions/uncertainty:**
-  - Decision records 001–005 are proposed.
-  - Owner decisions U1–U6 are open (PLAN §6), including the Unix-socket principal credential (U3/U9) needed for M2 sockets, and the license (U6).
-  - Owner input 2026-09-13: PIO, CBR and the control plane are Rust. This selected Rust conformance tooling.
-- **Task resources:** none running. Build and results directories are git-ignored.
-- **Prompt disposition:** the workspace-local kickoff prompt was rewritten to a continuation notice pointing here and to the handoff.
-- **Next action:** owner reviews the M1 packet and decides U1–U6. Then start M2 with grants, events and subscriptions, and the spec-only non-Rust Core implementation. Confirm CI on the current head first.
+- **Updated:** 2026-09-13T11:40Z.
+- **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1). Current milestone: [M2 task](release-0.1/M2.md). Plan: [release plan](release-0.1/PLAN.md). Handoff: [release handoff](release-0.1/HANDOFF.md).
+- **Merged:** PR #2 (M0 scope and M1 Core conformance foundation) merged into `main` as `f42d21a` on 2026-09-13, on owner instruction, after Conformance CI succeeded on head `2d966eb`.
+- **Owner decisions (2026-09-13):**
+  - Scope accepted.
+  - macOS and Linux only; Windows unsupported (U4).
+  - MIT license (U6).
+  - Decision records 001–005 accepted.
+  - U12, the Unix-socket principal credential form, is open. A recommendation is in the M2 task.
+- **Branches and worktrees:**
+  - `release-0.1/m2`: this session.
+  - `release-0.1/m2-independent-python`: helper building the spec-only Python Core implementation, in worktree `.worktrees/independent-python` (git-ignored directory).
+- **Completed on `main`:** M0 and M1. The 57-fixture Core suite, 32 mutants, Rust runner and reference provider, and CI are documented in [VERIFICATION](../VERIFICATION.md).
+- **In progress (M2):** grants and principal scopes, then events and subscriptions, then capability snapshots. Effects, telemetry lost ranges and backpressure moved to M3.
+- **Evidence limits:** no M2 code exists at this snapshot. M1 evidence is unchanged from the merged state.
+- **Task resources:** one background helper, the independent implementation in the worktree above. No servers or daemons.
+- **Prompt disposition:** the workspace-local continuation prompt points to this file; rewrite it at the next checkpoint.
+- **Next action:** implement grants (CORE.md section, schemas, reference provider, mutants, fixtures). Merge and review the independent implementation when the helper reports. Ask the owner about U12 at the next checkpoint.
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

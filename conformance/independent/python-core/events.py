@@ -32,9 +32,10 @@ def decode_cursor(store, text: str) -> tuple[int, int]:
     if m.group(1) != store.stream_id():
         raise CursorError("other_stream")
     pos = (int(m.group(2)), int(m.group(3)))
-    # Only a position after the current head is beyond the end. A position in
-    # a closed epoch past its vouched_through is accepted: the reader learns
-    # from the epoch_change that it is not vouched for (E-CURSOR-OLD-EPOCH).
+    # CORE 16.4 "Cursors in earlier epochs": only a position past the head of
+    # the current epoch (or in a later epoch) is beyond the end. A position in
+    # a closed epoch, even past its vouched_through, is valid; the reader's
+    # first item is the epoch_change (F-UNVOUCHED).
     if pos > store.head():
         raise CursorError("beyond_end")
     return pos
@@ -51,11 +52,15 @@ def start_position(store, payload: dict) -> tuple[int, int]:
 def read_items(store, pos: tuple[int, int], limit: int, visible, kinds):
     """Return ``(items, next_pos, hidden)``.
 
-    ``visible(subject)`` says whether the reader's authorization covers a
-    subject; ``kinds`` is the optional kind filter. ``hidden`` is true when an
-    event in the scanned range was left out by either. ``next_pos`` is the
-    last position scanned: the last item's position when ``limit`` is
-    reached, otherwise the stream head (E-CURSOR-AFTER-HIDDEN).
+    ``visible(subject)`` says whether the reader may see a subject (CORE
+    16.6); ``kinds`` is the optional kind filter. ``hidden`` is true exactly
+    when an event or snapshot subject in the covered range was left out by
+    either (CORE 16.4 "Filtering"). ``next_pos`` is the last position
+    covered: the last item's position when ``limit`` is reached, otherwise
+    the stream head (CORE 16.4 "Cursors").
+
+    A closed epoch ends at its ``vouched_through``: nothing after that
+    position is ever delivered (CORE 16.4, ``epoch_change``).
     """
     items: list[dict] = []
     hidden = False
@@ -67,7 +72,7 @@ def read_items(store, pos: tuple[int, int], limit: int, visible, kinds):
 
     while len(items) < limit:
         epoch, seq = pos
-        if seq >= store.last_sequence(epoch):
+        if seq >= store.end_of(epoch):
             if epoch >= head_epoch:
                 break
             items.append({"epoch_change": {"from_epoch": epoch, "to_epoch": epoch + 1,
@@ -77,8 +82,9 @@ def read_items(store, pos: tuple[int, int], limit: int, visible, kinds):
         nxt = (epoch, seq + 1)
         if nxt <= disc:
             # No silent gaps (CORE 16.4): the first item after a discarded
-            # range is a gap whose snapshot is as of the last discarded
-            # position (E-GAP-TO).
+            # range is a gap. This provider keeps historical snapshots, so the
+            # gap stops at the last discarded position (one of the choices
+            # CORE 16.4 allows) and later retained events follow individually.
             through, snapshot = disc, store.base_snapshot()
             subjects = [s for s in snapshot if shown(s["subject"])]
             if len(subjects) != len(snapshot):

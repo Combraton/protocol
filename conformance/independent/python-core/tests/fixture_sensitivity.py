@@ -9,11 +9,14 @@ implementation, run first) is a behavior no fixture checks.
 
 Run from the repository root after `cargo build -p combraton-conformance --locked`:
 
-    python3 conformance/independent/python-core/tests/fixture_sensitivity.py [m1|m2]
+    python3 conformance/independent/python-core/tests/fixture_sensitivity.py [m1|m2|f] [--check] [--jobs N]
 
-Without an argument both groups run (about 7 s per deviation).
+Without a group all groups run. `--check` only verifies that every edit
+applies to the current sources. Variants run N at a time (default 4; about
+10 s of suite time each). Groups: m1 = section D, m2 = section E.4, f =
+section F (the requirements resolved in M2-DIVERGENCES section E).
 """
-import json, os, shutil, subprocess, sys, tempfile
+import concurrent.futures, json, os, shutil, subprocess, sys, tempfile
 
 REPO = os.getcwd()
 SCR = tempfile.mkdtemp(prefix="indep-py-sensitivity-")
@@ -75,12 +78,12 @@ V = [
  # ------------------------------------------------------------ M2 events (CORE 16)
  ("m2", "[control] caused_by not copied", [(P, '                    "caused_by": list(env.get("caused_by", [])),', '                    "caused_by": [],')]),
  ("m2", "gap snapshot and to at the stream head (retained events folded into the gap)", [(EV, '            through, snapshot = disc, store.base_snapshot()\n', '            import state as S_, valuedomain as V_\n            through, merged = store.head(), {(s_["subject"]["kind"], s_["subject"]["id"]): s_ for s_ in store.base_snapshot()}\n            for (body_,) in store.db.execute("SELECT body FROM events ORDER BY epoch, sequence").fetchall():\n                ev_ = V_.loads(body_); k_ = (ev_["subject"]["kind"], ev_["subject"]["id"])\n                merged[k_] = {"subject": ev_["subject"], "revision": ev_["revision"], "state": S_.reduce_state(merged[k_]["state"] if k_ in merged else None, ev_)}\n            snapshot = [merged[k_] for k_ in sorted(merged)]\n')]),
- ("m2", "filtered false under a grant when nothing was hidden", [(P, '"filtered": hidden or auth.grant is not None,', '"filtered": hidden,')]),
+ ("m2", "filtered always true under a grant (the E-FILTERED choice, since resolved)", [(P, '                "filtered": hidden,', '                "filtered": hidden or auth.grant is not None,')]),
  ("m2", "cursor from another stream accepted", [(EV, '    if m.group(1) != store.stream_id():\n        raise CursorError("other_stream")', '    if False:\n        raise CursorError("other_stream")')]),
  ("m2", "cursor beyond the head accepted", [(EV, '    if pos > store.head():\n        raise CursorError("beyond_end")', '    if False:\n        raise CursorError("beyond_end")')]),
  ("m2", "notifications sent before the command's response", [(P, '        self.write_frame(response)\n        # CORE 16.5: notifications for events a command caused go out after\n        # that command\'s response; a new subscription\'s backlog after its own.\n        self.deliver_notifications()', '        self.deliver_notifications()\n        self.write_frame(response)')]),
- ("m2", "subscription ignores kinds", [(P, 'EV.read_items(self.store, sub["pos"], chunk, auth.sees, sub["kinds"])', 'EV.read_items(self.store, sub["pos"], chunk, auth.sees, None)')]),
- ("m2", "subscription ignores grant resources", [(P, 'EV.read_items(self.store, sub["pos"], chunk, auth.sees, sub["kinds"])', 'EV.read_items(self.store, sub["pos"], chunk, lambda s: True, sub["kinds"])')]),
+ ("m2", "subscription ignores kinds", [(P, 'EV.read_items(self.store, start, n, auth.sees, sub["kinds"])', 'EV.read_items(self.store, start, n, auth.sees, None)')]),
+ ("m2", "subscription ignores grant resources", [(P, 'EV.read_items(self.store, start, n, auth.sees, sub["kinds"])', 'EV.read_items(self.store, start, n, lambda s: True, sub["kinds"])')]),
  ("m2", "subscribe needs no authorization", [(P, '        if method in ("core.events.read", "core.events.subscribe"):', '        if method == "core.events.read":')]),
  ("m2", "events.read under any grant without core.events.read", [(P, 'return self.authorize_under(env, [("core.events.read", None)])', 'return self.authorize_under(env, [])')]),
  ("m2", "gap snapshot not filtered by authorization", [(EV, '            subjects = [s for s in snapshot if shown(s["subject"])]', '            subjects = snapshot')]),
@@ -91,36 +94,124 @@ V = [
  ("m2", "[control] initial snapshot appends an event", [(ST, '            if revision > 1:', '            if True:')]),
  ("m2", "capability checked after the authority epoch and preconditions", [(P, '            self.check_capabilities(method)\n', ''), (P, '        self.check_preconditions(env, auth)\n        subj = env["subject"]\n        revision = self.store.revision(subj["kind"], subj["id"]) + 1', '        self.check_preconditions(env, auth)\n        self.check_capabilities("core-test.subject.put")\n        subj = env["subject"]\n        revision = self.store.revision(subj["kind"], subj["id"]) + 1')]),
  ("m2", "capability checked before authorization", [(P, '            auth = self.authorize(method, env)\n            # Step 7, first part', '            self.check_capabilities(method)\n            auth = self.authorize(method, env)\n            # Step 7, first part')]),
- ("m2", "revision raised only when a status changes (evidence ignored)", [(ST, '            if revision and V.canonical(stored) == V.canonical(predicates):', '            if revision and [p["status"] for p in stored] == [p["status"] for p in predicates]:')]),
+ ("m2", "revision raised only when a status changes (evidence ignored)", [(ST, '            if revision and meaning(stored) == meaning(predicates):', '            if revision and [p["status"] for p in stored] == [p["status"] for p in predicates]:')]),
  ("m2", "capability event revision differs from the snapshot revision", [(P, '            "subject": {"kind": "core.capabilities", "id": config["provider_id"]},\n            "revision": revision,', '            "subject": {"kind": "core.capabilities", "id": config["provider_id"]},\n            "revision": revision + 100,')]),
  ("m2", "capability event subject id is not provider_id", [(P, '"id": config["provider_id"]},', '"id": "capabilities"},')]),
  ("m2", "claim also depends on core-test.writes", [(P, 'OPERATION_CAPABILITIES = {"core-test.subject.put": ("core-test.writes",)}', 'OPERATION_CAPABILITIES = {"core-test.subject.put": ("core-test.writes",), "core-test.authority.claim": ("core-test.writes",)}')]),
+
+ # ------------------------------------------ F: grants and preconditions (CORE 7, 15)
+ ("f", "[control] authority_binding to an unknown scope accepted", [(P, '        if "authority_binding" in terms and terms["authority_binding"]["scope"] not in TRACKED_SCOPES:', '        if False:')]),
+ ("f", "authority_binding to a later epoch of a known scope refused at issue", [(P, '        if "authority_binding" in terms and terms["authority_binding"]["scope"] not in TRACKED_SCOPES:', '        if "authority_binding" in terms and (terms["authority_binding"]["scope"] not in TRACKED_SCOPES or terms["authority_binding"]["epoch"] > self.epoch_of(AUTHORITY_SCOPE)):')]),
+ ("f", "binding scope checked before audience and expiry", [(P, '        if terms["audience"] != self.provider_id:', '        if "authority_binding" in terms and terms["authority_binding"]["scope"] not in TRACKED_SCOPES:\n            raise ProtocolError("invalid_envelope", {"path": "/payload/authority_binding/scope", "reason": "x"})\n        if terms["audience"] != self.provider_id:')]),
+ ("f", "grant precondition revision unchecked (issue revision != 0, revoke revision 0)", [(EN, '    if _single_primary_precondition(env)["revision"] != 0:', '    if _single_primary_precondition(env) is None:'), (EN, '    if _single_primary_precondition(env)["revision"] == 0:', '    if _single_primary_precondition(env) is None:')]),
+ ("f", "re-revocation: revoked reported before not_authority (a stranger learns the state)", [(P, '        if not self.is_authority and issuer != self.principal:\n            # CORE 15.3: "whether or not the grant exists".\n            raise denied("not_authority")\n        if row is not None and row[1]["state"] == "revoked":\n            # CORE 15.3: re-revocation, "decided after that check".\n            raise denied("revoked")', '        if row is not None and row[1]["state"] == "revoked":\n            raise denied("revoked")\n        if not self.is_authority and issuer != self.principal:\n            raise denied("not_authority")')]),
+ ("f", "re-revocation accepted (new revision and event for the named grant)", [(P, '            # CORE 15.3: re-revocation, "decided after that check".\n            raise denied("revoked")', '            pass'), (P, '            if record["state"] == "revoked":\n                continue', '            if record["state"] == "revoked" and gid != root:\n                continue')]),
+ ("f", "re-revocation checked after preconditions (stale revision gives precondition_failed)", [(P, '            # CORE 15.3: re-revocation, "decided after that check".\n            raise denied("revoked")', '            pass'), (P, '        self.check_preconditions(env, auth)\n        root = env["subject"]["id"]', '        self.check_preconditions(env, auth)\n        root = env["subject"]["id"]\n        if self.store.grant(root)[1]["state"] == "revoked":\n            raise denied("revoked")')]),
+ ("f", "revocation lists and re-revokes descendants that were already revoked", [(P, '            if record["state"] == "revoked":\n                continue', '            if record["state"] == "revoked" and gid == root:\n                continue')]),
+ ("f", "[control] current omitted for an authority acting without a grant", [(P, '            return True  # "An authority principal acting without a grant may read every subject."', '            return False')]),
+ ("f", "current under a grant needs only resource coverage, not the read right", [(P, '            return self.grant_shows(subject)\n        if self.provider.is_authority:', '            return G.grant_covers(self.grant, subject)\n        if self.provider.is_authority:')]),
+ ("f", "current omitted for a delegating non-authority's own grants (F-PRE-CURRENT-NO-GRANT reversed)", [(P, '        return subject["kind"] == E.GRANT_KIND and self._holder_or_issuer(subject["id"])', '        return False')]),
+ ("f", "stale_authority_epoch.current_epoch always disclosed", [(P, '            details = {"current_epoch": current_epoch} if auth.may_read(E.AUTHORITY_SUBJECT) else {}', '            details = {"current_epoch": current_epoch}')]),
+ ("f", "core.capabilities protected (non-authority needs a grant)", [(P, '        if method == "core.grant.issue":\n            return self.authorize_issue(env)', '        if method == "core.capabilities":\n            return self.authorize_under(env, [])\n        if method == "core.grant.issue":\n            return self.authorize_issue(env)')]),
+ ("f", "core.events.unsubscribe protected (non-authority needs a grant)", [(P, '        if method == "core.grant.issue":\n            return self.authorize_issue(env)', '        if method == "core.events.unsubscribe":\n            return self.authorize_under(env, [])\n        if method == "core.grant.issue":\n            return self.authorize_issue(env)')]),
+ ("f", "grant field evaluated on unprotected queries and core.grant.get", [(P, '        if method == "core.grant.issue":\n            return self.authorize_issue(env)', '        if method in ("core.capabilities", "core.events.unsubscribe", "core.describe", "core.grant.get") and "grant" in env:\n            return self.authorize_under(env, [])\n        if method == "core.grant.issue":\n            return self.authorize_issue(env)')]),
+ ("f", "authorization skipped when core.grants was not negotiated", [(P, '            if self.is_authority:\n                return Auth(self, None)\n            raise denied("grant_required")', '            if self.is_authority or not self.session.feature_selected("core.grants"):\n                return Auth(self, None)\n            raise denied("grant_required")')]),
+
+ # ----------------------------------------------- F: event visibility (CORE 16.6)
+ ("f", "[control] profile subjects visible with resource coverage alone (no read right)", [(P, '        return right is not None and right in self.grant["rights"] and G.grant_covers(self.grant, subject)', '        return G.grant_covers(self.grant, subject)')]),
+ ("f", "[control] core.grant subjects visible only with resources covering core.grant", [(P, '            return self._holder_or_issuer(subject["id"])\n        if kind == CAPABILITIES_KIND:', '            return G.grant_covers(self.grant, subject)\n        if kind == CAPABILITIES_KIND:')]),
+ ("f", "every core.grant subject visible under any events grant", [(P, '            return self._holder_or_issuer(subject["id"])\n        if kind == CAPABILITIES_KIND:', '            return True\n        if kind == CAPABILITIES_KIND:')]),
+ ("f", "core.grant subjects visible to the holder only, not the issuer", [(P, '            return self._holder_or_issuer(subject["id"])\n        if kind == CAPABILITIES_KIND:', '            row_ = self.provider.store.grant(subject["id"])\n            return row_ is not None and row_[1]["holder"] == self.provider.principal\n        if kind == CAPABILITIES_KIND:')]),
+ ("f", "core-test.authority visible with core-test.read but no resource covering it", [(P, '        right = PROFILE_READ_RIGHTS.get(kind)\n', '        if kind == "core-test.authority":\n            return "core-test.read" in self.grant["rights"]\n        right = PROFILE_READ_RIGHTS.get(kind)\n')]),
+ ("f", "core.capabilities visible under any events grant", [(P, '        if kind == CAPABILITIES_KIND:\n            return G.grant_covers(self.grant, subject)', '        if kind == CAPABILITIES_KIND:\n            return True')]),
+ ("f", "core.capabilities also needs core-test.read", [(P, '        if kind == CAPABILITIES_KIND:\n            return G.grant_covers(self.grant, subject)', '        if kind == CAPABILITIES_KIND:\n            return "core-test.read" in self.grant["rights"] and G.grant_covers(self.grant, subject)')]),
+ ("f", "an authority reading under a grant sees every event", [(P, '        return self.grant is None or self.grant_shows(subject)', '        return self.grant is None or self.provider.is_authority or self.grant_shows(subject)')]),
+
+ # ------------------------------------------ F: filtered, cursors, snapshots (CORE 16.4)
+ ("f", "filtered ignores events hidden only by kinds", [(EV, '        if shown(event["subject"]):\n            items.append({"event": event})\n        else:\n            hidden = True', '        if shown(event["subject"]):\n            items.append({"event": event})\n        else:\n            hidden = hidden or not visible(event["subject"])')]),
+ ("f", "filtered ignores hidden snapshot subjects", [(EV, '            if len(subjects) != len(snapshot):\n                hidden = True', '            if False:\n                hidden = True')]),
+ ("f", "filtered counts hidden events beyond the covered range", [(P, '                "filtered": hidden,', '                "filtered": EV.read_items(self.store, start, 10**9, auth.sees, payload.get("kinds"))[2],')]),
+ ("f", "next_cursor stops at the last item although trailing hidden events were covered", [(EV, '    items: list[dict] = []\n    hidden = False\n', '    items: list[dict] = []\n    hidden = False\n    last = pos\n'), (EV, '            items.append({"event": event})\n', '            items.append({"event": event}); last = pos\n'), (EV, '            pos = (epoch + 1, 0)\n            continue', '            pos = (epoch + 1, 0); last = pos\n            continue'), (EV, '            pos = through\n            continue', '            pos = through; last = pos\n            continue'), (EV, '    return items, pos, hidden', '    return items, last, hidden')]),
+ ("f", "snapshot state of a revoked grant is the revocation payload, not {grant}", [(ST, '    if kind == "core.grant.revoked":', '    if False:')]),
+ ("f", "[control] snapshot omits core.grant subjects", [(EV, '            subjects = [s for s in snapshot if shown(s["subject"])]', '            subjects = [s for s in snapshot if shown(s["subject"]) and s["subject"]["kind"] != "core.grant"]')]),
+
+ # ------------------------------------------------ F: epochs and unvouched_last
+ ("f", "[control] unvouched events still delivered before the epoch change", [(ST, '        return self.vouched_through(epoch)\n\n    def vouched_through', '        return self.last_sequence(epoch)\n\n    def vouched_through'), (ST, '                self.db.execute("DELETE FROM events WHERE epoch = ? AND sequence > ?", (epoch, vouched))\n', '')]),
+ ("f", "[control] unvouched_last ignored (vouched through the last sequence)", [(ST, '                vouched = max(0, seq - unvouched_last)', '                vouched = seq')]),
+ ("f", "[control] cursor in a closed epoch past vouched_through refused", [(EV, '    if pos > store.head():', '    if pos > store.head() or (pos[0] < store.head()[0] and pos[1] > store.vouched_through(pos[0])):')]),
+ ("f", "cursor in a closed epoch past its last sequence refused", [(EV, '    if pos > store.head():', '    if pos > store.head() or (pos[0] < store.head()[0] and pos[1] > store.last_sequence(pos[0])):')]),
+ ("f", "unvouched events count toward retain_last (kept in the stream, never delivered)", [(ST, '                self.db.execute("DELETE FROM events WHERE epoch = ? AND sequence > ?", (epoch, vouched))\n', '')]),
+ ("f", "retention snapshot omits changes made by unvouched events", [(ST, '                            self._fold_into_base(ubody)\n', '                            pass\n')]),
+
+ # ------------------------------------------------ F: size limits and subscription end
+ ("f", "[control] reads ignore the caller's receive limit", [(P, '        return len(V.canonical(frame)) <= self.session.send_limit\n\n    def fit_items', '        return True\n\n    def fit_items')]),
+ ("f", "a read whose first item cannot fit returns no items instead of internal_error", [(P, '        if result is None:\n            # CORE 16.4', '        if result is None:\n            return build(0)[2]\n            # CORE 16.4')]),
+ ("f", "[control] notifications ignore the caller's receive limit", [(P, '                    return len(V.canonical(frame)) <= self.session.send_limit, items, (frame, pos)', '                    return True, items, (frame, pos)')]),
+ ("f", "[control] item_too_large ends the subscription without a final notification", [(P, '                    self.end_subscription(sid, "item_too_large")', '                    self.session.subscriptions.pop(sid)')]),
+ ("f", "item_too_large: the item is skipped and delivery continues", [(P, '                    self.end_subscription(sid, "item_too_large")\n                    break', '                    sub["pos"] = EV.read_items(self.store, start, 1, lambda s_: True, None)[1]\n                    continue')]),
+ ("f", "[control] authorization loss ends the subscription without a final notification", [(P, '                self.end_subscription(sid, "authorization_lost")', '                self.session.subscriptions.pop(sid)')]),
+ ("f", "authorization loss reported with reason item_too_large", [(P, '                self.end_subscription(sid, "authorization_lost")', '                self.end_subscription(sid, "item_too_large")')]),
+ ("f", "final notification's next_cursor is the stream head", [(P, '                                     "next_cursor": EV.encode_cursor(self.store, sub["pos"]),', '                                     "next_cursor": EV.encode_cursor(self.store, self.store.head()),')]),
+ ("f", "subscription survives revocation of its grant (only expiry and epoch end it)", [(P, '            except ProtocolError:\n                self.end_subscription(sid, "authorization_lost")\n                continue', '            except ProtocolError as exc_:\n                if exc_.details.get("reason") != "revoked":\n                    self.end_subscription(sid, "authorization_lost")\n                    continue\n                auth = Auth(self, self.store.grant(sub["env"]["grant"])[1])')]),
+
+ # ------------------------------------------------------ F: core.authenticate (CORE 18)
+ ("f", "core.authenticate unknown (method_not_found)", [(P, '            "core.authenticate": ("core", None, "query", E.authenticate_params, self.op_authenticate),\n', '')]),
+ ("f", "core.authenticate needs negotiation first", [(P, '        if method not in ("core.describe", "core.negotiate", "core.authenticate"):', '        if method not in ("core.describe", "core.negotiate"):')]),
+ ("f", "core.authenticate on stdio succeeds and returns the principal", [(P, '        raise ProtocolError("already_authenticated")', '        return {"principal": self.principal}')]),
+ ("f", "core.authenticate on stdio answers authentication_failed", [(P, '        raise ProtocolError("already_authenticated")', '        raise ProtocolError("authentication_failed")')]),
 ]
 
-only = sys.argv[1] if len(sys.argv) > 1 else None
+args = sys.argv[1:]
+check_only = "--check" in args
+jobs = 4
+if "--jobs" in args:
+    jobs = int(args[args.index("--jobs") + 1])
+groups = [a for a in args if a in ("m1", "m2", "f")]
 desc = json.load(open("conformance/participants/independent-python-core.json"))
-baseline = None
-for group, name, edits in [("base", "unmodified implementation (baseline)", [])] + V:
-    if only and group not in (only, "base"):
-        continue
-    vdir = os.path.join(SCR, "variant")
-    shutil.rmtree(vdir, ignore_errors=True)
-    shutil.copytree(IMPL, vdir, ignore=shutil.ignore_patterns("__pycache__"))
+selected = [("base", "unmodified implementation (baseline)", [])] + [v for v in V if not groups or v[0] in groups]
+
+
+def prepare(index, name, edits):
+    vdir = os.path.join(SCR, f"variant-{index}")
+    shutil.copytree(IMPL, vdir, ignore=shutil.ignore_patterns("__pycache__", "tests"))
     for fname, old, new in edits:
         p = os.path.join(vdir, fname)
         src = open(p).read()
-        assert src.count(old) == 1, f"{name}: snippet not found exactly once in {fname}"
+        assert src.count(old) == 1, f"{name}: snippet not found exactly once in {fname}: {old[:60]!r}"
         open(p, "w").write(src.replace(old, new, 1))
+    return vdir
+
+
+def run(index, name, edits):
+    vdir = prepare(index, name, edits)
     d = json.loads(json.dumps(desc)); d["launch"]["argv"][1] = os.path.join(vdir, "provider.py")
-    json.dump(d, open(os.path.join(SCR, "variant.json"), "w"))
-    out = subprocess.run(["./target/debug/combraton-conformance", "run", "--participant", os.path.join(SCR, "variant.json"), "--out", os.path.join(SCR, "variant-results")], capture_output=True, text=True)
-    fails = [l.split()[1] for l in out.stdout.splitlines() if l.startswith("fail")]
-    if baseline is None:
-        baseline = set(fails)
-        print(f"baseline failing: {sorted(baseline) or 'none'}", flush=True)
-        continue
-    new_fails = [f for f in fails if f not in baseline]
-    fixed = sorted(baseline - set(fails))
-    print(f"{len(new_fails):3d} newly failing | {group} | {name}" + (f" | {', '.join(new_fails)}" if new_fails else "")
-          + (f" | now passing: {', '.join(fixed)}" if fixed else ""), flush=True)
+    participant = os.path.join(SCR, f"variant-{index}.json")
+    json.dump(d, open(participant, "w"))
+    out = subprocess.run(["./target/debug/combraton-conformance", "run", "--participant", participant,
+                          "--out", os.path.join(SCR, f"variant-{index}-results")], capture_output=True, text=True)
+    # Every per-fixture status other than pass and not_applicable (fail, timeout, ...) counts as failing.
+    rows = [l.split() for l in out.stdout.splitlines()]
+    return [r[1] for r in rows if len(r) > 1 and "." in r[1] and r[0] not in ("pass", "not_applicable", "run:")]
+
+
+if check_only:
+    for i, (group, name, edits) in enumerate(selected):
+        prepare(i, name, edits)
+    print(f"all {len(selected) - 1} deviations apply")
+    shutil.rmtree(SCR, ignore_errors=True)
+    sys.exit(0)
+
+baseline = set(run(0, *selected[0][1:]))
+print(f"baseline failing: {sorted(baseline) or 'none'}", flush=True)
+unguarded = 0
+with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+    futures = [pool.submit(run, i, name, edits) for i, (group, name, edits) in enumerate(selected) if i > 0]
+    for (group, name, _), future in zip(selected[1:], futures):
+        fails = future.result()
+        new_fails = [f for f in fails if f not in baseline]
+        fixed = sorted(baseline - set(fails))
+        unguarded += not new_fails and not name.startswith("[control]")
+        print(f"{len(new_fails):3d} newly failing | {group} | {name}" + (f" | {', '.join(new_fails)}" if new_fails else "")
+              + (f" | now passing: {', '.join(fixed)}" if fixed else ""), flush=True)
+print(f"{unguarded} non-control deviations pass every fixture")
 shutil.rmtree(SCR, ignore_errors=True)

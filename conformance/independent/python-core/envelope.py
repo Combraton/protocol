@@ -274,6 +274,15 @@ def negotiate_params(env: dict, method: str, allow_grant: bool = False) -> None:
         seen.add(prof["name"])
 
 
+def authenticate_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    # schemas/core/1/core.authenticate.params.schema.json: any 1-512 code point
+    # string. A credential that does not match the ccred1 format is not an
+    # invalid envelope; CORE 18.2 makes it authentication_failed.
+    query_envelope(env, method, allow_grant)
+    payload = closed(env["payload"], "/payload", ("credential",))
+    string(payload["credential"], "/payload/credential", 1, 512)
+
+
 def claim_params(env: dict, method: str, allow_grant: bool = False) -> None:
     command_envelope(env, method, allow_grant)
     closed(env["payload"], "/payload", ())
@@ -419,7 +428,7 @@ def _stream_position_payload(env: dict, with_limit: bool) -> dict:
 
 def events_read_params(env: dict, method: str, allow_grant: bool = False) -> None:
     query_envelope(env, method, allow_grant)
-    # The schema requires `limit`; CORE 16.4 calls it optional (E-READ-LIMIT).
+    # CORE 16.4 and the schema: `limit` is required.
     _stream_position_payload(env, with_limit=True)
 
 

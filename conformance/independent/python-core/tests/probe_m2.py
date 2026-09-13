@@ -2,7 +2,9 @@
 
 Drives provider.py over its stdio binding. Each probe asserts the behavior
 this implementation chose; the choice and its basis are recorded in
-DIVERGENCES.md section E under the probe's tag.
+DIVERGENCES.md section E under the probe's tag. Probes whose decision was
+later resolved the other way (M2-DIVERGENCES section E) now assert the
+resolved behavior and say so; section F decisions are in probe_f.py.
 
 Usage: python3 conformance/independent/python-core/tests/probe_m2.py
 """
@@ -225,10 +227,11 @@ def main() -> int:
         c = M2(d, "owner")
         probe("E-EVENTS-WITHOUT-FEATURE", "commands in a session without core.events still record events",
               [i["event"]["command_id"] for i in result(c.read_events())["items"]], ["e-1"])
-        c.issue("g-self", "owner", ["core.events.read"], [{"kind": "core-test.subject"}])
+        # CORE 16.6 as resolved: profile subjects need the profile's read right too.
+        c.issue("g-self", "owner", ["core.events.read", "core-test.read"], [{"kind": "core-test.subject"}])
         head = result(c.read_events(**{"from": "now"}))["next_cursor"]
-        probe("E-FILTERED", "authority acting under a grant, nothing hidden in range",
-              result(c.read_events(grant="g-self", cursor=head))["filtered"], True)
+        probe("E-FILTERED", "resolved: authority acting under a grant, nothing hidden in range",
+              result(c.read_events(grant="g-self", cursor=head))["filtered"], False)
         o = M2(data("other-stream"), "owner")
         foreign = result(o.read_events(**{"from": "now"}))["next_cursor"]
         o.close()
@@ -254,11 +257,16 @@ def main() -> int:
         kinds = ["notification" if "method" in f else "response" for f in c.frames[mark:]]
         probe("E-SUB-ORDER", "a command's notification arrives after its response", [code_of(response)] + kinds,
               ["ok", "response", "notification"])
+        mark = len(c.frames)
         c.revoke("g-self", 1)
+        c.drain()
+        ended = [f["params"] for f in c.frames[mark:] if "method" in f]
+        probe("E-SUB-REAUTH", "resolved: revoking the subscription's grant sends one final ended notification",
+              [(n["items"], n.get("ended")) for n in ended], [([], {"reason": "authorization_lost"})])
         mark = len(c.frames)
         c.put("e-4", "d", rev=3)
         c.drain()
-        probe("E-SUB-REAUTH", "a subscription whose grant was revoked delivers nothing further",
+        probe("E-SUB-REAUTH", "and nothing further",
               [f for f in c.frames[mark:] if "method" in f], [])
         c.close()
 
@@ -267,7 +275,7 @@ def main() -> int:
         c = M2(d, "owner")
         c.put("r-1", "a")
         c.put("r-2", "a", subject={"kind": "core-test.subject", "id": "t-1"})
-        c.issue("g-s", "agent-1", ["core.events.read"], [{"kind": "core-test.subject", "id_prefix": "s-"}])
+        c.issue("g-s", "agent-1", ["core.events.read", "core-test.read"], [{"kind": "core-test.subject", "id_prefix": "s-"}])
         c.close()
         c = M2(d, "owner", events={"new_epoch_on_start": True, "retain_last": 0})
         items = result(c.read_events())["items"]
@@ -278,8 +286,8 @@ def main() -> int:
         c.close()
         c = M2(d, "agent-1")
         r = result(c.read_events(grant="g-s"))
-        probe("E-GAP-FILTER", "gap snapshot under a grant lists only covered subjects",
-              [s["subject"]["id"] for s in r["items"][0]["gap"]["snapshot"]["subjects"]] + [r["filtered"]], ["s-1", True])
+        probe("E-GAP-FILTER", "resolved: gap snapshot under a grant lists readable subjects and grants the principal holds",
+              [s["subject"]["id"] for s in r["items"][0]["gap"]["snapshot"]["subjects"]] + [r["filtered"]], ["s-1", "g-s", True])
         probe("E-GAP-FILTER", "then the epoch change, then the new epoch's events",
               [next(iter(i)) for i in r["items"][1:]] + [r["items"][2]["event"]["epoch"]], ["epoch_change", "event", 2])
         c.close()

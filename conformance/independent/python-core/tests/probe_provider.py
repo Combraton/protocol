@@ -1,4 +1,4 @@
-"""Probes of behavior the 57 fixtures do not exercise (see DIVERGENCES.md).
+"""Probes of M1 behavior the fixtures do not exercise (see DIVERGENCES.md).
 
 Drives provider.py over its stdio binding. Each probe asserts the behavior
 this implementation chose; the choice and its spec basis are recorded in
@@ -135,19 +135,21 @@ def main() -> int:
                code_of(c.put("p-2", "v", rev=7, epoch=0))], ["ok", "stale_authority_epoch"])
         probe("D-SHA512", "sha512 digest when core.digest-sha512 was not negotiated",
               code_of(c.put("p-3", "v", epoch=1, algorithm="sha512")), "unsupported_digest_algorithm")
-        probe("D-PRE-DUP", "duplicate identical preconditions are evaluated literally",
+        # Resolved 2026-09-13 (M2-DIVERGENCES D-PRE-DUP): duplicate subjects are invalid_envelope.
+        probe("D-PRE-DUP", "duplicate identical preconditions",
               code_of(c.command("core-test.subject.put", "p-4", SUBJ, [{"subject": SUBJ, "revision": 0}] * 2, {"value": "v"}, authority_epoch=1)),
-              "ok")
+              "invalid_envelope")
         probe("D-DEDUPE-GEN", "retransmission may carry a different retained generation",
-              [code_of(c.put("p-5", "w", rev=1, epoch=1)),
-               c.put("p-5", "w", rev=1, epoch=1, dedupe_generation=0).get("result", {}).get("replay")], ["ok", True])
+              [code_of(c.put("p-5", "w", rev=0, epoch=1)),
+               c.put("p-5", "w", rev=0, epoch=1, dedupe_generation=0).get("result", {}).get("replay")], ["ok", True])
         probe("D-NOTIFY", "id-less object without a method", (c.raw(b'{"jsonrpc":"2.0"}\n'), code_of(c.read()))[1], "invalid_request")
         probe("D-RPC-PARAMS", "request without params",
               (c.raw(b'{"jsonrpc":"2.0","id":5,"method":"core.describe"}\n'), code_of(c.read()))[1], "invalid_request")
-        probe("D-STREAM-ID", "129-byte string id (fewer code points)",
+        # Resolved 2026-09-13 to code points (M2-DIVERGENCES D-STREAM-ID): 65 code points is valid.
+        probe("D-STREAM-ID", "130-byte, 65-code-point string id is accepted and echoed",
               (c.raw(V.canonical({"jsonrpc": "2.0", "id": "é" * 65, "method": "core.describe",
                                   "params": {"operation": "core.describe", "message_id": "m", "payload": {}}}) + b"\n"),
-               c.read()["id"])[1], None)
+               c.read()["id"])[1], "é" * 65)
         probe("EXIT", "exit status at end of input", c.close(), 0)
 
         c = fresh("sha512")

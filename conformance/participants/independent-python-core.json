@@ -15,6 +15,11 @@
         "name": "core-test",
         "major": 1
       }
+    ],
+    "features": [
+      "core.grants",
+      "core.events",
+      "core.capabilities"
     ]
   },
   "launch": {

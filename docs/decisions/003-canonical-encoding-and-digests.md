@@ -41,9 +41,9 @@ A read-only research pass on 2026-09-13, including a local interoperability prob
    - `sha256` mandatory; `sha512` an optional negotiated feature; MD5 and SHA-1 never supported.
    - Unsupported algorithms fail closed with `unsupported_digest_algorithm`.
 5. **Two independent implementations.**
-   - The conformance runner uses the vetted `rfc8785` Python package.
-   - The reference provider implements the canonical form itself.
-   - Shared test vectors are cross-checked against a second-language implementation (Node `canonicalize`) when generated.
+   - The Rust runner uses a vetted RFC 8785 crate over its own strict value type.
+   - The Rust reference provider implements the canonical form itself.
+   - The shared test vectors are also checked in CI by Python `rfc8785` and Node `canonicalize`, two independent non-Rust implementations.
 
 ## Alternatives
 

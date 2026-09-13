@@ -7,3 +7,7 @@ CLAUDE.local.md
 !.env.example
 .worktrees/
 artifacts/local/
+.venv/
+target/
+node_modules/
+conformance/results/

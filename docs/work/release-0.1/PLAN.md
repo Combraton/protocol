@@ -149,7 +149,7 @@ Each has a recommendation. Choices marked **owner** need the owner's decision; t
 | U7 | Schema language and fixture format | See the schema decision record (proposed). | Protocol, with owner review |
 | U8 | Canonical encoding and digest grammar | See the digest decision record (proposed). | Protocol, with owner review |
 | U9 | Framing and local channel authentication | See the transport decision record (proposed). | Protocol, with owner review |
-| U10 | Runner and reference implementation language and packaging | See the conformance decision record (proposed). | Protocol, with owner review |
+| U10 | Runner and reference implementation language and packaging | Rust runner and reference provider (one Cargo workspace), because the owner stated on 2026-09-13 that PIO, CBR and the control plane are Rust. Encoding vectors are also checked by Python and Node, and the M2 independent implementation is non-Rust. See decision 001. | Protocol, with owner review |
 | U11 | Release and profile version numbering | Release uses semantic versioning (`0.1.0`). Each profile has an integer major version on the wire plus named features for additive changes. | Protocol, with owner review |
 
 ## 7. Risks

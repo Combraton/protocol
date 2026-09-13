@@ -41,7 +41,7 @@ A retransmitted command keeps its `command_id` and content and gets a new `messa
 
 A session is one authenticated connection under the transport binding.
 
-1. **Before negotiation**, a provider MUST answer only `core.describe` and `core.negotiate`. Any other operation gets `negotiation_required`.
+1. **Before negotiation**, a provider MUST answer only `core.describe` and `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
 2. **`core.negotiate` succeeds at most once per session.** A second call gets `already_negotiated`. To change the negotiated set, open a new session.
 3. **After negotiation**, an operation of a profile that was not selected gets `profile_not_negotiated`. This applies even when the provider supports that profile.
 4. **Session state is not durable.** Closing a session neither cancels nor confirms anything in flight. Callers reconcile by command identity after reconnecting ([STREAM](../bindings/STREAM.md)).
@@ -73,7 +73,7 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 
 - For each profile, select the highest major version both sides accept.
 - Select the intersection of features.
-- **Refuse the whole negotiation** if a `required` profile cannot be selected or a required feature is missing. Use `unsupported_version` when no common major exists, `unsupported_profile` when the profile is unknown or declared unsupported, and `unsupported_required_feature` for a missing feature. The error `data` names every unsatisfied item.
+- **Refuse the whole negotiation** if a `required` profile cannot be selected or a required feature is missing. Use `unsupported_version` when no common major exists, `unsupported_profile` when the profile is unknown or declared unsupported, and `unsupported_required_feature` for a missing feature. The error `details.unsatisfied` lists every unsatisfied item as `{ profile, feature?, reason }`, with reasons `unknown_profile`, `declared_unsupported`, `no_common_major`, `unknown_feature` or `dependency_not_selected`. When items fail for different reasons, the code is chosen in this order: `unsupported_profile`, then `unsupported_version`, then `unsupported_required_feature`.
 - Optional profiles and features that cannot be selected are reported in `unselected` with a reason. They are not errors.
 - Include `core` implicitly; a caller cannot deselect it.
 
@@ -109,7 +109,7 @@ Envelope and payload objects are **closed**. A field that the negotiated profile
 
 Optional additions that a receiver may safely ignore go in `extensions`. Each key is a domain the extension author controls, a slash, and a name, such as `example.org/trace`.
 
-- A feature name is `<profile>.<feature>`, such as `encoding.sha512`, and never contains a slash.
+- A feature name is `<profile>.<feature>`, such as `core.digest-sha512`, and never contains a slash.
 - An extension key always contains exactly one slash.
 
 That is how a `requires` entry is told apart.
@@ -132,7 +132,7 @@ The **command intent** is the JSON object with exactly these members of the enve
 - `preconditions`
 - `requires`
 - `payload`
-- `extensions` — the required subset only: keys listed in `requires`
+- `extensions` — always present in the intent, as an object containing only the extensions whose keys are listed in `requires`; an empty object if there are none
 
 `command_digest` is the digest of the intent under [ENCODING](../bindings/ENCODING.md). The provider recomputes it and refuses a mismatch with `digest_mismatch` (CORE-6).
 
@@ -215,7 +215,7 @@ A provider MUST apply these steps in order. The first failing step determines th
 
 | Step | Check | Error on failure |
 |---|---|---|
-| 1 | Session authenticated and negotiated; operation known; its profile selected | `negotiation_required`, `method_not_found`, `profile_not_negotiated` |
+| 1 | In this order: operation known; session negotiated (unless the operation is `core.describe` or `core.negotiate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
 | 2 | Envelope and payload decode within limits; objects closed; types valid | `limit_exceeded`, `invalid_envelope` |
 | 3 | Every `requires` entry negotiated and understood | `unsupported_required_feature` |
 | 4 | Digest algorithm supported; `command_digest` matches the recomputed digest | `unsupported_digest_algorithm`, `digest_mismatch` |
@@ -268,9 +268,9 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `already_negotiated` | `no` | Second negotiation in one session | — |
 | `method_not_found` | `no` | Operation unknown to the provider | `operation` |
 | `profile_not_negotiated` | `after_renegotiate` | Operation's profile not selected in this session | `profile` |
-| `unsupported_version` | `no` | No common major version for a required profile | `profile`, `supported_majors` |
-| `unsupported_profile` | `no` | Required profile unknown or declared unsupported | `profile`, `declared_unsupported` |
-| `unsupported_required_feature` | `no` | A required feature or extension is not negotiated or understood | `features` |
+| `unsupported_version` | `no` | Negotiation: no common major version for a required profile | `unsatisfied` |
+| `unsupported_profile` | `no` | Negotiation: required profile unknown, declared unsupported, or missing a dependency | `unsatisfied` |
+| `unsupported_required_feature` | `no` | Negotiation: a required feature is unavailable; or a message's `requires` names something not negotiated or understood | `unsatisfied` in negotiation; `features` for a message |
 | `unsupported_digest_algorithm` | `no` | Digest algorithm not supported | `algorithm`, `supported` |
 | `digest_mismatch` | `no` | `command_digest` differs from the recomputed digest | `expected` |
 | `idempotency_conflict` | `no` | Command identity bound to a different intent | `command_id` |

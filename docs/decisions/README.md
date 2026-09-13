@@ -10,7 +10,7 @@ All current records are **proposed** for the Protocol 0.1 release ([tracking iss
 
 | Record | Status | Subject |
 |---|---|---|
-| [001](001-conformance-suite-architecture.md) | proposed | Fixtures as data, black-box runner, environment-only test control, mutants, result manifest, Python runner |
+| [001](001-conformance-suite-architecture.md) | proposed | Fixtures as data, black-box runner, environment-only test control, mutants, result manifest, Rust runner and reference with non-Rust cross-checks |
 | [002](002-schema-language-and-extensibility.md) | proposed | JSON Schema 2020-12, closed objects, `extensions` and `requires` |
 | [003](003-canonical-encoding-and-digests.md) | proposed | Integer-only I-JSON domain, RFC 8785 command digests, byte digests for content, `sha256:` strings |
 | [004](004-local-stream-binding.md) | proposed | Bounded newline-delimited JSON-RPC over stdio and Unix sockets; close on frame-level failure |

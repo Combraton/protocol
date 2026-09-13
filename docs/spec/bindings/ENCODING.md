@@ -36,7 +36,7 @@ A digest is written `<algorithm>:<lowercase hex>`, following the [OCI digest gra
 | Algorithm | Encoded part | Status |
 |---|---|---|
 | `sha256` | exactly 64 characters `[0-9a-f]` | Mandatory to implement |
-| `sha512` | exactly 128 characters `[0-9a-f]` | Optional; advertised as feature `encoding.sha512` |
+| `sha512` | exactly 128 characters `[0-9a-f]` | Optional; advertised as Core feature `core.digest-sha512` |
 
 The rules for a digest string:
 

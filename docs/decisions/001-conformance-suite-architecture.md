@@ -59,7 +59,13 @@ Inference drawn from these sources, not stated by any of them: once fixtures are
    - environment, per-case outcome and transcript locations.
 
    A conformance claim is derived from the manifest, never asserted separately.
-7. **The runner and reference provider are Python.** Dependencies are locked with `uv`, and each is a separate package that must not import the other. The independent M2 implementation uses a different language. PIO and CBR are expected to use Rust or TypeScript, so a Python runner shares no libraries with them.
+7. **The runner and reference provider are Rust; independence checks are not.**
+   - Owner input on 2026-09-13: PIO, CBR and the control plane will be written in Rust.
+   - The runner and reference provider are separate crates in one Cargo workspace, with a committed lockfile and pinned toolchain. Neither crate depends on the other.
+   - The runner's strict parser must not rely on `serde_json` defaults. The research probe showed those defaults silently keep the last duplicate member and round integers above 2^53.
+   - The reference provider's parser and canonical encoder are written separately from the runner's.
+   - Encoding vectors are cross-checked in CI by two non-Rust implementations: Python `rfc8785` and Node `canonicalize`.
+   - The spec-only independent implementation (M2) is written in a non-Rust language, so a mistake shared by Rust implementations remains detectable.
 
 ## Alternatives
 
@@ -67,7 +73,8 @@ Inference drawn from these sources, not stated by any of them: once fixtures are
 - **Checker-driven randomized histories** (Maelstrom, etcd robustness) find unknown bugs but are nondeterministic. They belong in benchmarks as reliability scenarios, alongside normative scripted fixtures rather than replacing them.
 - **In-band test operations for environment control** avoid a launcher but put test semantics inside product profiles, and still cannot express a restart.
 - **A control socket served by the provider** (gofail/Trogdor style) reaches more states but creates exactly the hidden authority path the architecture forbids. Deferred unless a later fixture proves it unavoidable.
-- **Rust runner as a single binary** is easy to distribute, but likely shares crates and assumptions with PIO/CBR. **TypeScript runner** matches MCP ergonomics but shares a language with possible TypeScript services.
+- **Python runner (first draft of this record).** Shares no libraries with Rust services, but adds a second toolchain to every consumer's CI and gives the Rust implementations no Rust exemplar. The independence it bought is kept instead by non-Rust vector cross-checks and a non-Rust M2 implementation.
+- **TypeScript runner** matches MCP ergonomics but adds a toolchain no consumer uses.
 
 ## Consequences
 

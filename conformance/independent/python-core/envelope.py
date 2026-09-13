@@ -170,6 +170,10 @@ QUERY_OPTIONAL = ("requires", "extensions")
 COMMAND_FIELDS = ("operation", "message_id", "command_id", "dedupe_generation", "subject",
                   "preconditions", "requires", "command_digest", "payload")
 COMMAND_OPTIONAL = ("authority_epoch", "correlation", "caused_by", "extensions")
+# CORE 5: `grant` is "Allowed only when feature core.grants is negotiated". In a
+# session without it the field is not defined, so CORE 5.1's closed-object rule
+# makes it invalid_envelope (DIVERGENCES.md E-GRANT-FIELD).
+GRANT_FIELD = ("grant",)
 
 
 def _operation_matches(env: dict, method: str) -> None:
@@ -180,20 +184,22 @@ def _operation_matches(env: dict, method: str) -> None:
         raise Invalid("/operation", "operation must equal the JSON-RPC method")
 
 
-def query_envelope(env: dict, method: str) -> dict:
+def query_envelope(env: dict, method: str, allow_grant: bool = False) -> dict:
     _operation_matches(env, method)
-    closed(env, "", QUERY_FIELDS, QUERY_OPTIONAL)
+    closed(env, "", QUERY_FIELDS, QUERY_OPTIONAL + (GRANT_FIELD if allow_grant else ()))
     dotted_name(env["operation"], "/operation", "operation name")
     identifier(env["message_id"], "/message_id")
+    if "grant" in env:
+        identifier(env["grant"], "/grant")
     requires_and_extensions(env)
     if not isinstance(env["payload"], dict):
         raise Invalid("/payload", "must be an object")
     return env
 
 
-def command_envelope(env: dict, method: str) -> dict:
+def command_envelope(env: dict, method: str, allow_grant: bool = False) -> dict:
     _operation_matches(env, method)
-    closed(env, "", COMMAND_FIELDS, COMMAND_OPTIONAL)
+    closed(env, "", COMMAND_FIELDS, COMMAND_OPTIONAL + (GRANT_FIELD if allow_grant else ()))
     dotted_name(env["operation"], "/operation", "operation name")
     identifier(env["message_id"], "/message_id")
     identifier(env["command_id"], "/command_id")
@@ -205,6 +211,14 @@ def command_envelope(env: dict, method: str) -> dict:
         closed(entry, p, ("subject", "revision"))
         subject(entry["subject"], ptr(p, "subject"))
         integer(entry["revision"], ptr(p, "revision"))
+    # CORE 7 (resolution of D-PRE-DUP): two entries naming the same subject
+    # are invalid_envelope.
+    seen_subjects = set()
+    for idx, entry in enumerate(pre):
+        key = (entry["subject"]["kind"], entry["subject"]["id"])
+        if key in seen_subjects:
+            raise Invalid(ptr(ptr("/preconditions", idx), "subject"), "subject named by more than one precondition")
+        seen_subjects.add(key)
     if "authority_epoch" in env:
         integer(env["authority_epoch"], "/authority_epoch")
     requires_and_extensions(env)
@@ -215,6 +229,8 @@ def command_envelope(env: dict, method: str) -> dict:
         refs = array(env["caused_by"], "/caused_by", max_items=64)
         for idx, ref in enumerate(refs):
             identifier(ref, ptr("/caused_by", idx))
+    if "grant" in env:
+        identifier(env["grant"], "/grant")
     digest_string(env["command_digest"], "/command_digest")
     if not isinstance(env["payload"], dict):
         raise Invalid("/payload", "must be an object")
@@ -223,13 +239,13 @@ def command_envelope(env: dict, method: str) -> dict:
 
 # ------------------------------------------------------------- operations
 
-def describe_params(env: dict, method: str) -> None:
-    query_envelope(env, method)
+def describe_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
     closed(env["payload"], "/payload", ())
 
 
-def negotiate_params(env: dict, method: str) -> None:
-    query_envelope(env, method)
+def negotiate_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
     payload = closed(env["payload"], "/payload", ("caller", "receive_limits", "profiles"))
     caller = closed(payload["caller"], "/payload/caller", ("name", "version"))
     string(caller["name"], "/payload/caller/name", 1, 128)
@@ -258,8 +274,8 @@ def negotiate_params(env: dict, method: str) -> None:
         seen.add(prof["name"])
 
 
-def claim_params(env: dict, method: str) -> None:
-    command_envelope(env, method)
+def claim_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    command_envelope(env, method, allow_grant)
     closed(env["payload"], "/payload", ())
     subject(env["subject"], "/subject", "core-test.authority", "core-test")
     if len(env["preconditions"]) != 1:
@@ -271,8 +287,8 @@ def claim_params(env: dict, method: str) -> None:
         raise Invalid("/preconditions/0/subject", "the precondition must name the authority subject")
 
 
-def put_params(env: dict, method: str) -> None:
-    command_envelope(env, method)
+def put_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    command_envelope(env, method, allow_grant)
     payload = closed(env["payload"], "/payload", ("value",), ("labels",))
     string(payload["value"], "/payload/value")
     if "labels" in payload:
@@ -292,8 +308,134 @@ def put_params(env: dict, method: str) -> None:
         raise Invalid("/preconditions", "a precondition on the primary subject is required")
 
 
-def subject_query_params(env: dict, method: str) -> None:
-    query_envelope(env, method)
+def subject_query_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
     payload = closed(env["payload"], "/payload", ("subject",))
     subject(payload["subject"], "/payload/subject", TEST_SUBJECT_KIND)
     identifier(payload["subject"]["id"], "/payload/subject/id")
+
+
+# ------------------------------------------------------ CORE 15 grants
+
+INSTANT = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z")
+ID_PREFIX = re.compile(r"[A-Za-z0-9._:~-]{1,128}")
+GRANT_KIND = "core.grant"
+
+
+def instant(v, path: str) -> str:
+    return pattern(v, path, INSTANT, "instant YYYY-MM-DDTHH:MM:SSZ")
+
+
+def resource(v, path: str) -> dict:
+    closed(v, path, ("kind",), ("id", "id_prefix"))
+    dotted_name(v["kind"], ptr(path, "kind"), "subject kind")
+    if "id" in v and "id_prefix" in v:
+        raise Invalid(path, "a resource names at most one of id and id_prefix")
+    if "id" in v:
+        identifier(v["id"], ptr(path, "id"))
+    if "id_prefix" in v:
+        pattern(v["id_prefix"], ptr(path, "id_prefix"), ID_PREFIX, "id prefix")
+    return v
+
+
+def grant_terms(v, path: str) -> dict:
+    closed(v, path, ("holder", "audience", "rights", "resources", "delegation"),
+           ("expires_at", "authority_binding", "parent"))
+    identifier(v["holder"], ptr(path, "holder"))
+    identifier(v["audience"], ptr(path, "audience"))
+    rights = array(v["rights"], ptr(path, "rights"), 1, 32, unique=True)
+    for idx, right in enumerate(rights):
+        dotted_name(right, ptr(ptr(path, "rights"), idx), "right name")
+    resources = array(v["resources"], ptr(path, "resources"), 1, 32)
+    for idx, res in enumerate(resources):
+        resource(res, ptr(ptr(path, "resources"), idx))
+    if "expires_at" in v:
+        instant(v["expires_at"], ptr(path, "expires_at"))
+    if "authority_binding" in v:
+        b = closed(v["authority_binding"], ptr(path, "authority_binding"), ("scope", "epoch"))
+        identifier(b["scope"], ptr(ptr(path, "authority_binding"), "scope"))
+        integer(b["epoch"], ptr(ptr(path, "authority_binding"), "epoch"))
+    d = closed(v["delegation"], ptr(path, "delegation"), ("allowed", "max_depth"))
+    if not isinstance(d["allowed"], bool):
+        raise Invalid(ptr(ptr(path, "delegation"), "allowed"), "must be a boolean")
+    integer(d["max_depth"], ptr(ptr(path, "delegation"), "max_depth"), 0, 16)
+    if "parent" in v:
+        identifier(v["parent"], ptr(path, "parent"))
+    return v
+
+
+def _single_primary_precondition(env: dict) -> dict:
+    if len(env["preconditions"]) != 1:
+        raise Invalid("/preconditions", "exactly one precondition is required")
+    if env["preconditions"][0]["subject"] != env["subject"]:
+        raise Invalid("/preconditions/0/subject", "the precondition must name the grant")
+    return env["preconditions"][0]
+
+
+def grant_issue_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    command_envelope(env, method, allow_grant)
+    subject(env["subject"], "/subject", GRANT_KIND)
+    # CORE 15.3: "Subject ... with precondition revision 0" (E-GRANT-PRE).
+    if _single_primary_precondition(env)["revision"] != 0:
+        raise Invalid("/preconditions/0/revision", "core.grant.issue requires precondition revision 0")
+    grant_terms(env["payload"], "/payload")
+
+
+def grant_revoke_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    command_envelope(env, method, allow_grant)
+    subject(env["subject"], "/subject", GRANT_KIND)
+    closed(env["payload"], "/payload", ())
+    # CORE 15.3: "with a precondition on its current revision"; an existing
+    # grant's revision is never 0 (E-GRANT-PRE).
+    if _single_primary_precondition(env)["revision"] == 0:
+        raise Invalid("/preconditions/0/revision", "core.grant.revoke needs the grant's current revision")
+
+
+def grant_get_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
+    payload = closed(env["payload"], "/payload", ("grant",))
+    identifier(payload["grant"], "/payload/grant")
+
+
+# ------------------------------------------------------ CORE 16 events
+
+def _stream_position_payload(env: dict, with_limit: bool) -> dict:
+    required = ("limit",) if with_limit else ()
+    payload = closed(env["payload"], "/payload", required, ("cursor", "from", "kinds"))
+    if ("cursor" in payload) == ("from" in payload):
+        raise Invalid("/payload", "exactly one of cursor and from is required")
+    if "cursor" in payload:
+        string(payload["cursor"], "/payload/cursor", 1, 512)
+    if "from" in payload and payload["from"] not in ("start", "now"):
+        raise Invalid("/payload/from", "must be start or now")
+    if "kinds" in payload:
+        kinds = array(payload["kinds"], "/payload/kinds", 1, 32, unique=True)
+        for idx, kind in enumerate(kinds):
+            dotted_name(kind, ptr("/payload/kinds", idx), "subject kind")
+    if with_limit:
+        integer(payload["limit"], "/payload/limit", 1, 1000)
+    return payload
+
+
+def events_read_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
+    # The schema requires `limit`; CORE 16.4 calls it optional (E-READ-LIMIT).
+    _stream_position_payload(env, with_limit=True)
+
+
+def events_subscribe_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
+    _stream_position_payload(env, with_limit=False)
+
+
+def events_unsubscribe_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
+    payload = closed(env["payload"], "/payload", ("subscription",))
+    identifier(payload["subscription"], "/payload/subscription")
+
+
+# ------------------------------------------------- CORE 17 capabilities
+
+def capabilities_params(env: dict, method: str, allow_grant: bool = False) -> None:
+    query_envelope(env, method, allow_grant)
+    closed(env["payload"], "/payload", ())

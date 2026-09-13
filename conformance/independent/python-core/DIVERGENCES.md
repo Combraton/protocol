@@ -21,6 +21,7 @@ Sections:
 - **B.** A fixture or the runner expects something the documents do not state.
 - **C.** Open questions where this implementation chose, and no fixture decides.
 - **D.** Requirements the documents state that no fixture checks, with evidence.
+- **E.** The M2 features (grants, events, capabilities), added in a second pass, with its own subsections E.1 to E.4 in the same four categories.
 
 **Changes after fixture failures: none.** The first complete run passed 57 of 57 fixtures. Nothing was bent to fit a fixture.
 
@@ -366,3 +367,325 @@ More requirements no fixture can reach with one launch configuration per start:
 - **`unavailable` and `internal_error`** "nothing was bound" semantics.
 
 Taken together: once the reference provider passes, the M1 suite mostly pins the happy path and one refusal per error code. The boundaries, the "every"/"all" quantifiers and the check orderings above are unguarded, both for this provider and for the reference provider's mutants.
+
+---
+
+## E. M2 features (grants, events, capabilities)
+
+> Added when this implementation was extended to `core.grants` (CORE §15), `core.events` (§16) and `core.capabilities` (§17), from the documents at base commit `3b32037`. The same reading rules applied: CORE, STREAM, ENCODING, `schemas/**`, the conformance README and schemas, VERIFICATION, [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md), fixtures and vectors. `conformance/reference/**`, `conformance/crosscheck/**` and `conformance/runner/src/**` were not read. As in M1, the fixtures were read **before** the code was written, so a basis of *fixture-informed* means the prose was open and the fixture picked the answer.
+
+Entries use the same format as sections A–D, with tags `E-…`; `tests/probe_m2.py` asserts each chosen behavior under its tag.
+
+**Changes after fixture failures: none.** The first complete run with the features claimed passed 107 of 108 fixtures. The one failure, `core.events.retention-gap-returns-snapshot`, was predicted from reading the fixture before coding and is recorded as E-GAP-TO instead of being worked around. The suite now exits 1 for this participant because of it.
+
+Other changes in this pass, not driven by a fixture:
+
+1. **D-PRE-DUP applied.** CORE §7 now says "Two entries naming the same subject are `invalid_envelope`" (resolution in M2-DIVERGENCES). This implementation still accepted duplicates, and all 108 fixtures passed with that behavior. It now refuses them. E.4 records that the old behavior is still unguarded (deviation "duplicate precondition subjects accepted" in `fixture_sensitivity.py m1`: 0 failing).
+2. **The D-STREAM-ID probe** expected the pre-resolution byte count. It now expects the resolved code-point count; the provider's check had already been changed by the Protocol session.
+3. **Launch configuration `principal`** must now be a string of 1–128 characters, as `conformance/schemas/launch-config.schema.json` says. D-TESTCTL had accepted any JSON value. Grant holders are compared with it as strings.
+
+### E.1 Contradictions between documents
+
+#### E-GAP-TO — does a retention gap end at the last discarded event or at the head?
+
+- **Where:** CORE §16.4 says a gap item means "Events between positions `from` and `to` were discarded under retention", with `snapshot.as_of` equal to `to`, and "Reading continues after `to`". The conformance README defines `events.retain_last` as "discard all but the newest N events".
+- **The fixture:** `core.events.retention-gap-returns-snapshot` records four events, restarts with `retain_last: 1`, and reads from the start. By the README event (1,4) survives. The fixture expects exactly one item, a gap with `to` = `as_of` = (1,4), and the next read to begin at (1,5). So the retained event is reported inside a range described as discarded and is never delivered to this reader.
+- **Chosen:** the literal reading. The gap runs from (1,1) to (1,3), its snapshot is as of (1,3), and event (1,4) follows as an ordinary item. Recorded transcript: `items` holds the gap to `{"epoch":1,"sequence":3}` and then event 4. The runner stops at "step 9: result/items: expected 1 items, found 2".
+- **Evidence:** the deviation "gap snapshot and `to` at the stream head" in E.4 (fold every stored event into the snapshot and end the gap at the head) makes this fixture pass and breaks no other.
+- **Why the two readings diverge in practice:** a snapshot at the head needs only current subject state. A snapshot at the discard boundary needs historical state, so this implementation folds discarded events into a stored base snapshot when it discards them. A provider that keeps only current state can only produce the head reading, which may be how the fixture's expectation arose.
+- **Basis:** spec text. Either CORE §16.4 should allow a gap to extend over retained events ("positions `from` through `to` are not delivered individually"), or the fixture should use `retain_last: 0`, or expect a gap to (1,3) followed by event 4.
+
+#### E-READ-LIMIT — is `limit` optional?
+
+- **Where:** CORE §16.4 says "plus optional `kinds` … and `limit` (1–1000 items)". `core.events.read.params.schema.json` lists `limit` in `required`.
+- **Chosen:** the schema. A read without `limit` is `invalid_envelope`.
+- **Fixtures:** none; every fixture read sends `limit`.
+- **Basis:** schema (the stricter reading). The two documents should agree.
+
+#### E-GRANT-FIELD — refusing a field of an unselected feature
+
+- **Where:** CORE §5.1's closed-object rule says an undefined field is `invalid_envelope`, and the §5 table says `grant` is "Allowed only when feature `core.grants` is negotiated". The last bullet of §5.1 says "A caller MUST NOT send fields that belong to a feature the session did not select, or call operations that belong to one; such operations are refused with `unsupported_required_feature`". That can be read as covering fields too.
+- **Chosen:** `invalid_envelope` for a `grant` field in a session without `core.grants`.
+- **Fixtures:** `core.grants.grant-field-requires-feature` expects this.
+- **Basis:** spec text, confirmed by the fixture. The last bullet of §5.1 should say that fields are `invalid_envelope` and operations are `unsupported_required_feature`.
+
+#### E-FEATURE-OP-STEP — step 2 would pre-empt step 3 for feature operations
+
+- **Where:** read literally, CORE §5.1 ("A field that the negotiated profile version and features do not define makes the message invalid") makes every payload member of `core.events.read` undefined when `core.events` was not selected. That gives `invalid_envelope` at step 2, so step 3's rule "if the operation belongs to a feature … that feature is selected" could never apply to an operation with a non-empty payload.
+- **Chosen:** an operation's own payload is validated against its schema whether or not its feature was selected. Step 3 then refuses it with `unsupported_required_feature` and `details.features` naming the feature.
+- **Fixtures:** `core.events.feature-must-be-negotiated` expects this.
+- **Basis:** step 3 text plus the fixture. §5.1 should exempt the payload of a known operation from the feature condition.
+
+#### E-FILTERED — is `filtered` always true under a grant?
+
+- **Where:** CORE §16.4: "When authorization or `kinds` hides some events, `filtered` is `true`" (conditional). CORE §16.6: "Under a grant, only events and snapshot subjects covered by its resources are included, and `filtered` is `true`" (unconditional).
+- **Chosen:** always `true` under a grant; for `kinds`, `true` only when an event or snapshot subject in the scanned range was actually hidden.
+- **Fixtures:** `core.events.authorization-and-filtering` has hidden events, so both readings pass (E.4).
+- **Basis:** spec text (§16.6 is the more specific rule).
+
+#### E-GRANT-EVENT-LEAK — grant records visible through events but not through `core.grant.get`
+
+- **Where:** CORE §15.3: `core.grant.get` is "Visible to its holder, its issuer and authority principals. Anyone else gets `not_found`". CORE §16.6: under a grant with right `core.events.read`, events "covered by its resources" are included. §16.2 gives `core.grant.issued` the payload `{ "grant": record }`.
+- **Consequence:** a holder of `core.events.read` on `{ "kind": "core.grant" }` reads every grant record — other principals' holders, rights and resources — from `core.grant.issued` events and gap snapshots, although `core.grant.get` answers `not_found` for the same grants. Likewise `core.events.read` alone exposes `core-test.subject` values without `core-test.read`.
+- **Chosen:** the literal §16.6 rule; event visibility depends only on resource coverage.
+- **Fixtures:** none reads grant events under a grant.
+- **Basis:** spec text. This is probably unintended: §16.6 should also require the subject's read rule, or define `core.grant` event visibility the way §15.3 does.
+
+### E.2 Expectations in fixtures or the runner that the documents do not state
+
+#### E-SNAPSHOT-STATE — the shape of a snapshot subject's `state`
+
+- **Where:** CORE §16.4 defines `snapshot.subjects[]` as `{ subject, revision, state }` and the schema allows any object. No document defines `state` for any subject kind, or which subjects a snapshot lists.
+- **Chosen:** `state` is what a reducer over that subject's events would hold:
+  - `core-test.subject` → `{ "value" }`;
+  - `core-test.authority` → `{ "epoch" }`;
+  - `core.grant` → `{ "grant": record }`, where a `core.grant.revoked` event updates `grant.state`;
+  - `core.capabilities` → `{ "predicates" }`.
+
+  The snapshot lists the visible subjects that had at least one discarded event. A subject that never had an event, such as a new store's revision-1 capability snapshot, is not listed.
+- **Fixtures:** `core.events.retention-gap-returns-snapshot` expects `state: {"value": "b"}` for a `core-test.subject`.
+- **Basis:** fixture-informed for `core-test.subject`; own judgment for the rest.
+
+#### E-CAP-EVIDENCE — evidence content and stability across restarts
+
+- **Where:** CORE §17.1 says `evidence` is `{ source, observed_at? }`, and `revision` "increases whenever any predicate's status, enforcement or evidence changes. It is stable across restarts when nothing changed."
+- **Chosen:**
+  - Without a configured status, `core-test.writes` is `supported` with source "store write transaction committed at provider start". That is real evidence: every start commits a transaction.
+  - With a configured status, the source is "conformance launch configuration".
+  - `observed_at` is omitted. A start-time instant would change the evidence, and so the revision, on every restart.
+  - `enforcement` is omitted: none of the PIO levels describes the provider's own store.
+  - A status configured as `supported` differs in evidence from the default, so it raises the revision (probe E-CAP-EVIDENCE).
+- **Fixtures:** `core.capabilities.snapshot-reports-evidenced-predicates` requires the same revision after a plain restart. That rules out a fresh `observed_at`, which the text does not say.
+- **Basis:** own judgment, constrained by the fixture.
+
+#### E-CURSOR-REASON — `invalid_cursor` reasons
+
+- **Where:** CORE §12 gives `invalid_cursor` a `reason` member but no values.
+- **Chosen:** `malformed`, `other_stream` or `beyond_end`.
+- **Fixtures:** `core.events.invalid-cursor-refused` sends `"not-a-cursor"`, which is `malformed`. Its title says "not from this stream", but no fixture sends a well-formed cursor from another stream or one past the head (E.4).
+- **Basis:** own judgment.
+
+#### E-FEATURE-CLAIM-GATING — refusal fixtures run only for providers that claim the feature
+
+- **Where:** `core.grants.grant-field-requires-feature` and `core.events.feature-must-be-negotiated` test sessions that did **not** negotiate the feature, but the runner marks them `not_applicable` unless the participant claims it.
+- **Consequence:** a provider without `core.grants` must still refuse a `grant` field with `invalid_envelope` (CORE §5.1), but it is never checked. For `core.events.read`, a provider without the feature does not know the operation and answers `method_not_found`, so gating that fixture is correct.
+- **Basis:** runner behavior observed in the manifest before the features were claimed ("participant does not claim feature core.grants").
+
+#### E-ARRAY-EXACT — array patterns are exact-length
+
+- **Where:** the conformance README says "Patterns match subsets".
+- **Observed:** arrays in patterns must have exactly the expected length ("result/items: expected 1 items, found 2"). Objects match as subsets. That is what makes E-GAP-TO fail rather than pass by prefix.
+- **Basis:** runner output.
+
+### E.3 Open questions decided here, not decided by any fixture
+
+#### E-AUTH-WITHOUT-FEATURE — does authorization apply when `core.grants` was not negotiated?
+
+- **Chosen:** yes. Authority principals are provider configuration, not a negotiated feature. A non-authority in a session without `core.grants` cannot name a grant, so every protected operation gets `permission_denied` with `grant_required`.
+- **Basis:** own judgment (the secure reading of §15.1, "Every other principal acts only under a grant").
+
+#### E-UNPROTECTED — which operations step 6 protects
+
+- **Where:** CORE §15.5 applies to operations "that a profile protects". Rights are defined for core-test (§13) and `core.events.read` (§16.6) only.
+- **Chosen:**
+  - Protected by rights: `core-test.*` (as in §13) and `core.events.read` / `core.events.subscribe`.
+  - Own rules: `core.grant.issue` and `core.grant.revoke` (§15.3); `core.grant.get` (visibility, `not_found`).
+  - Not protected: `core.describe`, `core.negotiate`, `core.capabilities` (any principal reads the snapshot) and `core.events.unsubscribe` (it only removes the session's own subscription).
+  - A `grant` field on an unprotected or grant-management operation is validated but not evaluated.
+- **Basis:** own judgment.
+
+#### E-DENIAL-ORDER — which reason wins
+
+- **Chosen:**
+  1. `grant_not_found`, when the grant does not exist or is held by someone else;
+  2. then `revoked`, `expired`, `authority_epoch_stale`;
+  3. then `right_missing` for any needed right;
+  4. then `out_of_scope` for any needed subject.
+
+  Checking the holder first is required for "a grant held by someone else is indistinguishable from a nonexistent one". Checking state first would answer `revoked` for another principal's revoked grant (E.4).
+- **Basis:** spec text for the holder check first (§15.5); the CORE list order for the rest.
+
+#### E-ISSUE-VALIDATION-STEP — where the audience and expiry checks sit
+
+- **Where:** CORE §15.3 says a wrong `audience`, or an `expires_at` not after the provider's current time, is `invalid_envelope`. CORE §10 lists `invalid_envelope` among the errors of step 6.
+- **Chosen:** at step 6, before the issuing rules, so after the deduplication lookup. If these checks sat at step 2, retransmitting a bound issue after the provider clock passed its `expires_at`, or after `provider_id` changed, would be refused instead of replayed (CORE §6.2).
+- **Probes:** E-ISSUE-VALIDATION-STEP shows both replays.
+- **Basis:** spec text (§6.2 replay guarantee; step 6's error list).
+
+#### E-ISSUE-PARENT-HOLDER — may an authority delegate from a grant it does not hold?
+
+- **Chosen:** no. "A grant with `parent` may be issued only by the parent's holder" is read literally; the answer is `grant_not_found`. An authority issues root grants instead.
+- **Basis:** spec text.
+
+#### E-REVOKE-DENIAL — refusing a revoker who is neither issuer nor authority
+
+- **Where:** no §15.5 reason fits: `not_authority` is defined for issuing root grants, and `grant_not_found` for grants not held by the principal.
+- **Chosen:**
+  - `not_authority` for anyone who is neither issuer nor authority, whether or not the grant exists or is visible to them, so nothing leaks.
+  - Revoking an already revoked grant is `permission_denied` with `revoked`: the outcome schema requires a non-empty `revoked` list, so re-revocation cannot succeed.
+- **Basis:** own judgment.
+
+#### E-GRANT-PRE — the precondition of `issue` and `revoke`
+
+- **Chosen:**
+  - `issue` needs exactly one precondition, naming the grant with revision 0.
+  - `revoke` needs exactly one, naming the grant with a revision ≥ 1, because an existing grant's current revision is never 0.
+  - Anything else is `invalid_envelope` at step 2.
+- **Basis:** spec text for the rule (§15.3); own judgment for the error, as D-PRE-PRIMARY.
+
+#### E-REVOKE-CASCADE — revocation order and revisions
+
+- **Chosen:**
+  - The grant first, then its descendants breadth-first in issue order.
+  - Each grant that is still active gets `state: revoked`, revision + 1 and one `core.grant.revoked` event; already revoked descendants are skipped and not listed.
+  - The acknowledgment's revision is the named grant's new revision.
+- **Fixtures:** `core.grants.revocation-cascades` checks that the child's revision is 2 and that two grants are listed.
+- **Basis:** spec text (§15.3, §16.3 "primary subject first"); own judgment for the descendant order.
+
+#### E-BINDING-SCOPE — an `authority_binding` to an unknown scope or future epoch
+
+- **Chosen:** accepted at issue. A scope this provider does not track stays at epoch 0. A grant bound to a later epoch authorizes once that epoch becomes current ("authorizes only while that authority scope's current epoch equals `epoch`").
+- **Basis:** spec text; whether issuing should refuse such bindings is open.
+
+#### E-RIGHTS-UNKNOWN — unknown right names and resource kinds
+
+- **Chosen:** accepted; they never match anything.
+- **Basis:** own judgment.
+
+#### E-PRE-CURRENT — "where the principal may read the subject"
+
+- **Chosen:**
+  - As an authority without a grant: always.
+  - Under a grant: when the grant has `core-test.read` covering the subject.
+  - For `core.grant` subjects: when the principal is the holder, the issuer or an authority.
+  - `stale_authority_epoch.current_epoch` follows the same rule for the authority subject.
+  - A put under a write-only grant that fails its primary precondition therefore gets no `current`.
+- **Basis:** spec text (§7, §12), with own judgment on what "read" means per kind.
+
+#### E-EXPIRY-BOUNDARY — at exactly `expires_at`
+
+- **Chosen:** expired, consistent with refusing to issue a grant whose `expires_at` is not after the current time.
+- **Basis:** own judgment.
+
+#### E-START-ORDER — order of launch-time changes
+
+- **Chosen:** deduplication window, then `new_epoch_on_start`, then `retain_last` (counted across all epochs), then the capability snapshot comparison, whose event is therefore never discarded at the same start.
+- **Basis:** own judgment.
+
+#### E-CURSOR-AFTER-HIDDEN — where `next_cursor` points when trailing events are hidden
+
+- **Where:** CORE §16.4: "`next_cursor` is the position after the last item".
+- **Chosen:** when a read reaches the head, `next_cursor` is the head, even if the events after the last item were hidden. A filtered reader then does not rescan them. When `limit` is reached, it is the last item's position.
+- **Basis:** own judgment. Neither choice repeats or skips an item.
+
+#### E-CURSOR-OLD-EPOCH — a cursor in a closed epoch past `vouched_through`
+
+- **Chosen:** accepted; the reader receives the `epoch_change`. Only a position after the current head is `beyond_end`. Such a cursor is what a consumer holds after the provider lost events it had delivered, which is the case epochs exist for.
+- **Basis:** own judgment.
+
+#### E-GAP-EPOCHS — a discarded range that spans epochs
+
+- **Chosen:** one gap covers the whole range. Epoch changes inside it are not reported separately; the gap's `from` and `to` carry different epochs. An `epoch_change` at the reader's own epoch boundary still comes before the gap.
+- **Probe:** E-START-ORDER.
+- **Basis:** own judgment; unreachable by current fixtures.
+
+#### E-SUB-REAUTH — a subscription whose authorization lapses
+
+- **Chosen:** authorization is re-evaluated before each delivery. If the grant no longer authorizes (revoked, expired, epoch superseded), the subscription ends without a notification, because `core.events.notify` has no way to say it ended.
+- **Basis:** own judgment. This is in tension with §16.5 "Semantic events are never dropped silently"; the notification schema may need an end item.
+
+#### E-NOTIFY-SIZE — notifications and reads larger than the caller's receive limit
+
+- **Chosen:**
+  - A notification carries at most 100 items, and fewer when the frame would exceed the caller's `receive_limits.max_frame_bytes`.
+  - A read returns fewer than `limit` items when the full response would not fit.
+  - An item that cannot fit even alone ends the subscription, or makes the read `internal_error`, rather than being skipped.
+- **Basis:** own judgment (STREAM §1.5; §16.5 "never dropped silently").
+
+#### E-UNSUBSCRIBE — an unknown subscription
+
+- **Chosen:** `not_found`.
+- **Basis:** own judgment.
+
+#### E-EVENTS-WITHOUT-FEATURE — recording in sessions without `core.events`
+
+- **Chosen:** every accepted command records its events whatever the session negotiated, as does a capability change at start. The stream belongs to the store (§16: "Every provider records what it committed").
+- **Basis:** spec text.
+
+#### E-CAP-SCOPE — what depends on `core-test.writes`, and unknown capability names
+
+- **Chosen:**
+  - Only `core-test.subject.put` depends on it (§17.4). `claim`, `grant.issue` and `grant.revoke` still commit when it is `unsupported`, although the capability simulates "a store that became read-only".
+  - A launch configuration naming any other capability refuses to start with exit status 2.
+  - The capability event's subject id is the `provider_id` of the start that observed the change.
+- **Basis:** spec text for the dependency; own judgment for the rest.
+
+### E.4 Requirements the documents state that no fixture checks
+
+`tests/fixture_sensitivity.py m2` applies each deviation to a temporary copy, runs the whole suite, and counts fixtures that fail **in addition to** those the unmodified implementation fails (the baseline is `core.events.retention-gap-returns-snapshot`). Rows marked *control* are deviations a fixture is known to guard; they show the harness notices.
+
+| Deviation applied | Requirement it breaks | Newly failing fixtures |
+|---|---|---|
+| *control:* revocation does not cascade | §15.3 | 1 (`core.grants.revocation-cascades`) |
+| *control:* non-authority may issue root grants | §15.3 | 1 (`core.grants.non-authority-cannot-issue-root-grant`) |
+| *control:* grant expiry ignored | §15.5 | 1 (`core.grants.expired-grant-refused`) |
+| *control:* other precondition subjects need no read right | §13 rights | 1 (`core.grants.precondition-subjects-need-read`) |
+| *control:* `caused_by` not copied into events | §16.2 | 1 (`core.events.commands-append-contiguous-events`) |
+| *control:* `epoch_change` item omitted | §16.4 | 1 (`core.events.epoch-change-is-explicit`) |
+| *control:* unsubscribe does not stop delivery | §16.5 | 1 (`core.events.subscription-delivers-backlog-then-live`) |
+| *control:* a new store's initial capability snapshot appends an event | §17.3 | 9 |
+| `grant` field accepted in a session without `core.grants` | §5.1 (E-GRANT-FIELD) | 1 (`core.grants.grant-field-requires-feature`) |
+| **Grants** | | |
+| Parent's `delegation.allowed: false` ignored | §15.3 | 0 |
+| Child may expire after its parent, or lack an expiry | §15.3 | 0 |
+| Child need not keep the parent's `authority_binding` | §15.3 | 0 |
+| A revoked, expired or epoch-stale parent may still delegate | §15.3 "while the parent is active, unexpired and still bound" | 0 |
+| Any principal may delegate from a parent, not only its holder | §15.3 | 0 |
+| Any principal may revoke any grant | §15.3 "by its issuer or by an authority principal" | 0 |
+| `core.grant.get` hidden from a non-authority issuer | §15.3 | 0 |
+| Grant still usable at exactly `expires_at` | E-EXPIRY-BOUNDARY | 0 |
+| Issue accepted with `expires_at` equal to the provider clock | §15.3 "not after the provider's current time" | 0 |
+| Expiry checked before the deduplication lookup, so a bound issue no longer replays | §6.2, E-ISSUE-VALIDATION-STEP | 0 |
+| Grant state checked before its holder, so another principal's revoked grant answers `revoked` | §15.5 "indistinguishable from a nonexistent one" | 0 |
+| An authority principal naming a grant is not restricted by it | §15.5 rule 1 | 0 |
+| `core-test.authority.claim` needs no `core-test.claim` right | §13 rights | 0 |
+| `core-test.subject.applied_count` not protected | §13 rights | 0 |
+| `precondition_failed.current` revealed to principals that may not read the subject | §7, §15.5 | 0 |
+| `out_of_scope` checked before `right_missing` | E-DENIAL-ORDER (open) | 0 |
+| No `core.grant.issued` events | §16.2, §16.3 | 0 |
+| `core.grant.revoked` only for the named grant, not per revoked grant | §16.2 "one event per revoked grant" | 0 |
+| **Events** | | |
+| Gap `to` and snapshot at the stream head, retained events folded in | E-GAP-TO | 0; `core.events.retention-gap-returns-snapshot` **now passes** |
+| `filtered: false` under a grant when nothing in range was hidden | §16.6 (E-FILTERED) | 0 |
+| Well-formed cursor from another stream accepted | §16.4 | 0 |
+| Cursor past the head accepted | §16.4 | 0 |
+| Notifications sent **before** the response of the command that caused them | §16.5 "Ordering" | 0 |
+| Subscription ignores `kinds` | §16.5 | 0 |
+| Subscription ignores the grant's resources | §16.6 | 0 |
+| `core.events.subscribe` needs no authorization | §16.6 | 0 |
+| `core.events.read` under any grant, without right `core.events.read` | §16.6 | 0 |
+| Gap snapshot subjects not filtered by the grant's resources | §16.6 "events and snapshot subjects covered by its resources" | 0 |
+| **Capabilities** | | |
+| Capability checked after the authority epoch and preconditions | §10 step 7, §17.2 "before its preconditions" | 0 |
+| Capability checked before authorization | §10 (step 6 precedes step 7) | 0 |
+| Revision raised only when a status changes, not when evidence changes | §17.1 | 0 |
+| Capability event `revision` differs from the snapshot revision | §17.3 | 0 |
+| Capability event subject id is not `provider_id` | §17.3 | 0 |
+| `core-test.authority.claim` also depends on `core-test.writes` | §17.4 "`put` depends on it" | 0 |
+
+34 of the 35 non-control deviations pass every fixture. Only the `grant` field row is guarded. The whole list above ran twice: once before and once after the E-NOTIFY-SIZE change, with the same counts.
+
+Two re-checks outside M2:
+
+- **M1 rows.** Rerunning the section D deviations (`fixture_sensitivity.py m1`) now fails the fixtures the resolutions added, except **duplicate precondition subjects accepted: 0**. The D-PRE-DUP resolution is stated but unguarded.
+- **E-NOTIFY-SIZE was found by review, not by the suite.** The first version of this implementation sent up to 100 items per notification. Ten 200 KB events then made a frame over the caller's 1 MiB limit; it was replaced by an id-less `internal_error` while the subscription cursor had already advanced, so those events were silently lost. Every fixture passed with that bug.
+
+The most valuable fixtures to add, judged by what these deviations would let through:
+
+- **Subscriptions:** response-before-notification ordering, kinds and grant filtering, and authorization.
+- **Existence and authorization leaks:** another principal's revoked grant must answer `grant_not_found`; a stranger must not be able to revoke.
+- **Delegation bounds:** expiry, binding, `allowed: false`, and a revoked parent.
+- **Step 7 order:** capability before epoch and preconditions.
+- **Cursors:** a well-formed cursor from another stream, and one past the head.
+- **Gaps:** a gap snapshot under a grant.
+- **Retention:** a decision on E-GAP-TO.

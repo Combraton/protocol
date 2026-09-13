@@ -99,6 +99,30 @@ pub const ALL: &[(&str, &str)] = &[
         "accepts fractions, exponents and integers outside the safe range",
     ),
     (
+        "ignore-major-version",
+        "selects a profile even when no requested major version is supported",
+    ),
+    (
+        "ignore-negotiation-features",
+        "selects a profile even when a required feature is unknown",
+    ),
+    (
+        "ignore-preconditions",
+        "applies commands without checking any precondition",
+    ),
+    (
+        "expose-control-endpoint",
+        "answers test-control method names on the product endpoint",
+    ),
+    (
+        "close-on-invalid-request",
+        "closes the connection after an invalid JSON-RPC request instead of staying open",
+    ),
+    (
+        "strict-off-by-one-limit",
+        "rejects a frame whose length equals the limit",
+    ),
+    (
         "route-by-operation",
         "dispatches on params.operation instead of the method name",
     ),

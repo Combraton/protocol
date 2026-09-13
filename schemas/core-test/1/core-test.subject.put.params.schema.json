@@ -19,6 +19,13 @@
       "properties": {
         "value": {
           "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "unevaluatedProperties": false

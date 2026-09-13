@@ -198,6 +198,9 @@ impl Provider {
         } else {
             method.to_string()
         };
+        if self.mutants.on("expose-control-endpoint") && route.starts_with("control.") {
+            return Ok(json!({}));
+        }
         // Step 1: operation known; negotiated; profile selected.
         let operation = OPERATIONS
             .iter()
@@ -487,7 +490,10 @@ impl Provider {
             .flatten()
         {
             let name = entry.as_str().unwrap_or_default();
-            if name.contains('/') && !extensions.is_some_and(|map| map.contains_key(name)) {
+            if name.contains('/')
+                && !self.mutants.on("ignore-requires")
+                && !extensions.is_some_and(|map| map.contains_key(name))
+            {
                 return invalid(
                     "/requires",
                     "required extension is not present in extensions",
@@ -506,7 +512,9 @@ impl Provider {
                 "sha512" => Some(128),
                 _ => None,
             };
-            if expected.is_some_and(|length| hex.len() != length) {
+            if !self.mutants.on("skip-digest-verification")
+                && expected.is_some_and(|length| hex.len() != length)
+            {
                 return invalid(
                     "/command_digest",
                     "digest length does not match its algorithm",
@@ -581,6 +589,9 @@ impl Provider {
         }
         let mut failed = Vec::new();
         for entry in params["preconditions"].as_array().into_iter().flatten() {
+            if self.mutants.on("ignore-preconditions") {
+                break;
+            }
             if self.mutants.on("partial-preconditions") && entry["subject"] != params["subject"] {
                 continue;
             }
@@ -667,6 +678,8 @@ impl Provider {
             return Err(reject("already_negotiated", json!({})));
         }
         let accept_unsupported = self.mutants.on("accept-unsupported-profile");
+        let ignore_major = self.mutants.on("ignore-major-version");
+        let ignore_features = self.mutants.on("ignore-negotiation-features");
         let mut requests: Vec<Value> = payload["profiles"].as_array().cloned().unwrap_or_default();
         if !requests.iter().any(|r| r["name"] == "core") {
             requests.insert(0, json!({"name": "core", "majors": [1], "required": true, "required_features": [], "optional_features": []}));
@@ -709,7 +722,12 @@ impl Provider {
                 .flatten()
                 .filter_map(Value::as_i64)
                 .filter(|m| majors.contains(m))
-                .max();
+                .max()
+                .or(if ignore_major {
+                    majors.first().copied()
+                } else {
+                    None
+                });
             let Some(major) = common else {
                 fail("no_common_major", None);
                 continue;
@@ -722,7 +740,7 @@ impl Provider {
                 .filter(|f| !features.contains(f))
                 .map(String::from)
                 .collect();
-            if !missing.is_empty() {
+            if !missing.is_empty() && !ignore_features {
                 for feature in &missing {
                     fail("unknown_feature", Some(feature));
                 }

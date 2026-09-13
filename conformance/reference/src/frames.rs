@@ -17,6 +17,8 @@ pub struct FrameReader<R: Read> {
     eof: bool,
     /// Mutant `unbounded-frames`.
     pub unbounded: bool,
+    /// Mutant `strict-off-by-one-limit`.
+    pub off_by_one: bool,
     /// Mutant `parse-unterminated`.
     pub parse_unterminated: bool,
 }
@@ -30,13 +32,16 @@ impl<R: Read> FrameReader<R> {
             eof: false,
             unbounded: false,
             parse_unterminated: false,
+            off_by_one: false,
         }
     }
 
     pub fn next(&mut self) -> std::io::Result<Next> {
         loop {
             if let Some(newline) = self.buffer.iter().position(|b| *b == b'\n') {
-                if !self.unbounded && newline > self.limit {
+                if !self.unbounded
+                    && (newline > self.limit || (self.off_by_one && newline == self.limit))
+                {
                     return Ok(Next::TooLarge);
                 }
                 let frame: Vec<u8> = self.buffer.drain(..=newline).collect();

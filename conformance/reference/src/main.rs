@@ -145,9 +145,11 @@ fn run(args: Args) -> Result<(), String> {
     };
     let skip_invalid = mutant_set.on("skip-invalid-frames");
     let process_notifications = mutant_set.on("process-notifications");
+    let close_on_invalid_request = mutant_set.on("close-on-invalid-request");
     let mut reader = FrameReader::new(std::io::stdin().lock());
     reader.unbounded = mutant_set.on("unbounded-frames");
     reader.parse_unterminated = mutant_set.on("parse-unterminated");
+    reader.off_by_one = mutant_set.on("strict-off-by-one-limit");
     let mut provider = Provider::new(store, mutant_set, principal, limits, validators);
     let mut out = std::io::stdout().lock();
 
@@ -191,7 +193,8 @@ fn run(args: Args) -> Result<(), String> {
                 Value::Null,
                 "invalid_request",
                 json!({"reason": "frame is not a JSON-RPC object"}),
-            )) {
+            )) || close_on_invalid_request
+            {
                 return Ok(());
             }
             continue;
@@ -228,7 +231,8 @@ fn run(args: Args) -> Result<(), String> {
                 reply_id,
                 "invalid_request",
                 json!({"reason": "not a valid JSON-RPC 2.0 request"}),
-            )) {
+            )) || close_on_invalid_request
+            {
                 return Ok(());
             }
             continue;

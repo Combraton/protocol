@@ -294,7 +294,7 @@ Fixtures reach every domain state — revisions, epochs, bound commands — only
 | Operation | Kind | Semantics |
 |---|---|---|
 | `core-test.authority.claim` | command | Subject `{ "kind": "core-test.authority", "id": "core-test" }`. Advances the authority epoch of scope `core-test` by one; outcome `{ "epoch": n }`. Precondition on the authority subject's revision, which equals the epoch. No `authority_epoch` field. Models a controller takeover. |
-| `core-test.subject.put` | command | Payload `{ "value": string }`. With precondition revision `0`, creates the subject at revision 1. With precondition revision `n`, replaces its value at revision `n + 1`. Requires `authority_epoch` for scope `core-test`. Outcome `{ "value": … }`. |
+| `core-test.subject.put` | command | Payload `{ "value": string, "labels"?: { string: string } }`. `labels` exists only so fixtures can exercise canonical member ordering with arbitrary keys; it is not stored. With precondition revision `0`, creates the subject at revision 1. With precondition revision `n`, replaces its value at revision `n + 1`. Requires `authority_epoch` for scope `core-test`. Outcome `{ "value": … }`. |
 | `core-test.subject.get` | query | Payload `{ "subject": … }`. Returns `{ "revision": n, "value": … }` or `not_found`. |
 | `core-test.subject.applied_count` | query | Payload `{ "subject": … }`. Returns how many commands changed the subject. Fixtures use it to detect a re-executed duplicate without trusting the acknowledgment. |
 

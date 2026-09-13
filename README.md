@@ -19,7 +19,7 @@ The protocol connects independently useful systems without requiring Combraton's
 | Coordination | Optional project/workflow/template/history semantics for controllers |
 | Remote trust | Negotiated identity, delegation, revocation and transfer across trust boundaries |
 
-Profiles are architectural responsibilities. Concrete schemas, operation names and compatibility fixtures are not yet published. Start with the small profile subset needed by the first execution/evidence/context flow; do not design every optional method before integration.
+Profiles are architectural responsibilities. Draft Protocol 0.1 Core schemas, bindings and a Core conformance suite exist (see the [release plan](docs/work/release-0.1/PLAN.md) and [verification](docs/VERIFICATION.md)); they are proposed, not released, and the other profiles have no schemas or fixtures yet. Start with the small profile subset needed by the first execution/evidence/context flow; do not design every optional method before integration.
 
 ## Participants and independence
 

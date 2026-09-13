@@ -59,6 +59,12 @@
       "ignore-profile-selection",
       "accept-duplicate-members",
       "lax-numbers",
+      "ignore-major-version",
+      "ignore-negotiation-features",
+      "ignore-preconditions",
+      "expose-control-endpoint",
+      "close-on-invalid-request",
+      "strict-off-by-one-limit",
       "route-by-operation"
     ]
   }

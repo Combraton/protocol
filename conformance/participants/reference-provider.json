@@ -18,7 +18,8 @@
     ],
     "features": [
       "core.grants",
-      "core.events"
+      "core.events",
+      "core.capabilities"
     ]
   },
   "launch": {
@@ -38,6 +39,10 @@
       "{mutant}"
     ],
     "names": [
+      "ignore-capability-loss",
+      "capability-loss-blocks-replay",
+      "unknown-capability-as-supported",
+      "capability-revision-static",
       "events-not-recorded",
       "event-sequence-gap",
       "drop-caused-by",

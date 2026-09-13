@@ -5,6 +5,22 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "ignore-capability-loss",
+        "admits commands whose capability is unsupported",
+    ),
+    (
+        "capability-loss-blocks-replay",
+        "checks capabilities before deduplication, so bound commands cannot replay after loss",
+    ),
+    (
+        "unknown-capability-as-supported",
+        "treats an unknown capability status as supported",
+    ),
+    (
+        "capability-revision-static",
+        "never raises the capability revision or records a change event",
+    ),
+    (
         "events-not-recorded",
         "commits commands without appending events",
     ),

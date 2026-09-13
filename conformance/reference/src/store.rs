@@ -44,7 +44,7 @@ impl Store {
              CREATE TABLE IF NOT EXISTS epoch_changes (
                to_epoch INTEGER PRIMARY KEY, from_epoch INTEGER NOT NULL, vouched_through INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS meta_text (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             INSERT OR IGNORE INTO meta VALUES ('stream_epoch', 1), ('discarded_epoch', 0), ('discarded_sequence', 0);
+             INSERT OR IGNORE INTO meta VALUES ('stream_epoch', 1), ('discarded_epoch', 0), ('discarded_sequence', 0), ('capability_revision', 0);
              INSERT OR IGNORE INTO meta VALUES ('dedupe_oldest', 1), ('dedupe_current', 1), ('operation_seq', 0);",
         )?;
         let seed = format!(
@@ -401,6 +401,73 @@ impl Store {
         let tx = self.connection.transaction()?;
         append_event(&tx, record, gap)?;
         tx.commit()
+    }
+
+    pub fn capability_revision(&self) -> rusqlite::Result<i64> {
+        self.meta("capability_revision")
+    }
+
+    /// Record the current capability predicates; a change raises the revision and appends a
+    /// provider-origin event (CORE section 17.3). Returns the revision.
+    pub fn apply_capabilities(
+        &mut self,
+        provider_id: &str,
+        predicates: &serde_json::Value,
+        recorded_at: &str,
+        static_revision: bool,
+    ) -> rusqlite::Result<i64> {
+        let digest = crate::json::sha256_digest(predicates.to_string().as_bytes());
+        let tx = self.connection.transaction()?;
+        let stored: Option<String> = tx
+            .query_row(
+                "SELECT value FROM meta_text WHERE key='capability_digest'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let mut revision: i64 = tx.query_row(
+            "SELECT value FROM meta WHERE key='capability_revision'",
+            [],
+            |r| r.get(0),
+        )?;
+        if stored.as_deref() != Some(digest.as_str()) {
+            tx.execute(
+                "INSERT OR REPLACE INTO meta_text VALUES ('capability_digest', ?1)",
+                [&digest],
+            )?;
+            if revision == 0 {
+                // The initial snapshot of a new store is not a change; it appends no event.
+                revision = 1;
+                tx.execute(
+                    "UPDATE meta SET value=?1 WHERE key='capability_revision'",
+                    [revision],
+                )?;
+            } else if !static_revision {
+                revision += 1;
+                tx.execute(
+                    "UPDATE meta SET value=?1 WHERE key='capability_revision'",
+                    [revision],
+                )?;
+                let stream: String = tx.query_row(
+                    "SELECT value FROM meta_text WHERE key='stream_id'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let record = serde_json::json!({
+                    "stream": stream,
+                    "origin": "provider",
+                    "type": "core.capabilities.changed",
+                    "subject": {"kind": "core.capabilities", "id": provider_id},
+                    "revision": revision,
+                    "caused_by": [],
+                    "recorded_at": recorded_at,
+                    "payload": {"predicates": predicates},
+                });
+                append_event(&tx, record, false)?;
+            }
+        }
+        tx.commit()?;
+        Ok(revision)
     }
 }
 

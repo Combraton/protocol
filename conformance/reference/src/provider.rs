@@ -68,6 +68,11 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.capabilities",
+        profile: "core",
+        command: false,
+    },
+    Operation {
         name: "core.events.read",
         profile: "core",
         command: false,
@@ -115,7 +120,7 @@ const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "core",
         majors: &[1],
-        features: &["core.grants", "core.events"],
+        features: &["core.grants", "core.events", "core.capabilities"],
         depends_on: &[],
     },
     SupportedProfile {
@@ -144,6 +149,7 @@ pub fn retry_class(code: &str) -> &'static str {
         | "precondition_failed"
         | "internal_error" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
+        "capability_unavailable" => "after_reconcile",
         _ => "no",
     }
 }
@@ -173,6 +179,8 @@ pub fn error_response(id: Value, code: &str, details: Value) -> Value {
 
 /// Session principal and provider-local authority configuration (CORE section 15.1).
 pub struct Identity {
+    /// Current capability predicates (CORE section 17).
+    pub capabilities: Value,
     pub principal: String,
     pub provider_id: String,
     pub authorities: Vec<String>,
@@ -298,6 +306,8 @@ impl Provider {
                 Some("core.grants")
             } else if operation.name.starts_with("core.events.") {
                 Some("core.events")
+            } else if operation.name == "core.capabilities" {
+                Some("core.capabilities")
             } else {
                 None
             };
@@ -375,6 +385,9 @@ impl Provider {
         };
         let generation = params["dedupe_generation"].as_i64().unwrap_or_default();
 
+        if self.mutants.on("capability-loss-blocks-replay") {
+            self.check_capabilities(operation.name)?;
+        }
         if self.mutants.on("checks-before-dedupe") {
             self.check_epoch_and_preconditions(operation.name, &params)?;
         }
@@ -401,6 +414,7 @@ impl Provider {
                         let ack = &stored_value["acknowledgment"];
                         let record = json!({
                             "stream": self.store.stream_id().map_err(storage)?,
+                            "origin": "command",
                             "type": "core-test.subject.changed",
                             "subject": ack["subject"],
                             "revision": ack["revision"],
@@ -434,7 +448,10 @@ impl Provider {
             self.authorize(operation.name, &params)?;
         }
 
-        // Step 7: epoch and preconditions.
+        // Step 7: capabilities, then epoch and preconditions.
+        if !self.mutants.on("capability-loss-blocks-replay") {
+            self.check_capabilities(operation.name)?;
+        }
         if !self.mutants.on("checks-before-dedupe")
             && let Err(rejection) = self.check_epoch_and_preconditions(operation.name, &params)
         {
@@ -488,6 +505,7 @@ impl Provider {
                     for (event_type, event_subject, event_revision, event_payload) in events {
                         let record = json!({
                             "stream": stream,
+                            "origin": "command",
                             "type": event_type,
                             "subject": event_subject,
                             "revision": event_revision,
@@ -541,6 +559,31 @@ impl Provider {
             index += 1;
         }
         Ok(ids)
+    }
+
+    fn check_capabilities(&self, operation: &str) -> Result<(), Reject> {
+        if operation != "core-test.subject.put" || self.mutants.on("ignore-capability-loss") {
+            return Ok(());
+        }
+        let status = self
+            .identity
+            .capabilities
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|predicate| predicate["name"] == "core-test.writes")
+            .and_then(|predicate| predicate["status"].as_str())
+            .unwrap_or("unknown");
+        let admitted = status == "supported"
+            || (status == "unknown" && self.mutants.on("unknown-capability-as-supported"));
+        if admitted {
+            Ok(())
+        } else {
+            Err(reject(
+                "capability_unavailable",
+                json!({"capability": "core-test.writes", "status": status}),
+            ))
+        }
     }
 
     fn is_authority(&self) -> bool {
@@ -911,6 +954,10 @@ impl Provider {
             "core.describe" => self.describe(),
             "core.negotiate" => self.negotiate(&params["payload"]),
             "core.events.read" => self.events_read(params),
+            "core.capabilities" => Ok(json!({
+                "revision": self.store.capability_revision().map_err(storage)?,
+                "predicates": self.identity.capabilities,
+            })),
             "core.events.subscribe" => self.events_subscribe(params),
             "core.events.unsubscribe" => {
                 let id = params["payload"]["subscription"]
@@ -1262,6 +1309,15 @@ impl Provider {
                 };
                 subjects.push(json!({"subject": subject, "revision": revision, "state": state}));
             }
+        }
+        let capability_subject =
+            json!({"kind": "core.capabilities", "id": self.identity.provider_id});
+        if Self::visible(&capability_subject, kinds, grant) {
+            subjects.push(json!({
+                "subject": capability_subject,
+                "revision": self.store.capability_revision().map_err(storage)?,
+                "state": {"predicates": self.identity.capabilities},
+            }));
         }
         for (revision, grant_record) in self.store.all_grants().map_err(storage)? {
             let subject = json!({"kind": "core.grant", "id": grant_record["id"]});

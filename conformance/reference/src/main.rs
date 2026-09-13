@@ -154,12 +154,31 @@ fn run(args: Args) -> Result<(), String> {
             .collect(),
         None => vec![principal.clone()],
     };
+    let provider_id = config["provider_id"]
+        .as_str()
+        .unwrap_or("conformance-provider")
+        .to_string();
+    let fixed_clock = config["clock"]["fixed"].as_str().map(String::from);
+    let writes = config["capabilities"]["core-test.writes"]
+        .as_str()
+        .unwrap_or("supported");
+    let capabilities = json!([{
+        "name": "core-test.writes",
+        "status": writes,
+        "evidence": {"source": if writes == "supported" { "reference-store" } else { "launch-configuration" }},
+    }]);
+    store
+        .apply_capabilities(
+            &provider_id,
+            &capabilities,
+            &grants::now(fixed_clock.as_deref()),
+            mutant_set.on("capability-revision-static"),
+        )
+        .map_err(|e| e.to_string())?;
     let identity = provider::Identity {
-        provider_id: config["provider_id"]
-            .as_str()
-            .unwrap_or("conformance-provider")
-            .to_string(),
-        fixed_clock: config["clock"]["fixed"].as_str().map(String::from),
+        provider_id,
+        fixed_clock,
+        capabilities,
         authorities,
         principal,
     };

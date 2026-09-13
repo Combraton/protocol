@@ -36,7 +36,8 @@
         "permission_denied",
         "unavailable",
         "internal_error",
-        "invalid_cursor"
+        "invalid_cursor",
+        "capability_unavailable"
       ]
     },
     "retry": {

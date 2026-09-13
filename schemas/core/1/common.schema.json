@@ -393,8 +393,7 @@
         "type",
         "subject",
         "revision",
-        "operation_ref",
-        "command_id",
+        "origin",
         "caused_by",
         "recorded_at",
         "payload"
@@ -422,6 +421,12 @@
         "revision": {
           "$ref": "#/$defs/revision"
         },
+        "origin": {
+          "enum": [
+            "command",
+            "provider"
+          ]
+        },
         "operation_ref": {
           "$ref": "#/$defs/identifier"
         },
@@ -442,7 +447,36 @@
           "type": "object"
         }
       },
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "if": {
+        "properties": {
+          "origin": {
+            "const": "command"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "operation_ref",
+          "command_id"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "operation_ref"
+              ]
+            },
+            {
+              "required": [
+                "command_id"
+              ]
+            }
+          ]
+        }
+      }
     },
     "stream_item": {
       "oneOf": [
@@ -570,6 +604,51 @@
         "epoch": {
           "type": "integer",
           "minimum": 1
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "capability_predicate": {
+      "type": "object",
+      "required": [
+        "name",
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/dotted_name"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "enforcement": {
+          "enum": [
+            "enforced",
+            "mediated",
+            "cooperative"
+          ]
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "source"
+          ],
+          "properties": {
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "observed_at": {
+              "$ref": "#/$defs/instant"
+            }
+          },
+          "unevaluatedProperties": false
         }
       },
       "unevaluatedProperties": false

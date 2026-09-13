@@ -1,6 +1,6 @@
 # Core profile `core/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants and §16 events are proposed M2 drafts.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events and §17 capabilities are proposed M2 drafts.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
 This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and effect reconciliation are Core too; they are specified in milestone M2 and marked **reserved** below.
 
@@ -222,7 +222,7 @@ A provider MUST apply these steps in order. The first failing step determines th
 | 4 | Digest algorithm supported; `command_digest` matches the recomputed digest | `unsupported_digest_algorithm`, `digest_mismatch` |
 | 5 | Deduplication lookup (§6) | `invalid_envelope`, `idempotency_conflict`, `dedupe_history_unavailable`; or return the stored result |
 | 6 | Authorization (§15): the principal is an authority for the operation, or names a valid grant covering it | `invalid_envelope`, `permission_denied` |
-| 7 | Authority epoch (§8) and preconditions (§7) | `stale_authority_epoch`, `unknown_authority_epoch`, `precondition_failed` |
+| 7 | Capabilities the operation depends on are `supported` (§17); then authority epoch (§8) and preconditions (§7) | `stale_authority_epoch`, `unknown_authority_epoch`, `precondition_failed` |
 | 8 | In one owner transaction: commit the command record binding its identity, the state change, resulting events and effect records | `unavailable` if the provider cannot commit; nothing is bound |
 | 9 | Return the acknowledgment and outcome | — |
 
@@ -276,6 +276,7 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `digest_mismatch` | `no` | `command_digest` differs from the recomputed digest | `expected` |
 | `idempotency_conflict` | `no` | Command identity bound to a different intent | `command_id` |
 | `dedupe_history_unavailable` | `after_reconcile` | Command identity may have been used but its record was discarded | `oldest_retained` |
+| `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
 | `precondition_failed` | `after_reconcile` | One or more revision preconditions unsatisfied | `failed`: entries with `subject`, `expected`, and `current` if permitted |
@@ -426,8 +427,9 @@ A provider store has one semantic stream with a stable `stream` ID.
 | `stream`, `epoch`, `sequence` | Position |
 | `type` | Profile-defined event type, such as `core-test.subject.changed` |
 | `subject`, `revision` | The subject that changed and its revision after the change |
-| `operation_ref`, `command_id` | The accepted command that caused the event |
-| `caused_by` | The command envelope's `caused_by`, copied unchanged; an empty array if absent |
+| `origin` | `command` for events caused by an accepted command, `provider` for events the provider records itself (such as a capability change, §17) |
+| `operation_ref`, `command_id` | The accepted command that caused the event; present exactly when `origin` is `command` |
+| `caused_by` | The command envelope's `caused_by`, copied unchanged; an empty array if absent or for provider-origin events |
 | `recorded_at` | Provider clock instant, metadata only |
 | `payload` | Normalized, profile-defined facts sufficient for a consumer's reducer. Never a prose summary. |
 
@@ -490,3 +492,48 @@ Reading or subscribing needs an authority principal, or a grant with right `core
 ### 16.7 What events do not establish
 
 An event records a fact the provider committed. It is not delivery to any consumer, not verification of the fact's correctness, and not project acceptance. A stream position is not a global clock and says nothing about another provider's stream.
+
+## 17. Capability snapshots (proposed M2 draft)
+
+Negotiation (§4.2) says which protocol features a provider implements. **Capabilities** say what the provider can actually do right now, and on what evidence. For example: whether its store accepts writes, or, in later profiles, whether a harness adapter can enforce a restriction. This section is negotiated as the Core feature `core.capabilities`. Matrix rows: CORE-16, CORE-17.
+
+### 17.1 `core.capabilities` (query)
+
+Payload `{}`. Result:
+
+| Field | Meaning |
+|---|---|
+| `revision` | Integer that increases whenever any predicate's status, enforcement or evidence changes. It is stable across restarts when nothing changed. |
+| `predicates` | Array of `{ "name", "status", "enforcement"?, "evidence" }` |
+
+Predicate fields:
+
+- `status` is `supported`, `unsupported` or `unknown`.
+- `enforcement`, where relevant, is `enforced`, `mediated` or `cooperative` ([PIO §7](https://github.com/Combraton/pio/blob/main/docs/spec/SPEC.md)).
+- `evidence` is `{ "source", "observed_at"? }` and says how the provider knows.
+
+A predicate without evidence of support is `unknown`, never `supported`.
+
+### 17.2 Loss and pinned meaning
+
+- **Refusal.** A command whose operation depends on a capability whose current status is not `supported` is refused with `capability_unavailable`, naming the capability and its status. This happens at step 7, before its preconditions, so nothing changes.
+- **Pinned meaning.** A command already bound before the capability was lost still replays its stored outcome (step 5 precedes step 7). Loss does not rewrite accepted history (CORE-17).
+- **Reconciliation.** Existing work that depends on a lost capability needs reconciliation under the owning profile's rules. Core records the loss; it does not declare such work failed.
+
+### 17.3 Observing changes
+
+Each revision change appends a provider-origin event of type `core.capabilities.changed`:
+
+- subject `{ "kind": "core.capabilities", "id": provider_id }`;
+- `revision` equal to the snapshot revision;
+- payload `{ "predicates": [...] }`.
+
+A new store's initial snapshot, revision 1, is not a change and appends no event; read it with `core.capabilities`. Callers watch capabilities by reading or subscribing with `kinds: ["core.capabilities"]` (§16). Under a grant, this needs resources covering that subject kind.
+
+### 17.4 core-test capability
+
+`core-test.writes` reports whether `core-test.subject.put` can be accepted. `put` depends on it. Conformance launch configuration can set it to `unsupported` or `unknown`, simulating a store that became read-only or a probe that has not run.
+
+### 17.5 What capabilities do not establish
+
+A `supported` predicate is the provider's current observation with its stated evidence. It is not a guarantee that a later operation succeeds, and not proof about systems the provider does not observe.

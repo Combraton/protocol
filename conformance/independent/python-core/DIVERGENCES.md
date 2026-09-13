@@ -689,3 +689,285 @@ The most valuable fixtures to add, judged by what these deviations would let thr
 - **Cursors:** a well-formed cursor from another stream, and one past the head.
 - **Gaps:** a gap snapshot under a grant.
 - **Retention:** a decision on E-GAP-TO.
+
+---
+
+## F. Third pass: the resolved M2 documents
+
+> Added when this implementation was brought level with the documents at base commit `6c64ae4`, after the Protocol session resolved section E ([M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) section E). The reading rules were unchanged: CORE, STREAM, the conformance README and schemas, `schemas/**`, VERIFICATION, M2-DIVERGENCES, fixtures and vectors, and this directory. `conformance/reference/**`, `conformance/runner/src/**` and `conformance/crosscheck/**` were not read; the runner was run as a binary. Sections A–E above are left as written, as evidence of what the earlier documents said.
+
+Entries use the same format, with tags `F-…`. `tests/probe_f.py` asserts each chosen behavior under its tag. `tests/probe_m2.py` keeps its E tags. The probes whose decision was resolved the other way (E-FILTERED, E-SUB-REAUTH, E-GAP-FILTER) now assert the resolved behavior and say so. The grants in E-SUB-ORDER and E-GAP-FILTER also gained `core-test.read`, which §16.6 now requires.
+
+**Reading order.** This time the documents were read **before** the fixtures:
+
+1. CORE in full, STREAM, the conformance README (including `events.unvouched_last` and the start order), the launch-configuration and notification schemas, and M2-DIVERGENCES;
+2. the diff of `docs/spec`, `schemas`, the conformance README and schemas between `3b32037` and `6c64ae4`, to be sure nothing changed silently;
+3. a written change list from those documents alone;
+4. only then the eight failing fixtures.
+
+The fixtures did not change the list. One detail the fixtures pin, the `next_cursor` of a final `item_too_large` notification, had already been chosen from the text (F-ENDED-CURSOR).
+
+**Changes after fixture failures: none.** The first complete run after implementing the change list passed every applicable fixture: 138 pass and 6 `socket.*` fixtures are not applicable to a stdio participant.
+
+### F.1 Contradictions between documents
+
+#### F-GRANT-VIS-AUTHORITY — "matching `core.grant.get`" does not match for an authority under a grant
+
+- **Where:** CORE §16.6 table: a `core.grant` subject is visible under a grant when "The session principal is that grant's holder or issuer, matching `core.grant.get` (§15.3)". CORE §15.3: `core.grant.get` is also visible to authority principals. CORE §15.5 says a named grant restricts an authority, but also that a `grant` field on `core.grant.*` operations "is validated but not evaluated".
+- **Consequence:** an authority principal reading events under its own grant cannot see the `core.grant.issued` event of a grant delegated between two other principals. `core.grant.get` for the same grant, with the same `grant` field, returns the record. So the two do not match for authorities.
+- **Chosen:** the table's literal rule (holder or issuer). Probe F-GRANT-VIS-AUTHORITY shows both answers side by side.
+- **Fixtures:** none reads grant events as an authority under a grant.
+- **Basis:** spec text. Either drop "matching `core.grant.get`", or state that under a grant an authority is treated as a non-authority for `core.grant` visibility. The second is what "restricted to that grant" implies.
+
+#### F-AUTH-STEP1 — `core.authenticate` before negotiation: §3 and §18 against §10 step 1
+
+- **Where:** CORE §3.1: before negotiation a provider answers `core.describe`, `core.negotiate` "(and `core.authenticate`, §18)". CORE §18.2 "Repeats": a session that has a principal gets `already_authenticated`, "This includes every stdio session". CORE §10 step 1 still reads "session negotiated (unless the operation is `core.describe` or `core.negotiate`)". §18.2 "Order" moves the authentication check before step 1 only for shared transports.
+- **Question:** on an unnegotiated stdio session, is `core.authenticate` `negotiation_required` (step 1 read literally) or `already_authenticated` (§3.1, §18.2)?
+- **Chosen:** `already_authenticated`, before and after negotiation. Step 1 exempts all three operations.
+- **Fixtures:** `socket.already-authenticated` is restricted to the unix binding. No stdio fixture calls `core.authenticate`; see F.5 for the sensitivity result.
+- **Basis:** spec text (§3.1 and §18.2 are the more specific rules). Step 1's parenthesis should name `core.authenticate`.
+
+#### F-GAP-EPOCHS-REACHABLE — a discarded range spanning epochs is reachable now
+
+- **Where:** M2-DIVERGENCES E-GAP-EPOCHS defers the order of `epoch_change` and `gap` to M6 because "a discarded range spanning epochs is unreachable with current launch controls". The conformance README counts `events.retain_last` "across all epochs".
+- **Reaching it:** record events in epoch 1, restart with `new_epoch_on_start`, commit a command in epoch 2, then restart with `retain_last: 0`. A reader from the start now faces discarded positions in both epochs. The resulting read is probe F-GAP-EPOCHS.
+- **Chosen:** unchanged from E-GAP-EPOCHS. One gap covers the whole range, with no `epoch_change` inside it; the result's `stream.epoch` shows the current epoch. A cursor exactly at the old epoch's vouched end receives the `epoch_change` first, then the gap.
+- **Basis:** own judgment. The deferral's premise no longer holds, so the order is a 0.1 question.
+
+#### F-AUTH-WITHOUT-FEATURE-GUARD — the resolution record names a fixture that does not test the decision
+
+- **Where:** M2-DIVERGENCES E-AUTH-WITHOUT-FEATURE: "Authorization applies without `core.grants`; a non-authority gets `grant_required`. **fixture** `core.capabilities.checked-after-authorization-before-preconditions` exercises it." That fixture negotiates `core.grants` and `core.capabilities` in both sessions. No `grant_required` fixture runs in a session without `core.grants`.
+- **Chosen:** unchanged. A non-authority without the feature gets `grant_required` (probe E-AUTH-WITHOUT-FEATURE).
+- **Evidence:** the deviation "authorization skipped when `core.grants` was not negotiated" passes every fixture (F.5).
+- **Basis:** fixture text against the resolution record. Either the record or the fixture should change.
+
+### F.2 Expectations the documents do not state
+
+#### F-UNVOUCHED — what happens to events after `vouched_through`
+
+- **Where:** conformance README `events.unvouched_last`: "vouch for the previous epoch only through its last sequence minus this many events … Subject state is unchanged; only the vouched position moves." CORE §16.1: "The previous epoch keeps the events the provider still vouches for, through `vouched_through`." CORE §16.4 `epoch_change`: "Nothing after that position in the old epoch will ever be delivered."
+- **Questions:** are the unvouched events still stream events? Do they count toward a later `retain_last`? Does a later retention snapshot reflect their subject changes?
+- **Chosen:**
+  - They leave the stream at the start that closes the epoch. They are never delivered, and they do not count toward `retain_last` (probe F-UNVOUCHED-RETENTION).
+  - A closed epoch ends at its `vouched_through` for reading. A cursor past it receives the `epoch_change` as its first item, with a `vouched_through` below the cursor.
+  - Subject state is untouched, so a later gap snapshot whose `as_of` lies in a later epoch includes their changes ("the visible subjects at `as_of`"). A snapshot as of a position inside the closed epoch does not (probe F-GAP-EPOCHS).
+- **Fixtures:** `core.events.cursor-past-vouched-position-gets-epoch-change` fixes delivery and the cursor, not retention.
+- **Basis:** spec text for delivery; own judgment for retention and snapshots.
+
+#### F-UNVOUCHED-CONFIG — edge values of `unvouched_last`
+
+- **Where:** the README says "With `new_epoch_on_start`"; the launch-config schema allows any integer ≥ 0.
+- **Chosen:**
+  - Without `new_epoch_on_start` the key has no effect; the provider does not refuse to start.
+  - A value larger than the epoch's last sequence vouches through 0.
+- **Basis:** own judgment. Both are probes.
+
+#### F-ENDED-CURSOR — `next_cursor` of the final notification
+
+- **Where:** the notification schema requires `next_cursor` even with `ended`. CORE §16.5 does not say which position it names.
+- **Chosen:** where delivery stopped, after the last position the subscription covered. For `item_too_large` that is the position before the item that did not fit, so the item is never skipped. For `authorization_lost` it is the same rule; it can lie past trailing events the grant hid, never past an event the grant would have shown.
+- **Fixtures:** `core.events.reads-and-notifications-fit-receive-limit` requires the cursor after the last delivered event for `item_too_large`. Nothing checks it for `authorization_lost`.
+- **Basis:** own judgment, chosen before reading the fixture.
+
+#### F-CREDENTIALS-CONFIG — `credentials` in a stdio launch
+
+- **Where:** the launch-config schema gained `credentials`; the README says the runner writes them for `binding: unix`.
+- **Chosen:** this stdio-only participant refuses to start (exit 2) when `credentials` is present. The README says a participant "should refuse to start … rather than silently ignore" keys it does not support.
+- **Basis:** README.
+
+#### F-CREDENTIAL-SCHEMA — the parameter schema does not use the credential definition
+
+- **Where:** `core.authenticate.params.schema.json` accepts any string of 1–512 code points. `common.schema.json#/$defs/credential` (with the `ccred1.` pattern and a 200-character limit) is referenced by nothing in `schemas/`.
+- **Chosen:** the parameter schema. A malformed credential is not `invalid_envelope`; on a shared transport it would be `authentication_failed` (§18.2). On stdio it is `already_authenticated` (F-AUTH-ORDER).
+- **Basis:** schema, consistent with §18.2 "Unknown, malformed and revoked credentials all produce `authentication_failed`". The unused definition is harmless but looks like an intended reference.
+
+### F.3 Open questions decided here, not decided by any fixture
+
+#### F-PRE-CURRENT-NO-GRANT — a non-authority acting without a grant on `core.grant.*`
+
+- **Where:** CORE §7 names two cases: "An authority principal acting without a grant may read every subject. Under a grant, the principal may read the subjects that grant would show it in events." A delegating holder (`core.grant.issue` with `parent`) or a non-authority issuer revoking a child acts under no evaluated grant (§15.5: the `grant` field on `core.grant.*` is not evaluated), so neither case applies.
+- **Chosen:** such a principal may read what `core.grant.get` shows it: grants it holds or issued. For other kinds `current` is omitted.
+- **Basis:** own judgment, as in E-PRE-CURRENT.
+
+#### F-PRE-CURRENT-FOREIGN — `current` for a kind no profile defines, under a grant
+
+- **Where:** CORE §13 rights: `put` needs `core-test.read` "on every other subject named in its preconditions", so a grant covering `other.kind` authorizes such a precondition. CORE §7 defers to the §16.6 table, which has no row for a kind that no profile defines. (Such a subject never exists, CORE §7.)
+- **Chosen:** omitted under a grant. An authority without a grant gets `current: 0`.
+- **Basis:** own judgment; either answer discloses nothing.
+
+#### F-CURSOR-OLD-EPOCH-PAST-END — a cursor past the last sequence a closed epoch ever had
+
+- **Where:** CORE §16.4 says a cursor into an earlier epoch "is valid even when it points past that epoch's `vouched_through`", and that only "one past the head of the current epoch" is `invalid_cursor`. The general cursor rule also refuses one that "points beyond the stream's current end".
+- **Chosen:** valid, answered with the `epoch_change`. A store restored from a backup may never have recorded the position a consumer holds, and that is the case epochs exist for.
+- **Basis:** spec text (the more specific rule).
+
+#### F-SUB-END-TIMING — when `authorization_lost` is sent
+
+- **Where:** CORE §16.5: authorization is "checked when subscribing and again before each delivery", and a subscription whose grant stops authorizing gets one final notification.
+- **Chosen:** checked after every request on the connection, whether or not an item is pending. The end is therefore reported right after the response of the request that caused it, even when the subscription's `kinds` filter would deliver nothing. With the system clock, an expiry is noticed at the next request; this provider has no timer.
+- **Fixtures:** `core.events.subscription-ends-when-grant-stops-authorizing` passes under either reading, because the claim that makes the grant stale records an event the grant can see.
+- **Basis:** own judgment.
+
+#### F-ISSUE-CHECK-ORDER — order of the step 6 validity checks on `core.grant.issue`
+
+- **Where:** CORE §15.3: the binding scope is "checked with `audience` and `expires_at` at step 6". No order is given among the three, or against the issuing rules (`not_authority`, `grant_not_found`, `delegation_exceeded`).
+- **Chosen:** `audience`, then `expires_at`, then the binding scope, all before the issuing rules. A non-authority issuing a root grant bound to an unknown scope gets `invalid_envelope`, not `not_authority`.
+- **Basis:** own judgment (§15.2 field order). Only `details.path` differs among the three.
+
+#### F-AUTH-ORDER — `core.authenticate` on stdio
+
+- **Chosen:**
+  - It is a query, not protected (§15.5).
+  - Its params are validated at step 2 and its `requires` at step 3 before `already_authenticated`, as D-NEG-AGAIN decided for a second negotiation.
+  - The credential is never examined, logged or echoed. A malformed credential string therefore also gets `already_authenticated`.
+- **Basis:** spec text for the order (§10: "A query applies steps 1–3"); own judgment for the rest.
+
+#### F-FILTERED-RANGE — the "range covered by this result"
+
+- **Chosen:**
+  - When `limit` stops a read, the covered range ends at the last item, and hidden events after it do not set `filtered`.
+  - When a read reaches the end, the range extends over trailing hidden events, matching `next_cursor`.
+  - An empty read at the head is `filtered: false`.
+- **Basis:** spec text (§16.4 "Cursors" and "Filtering" read together).
+
+#### F-READ-FIT — how many items a size-limited read or notification carries
+
+- **Chosen:**
+  - The largest item count whose complete frame fits, found by binary search.
+  - The frame is measured exactly, including the request's JSON-RPC `id`.
+  - A read whose first item cannot fit is `internal_error`, raised explicitly rather than by replacing an oversized response.
+- **Basis:** own judgment. CORE §16.4 requires only "fewer than `limit` items".
+
+### F.4 Behavior changes in this pass
+
+| Change | Document | Previous entry | Fixtures that now pass |
+|---|---|---|---|
+| Event and snapshot visibility under a grant follows the §16.6 table: profile subjects need `core-test.read` covering them; `core.grant` subjects need the principal to be holder or issuer, whatever the resources; `core.capabilities` needs coverage only | CORE §16.6 | E-GRANT-EVENT-LEAK | `core.events.authorization-and-filtering`, `core.events.retention-snapshot-is-filtered`, `core.events.subscription-applies-kinds-and-grant` |
+| `filtered` is true exactly when something in the covered range was hidden | CORE §16.4 | E-FILTERED | `core.events.unfiltered-read-under-grant` |
+| `precondition_failed.current` and `stale_authority_epoch.current_epoch` under a grant follow the same table; an authority without a grant reads everything | CORE §7 | E-PRE-CURRENT | none (`core.grants.precondition-current-needs-read` already passed) |
+| `events.unvouched_last` accepted; a closed epoch ends at `vouched_through`; unvouched events leave the stream | README, CORE §16.1, §16.4 | E-CURSOR-OLD-EPOCH | `core.events.cursor-past-vouched-position-gets-epoch-change` |
+| A subscription ends with a final notification, `ended: authorization_lost` or `item_too_large`, instead of silently | CORE §16.5 | E-SUB-REAUTH, E-NOTIFY-SIZE | `core.events.subscription-ends-when-grant-stops-authorizing`, `core.events.reads-and-notifications-fit-receive-limit` |
+| Reads and notifications carry the largest fitting item count, measured on the exact frame | CORE §16.4 "Size", §16.5 | E-NOTIFY-SIZE | (with the row above) |
+| An `authority_binding` to an untracked scope is `invalid_envelope` at step 6 | CORE §15.3 | E-BINDING-SCOPE | `core.grants.authority-binding-scope-must-exist` |
+| `core.authenticate` is known and answers `already_authenticated` | CORE §3.1, §18.2 | new | none on stdio |
+| The capability revision ignores `observed_at` (none is emitted, so this is not observable) | CORE §17.1 | E-CAP-EVIDENCE | none |
+| A stdio launch with `credentials` refuses to start | README | new | none |
+
+Re-read against the new text and left unchanged, because this implementation already did what the resolution decided:
+
+- the grant command precondition revisions (E-GRANT-PRE);
+- re-revocation and the `not_authority` rule (E-REVOKE-DENIAL);
+- the protected-operations list (E-UNPROTECTED);
+- the denial order (E-DENIAL-ORDER);
+- the expiry boundary (E-EXPIRY-BOUNDARY);
+- issue validation after deduplication (E-ISSUE-VALIDATION-STEP);
+- the snapshot state shapes (E-SNAPSHOT-STATE);
+- a gap ending at the discard boundary, which CORE §16.4 now allows (E-GAP-TO).
+
+### F.5 Fixtures, and requirements no fixture checks
+
+**Failing fixtures: none.** No fixture is believed wrong. One observation: `core.events.retention-snapshot-is-filtered` accepts both gap readings only because the one retained event happens to be hidden from its reader, so under this implementation's boundary reading the gap is still the only item. It does not distinguish the two readings, and E-GAP-TO allows both anyway.
+
+`tests/fixture_sensitivity.py` applies each deviation to a temporary copy, runs the whole suite and counts fixtures that fail beyond the unmodified implementation's (none now fail). The harness was changed in this pass in two ways:
+
+- It runs variants four at a time.
+- It counts every non-passing status. The earlier version counted only lines starting with `fail`, so a deviation that made a fixture **time out** was reported as unguarded. The E.4 counts above may therefore be low for subscription rows; they were not re-derived with the old code.
+
+All three groups were rerun: `m1` (section D), `m2` (section E.4, with four edits re-targeted to the new code) and the new `f` group of 49 deviations for the section E resolutions. Rows marked *control* break a requirement a fixture is known to guard; each failed at least one fixture, which shows the harness notices.
+
+**Re-checks of earlier groups.**
+
+- **`m1`:** all 23 deviations now fail at least one fixture. D-PRE-DUP is guarded by `core.preconditions.duplicate-subject-invalid`, and a nonzero exit status fails every fixture.
+- **`m2`:** 40 of 43 deviations fail at least one fixture. Three still pass everything:
+  - **cursor beyond the head accepted:** known; M2-DIVERGENCES E-CURSOR-OLD-EPOCH says callers cannot construct one.
+  - **revision raised only when a status changes:** known; E-CAP-EVIDENCE.
+  - **gap and snapshot at the stream head:** no longer a deviation, since CORE §16.4 allows it.
+
+**Group `f`: the section E resolutions.**
+
+| Deviation applied | Requirement it breaks | Newly failing fixtures |
+|---|---|---|
+| *control:* binding to an unknown scope accepted | §15.3 | 1 (`core.grants.authority-binding-scope-must-exist`) |
+| *control:* current omitted for an authority without a grant | §7 | 5 |
+| *control:* profile subjects visible with resource coverage alone | §16.6 | 2 |
+| *control:* `core.grant` subjects visible only with resources covering `core.grant` | §16.6 | 4 |
+| *control:* snapshot omits `core.grant` subjects | §16.4 | 1 |
+| *control:* unvouched events delivered; `unvouched_last` ignored; cursor past `vouched_through` refused | README, §16.4 | 1 each (`core.events.cursor-past-vouched-position-gets-epoch-change`) |
+| *control:* reads, or notifications, ignore the caller's receive limit; `item_too_large` ends silently | §16.4, §16.5 | 1 each (`core.events.reads-and-notifications-fit-receive-limit`) |
+| *control:* authorization loss ends silently | §16.5 | 1 (`core.events.subscription-ends-when-grant-stops-authorizing`) |
+| Binding to a later epoch of a known scope refused at issue | §15.3 | 1 |
+| Grant command precondition revision unchecked | §15.3 | 1 |
+| Re-revocation accepted | §15.3 | 1 |
+| `current` under a grant needs only coverage, not the read right | §7, §16.6 | 1 |
+| `core.events.unsubscribe` protected | §15.5 | 1 |
+| `filtered` ignores events hidden only by `kinds` | §16.4 | 1 |
+| A read whose first item cannot fit returns no items | §16.4 "Size" | 1 |
+| `item_too_large` skips the item and continues | §16.5 | 1 |
+| Authorization loss reported as `item_too_large` | §16.5 | 1 |
+| Final notification's `next_cursor` is the head | F-ENDED-CURSOR | 1 |
+| **Grants and authorization** | | |
+| Re-revocation reports `revoked` before `not_authority`, so a stranger learns a grant's state | §15.3 "decided after that check" | **0** |
+| Re-revocation checked after preconditions (stale revision gives `precondition_failed`) | §10 step 6 before step 7 | **0** |
+| Revocation lists and re-revokes descendants already revoked | §15.3 "descendants that were still active" | **0** |
+| `stale_authority_epoch.current_epoch` always disclosed | §8, §12 "if permitted" | **0** |
+| `core.capabilities` protected (non-authority needs a grant) | §15.5 | **0** |
+| `grant` field evaluated on unprotected queries and `core.grant.get` | §15.5 "validated but not evaluated" | **0** |
+| Authorization skipped when `core.grants` was not negotiated (labelled *control* before the run, because M2-DIVERGENCES E-AUTH-WITHOUT-FEATURE names `core.capabilities.checked-after-authorization-before-preconditions` as its fixture; that fixture negotiates `core.grants`) | §15.5 "Without `core.grants`" | **0** |
+| **Event visibility** | | |
+| Every `core.grant` subject visible under any grant with `core.events.read` | §16.6 (the E-GRANT-EVENT-LEAK disclosure) | **0** |
+| `core.grant` subjects visible to the holder only, not the issuer | §16.6 | **0** |
+| `core-test.authority` visible with `core-test.read` and no resource covering it | §16.6 | **0** |
+| `core.capabilities` visible under any events grant | §16.6 | **0** |
+| `core.capabilities` also needs `core-test.read` | §16.6 | **0** |
+| An authority reading under a grant sees every event | §15.5 rule 1, §16.6 | **0** |
+| **Reads, cursors and snapshots** | | |
+| `filtered` ignores hidden snapshot subjects | §16.4 "Filtering" | **0** |
+| `filtered` counts hidden events beyond the covered range | §16.4 "Filtering" | **0** |
+| `next_cursor` stops at the last item although trailing hidden events were covered | §16.4 "Cursors" | **0** |
+| Snapshot state of a revoked grant is `{state}`, not `{grant}` | §16.4 "Snapshot state" | **0** |
+| **Subscriptions** | | |
+| A subscription survives revocation of its grant (only expiry and epoch staleness end it) | §16.5 "Lifetime" | **0** |
+| **`core.authenticate` on stdio** | | |
+| Unknown operation (`method_not_found`) | §3.1, §18.2 | **0** |
+| Succeeds and returns the principal | §18.2 "Repeats" | **0** |
+| Answers `authentication_failed` | §18.2 "Repeats" | **0** |
+| **This implementation's open choices (section F), not requirements** | | |
+| Binding scope checked before audience and expiry | F-ISSUE-CHECK-ORDER | 0 |
+| `current` omitted for a delegating non-authority's own grants | F-PRE-CURRENT-NO-GRANT | 0 |
+| Cursor in a closed epoch past its last sequence refused | F-CURSOR-OLD-EPOCH-PAST-END | 0 |
+| Unvouched events count toward `retain_last` | F-UNVOUCHED | 0 |
+| Retention snapshot omits changes made by unvouched events | F-UNVOUCHED | 0 |
+| `core.authenticate` needs negotiation first | F-AUTH-STEP1 | 0 |
+
+Of the 37 non-control `f` deviations, **27 pass every fixture**. 21 of those break a stated requirement (bold rows); the other 6 reverse this implementation's own open choices. Together with the three `m2` rows above, the script reports 29 non-control deviations passing, because the `core.grants` row was still labelled *control* during the run.
+
+What these say about the suite:
+
+- **E-GRANT-EVENT-LEAK is fixed in the text but unguarded against its original form.** The fixtures show `core.grant` events to their holder, but none puts a grant held **and** issued by others in a reader's range. A provider that shows every grant record to any `core.events.read` holder passes. The same is true for `core.capabilities` and `core-test.authority` visibility, and for an authority restricted by a named grant when reading events.
+- **Subscription authorization loss is guarded only for epoch staleness.** Revocation, the case §16.5 names first, is not exercised in a subscriber's session.
+- **The `core.authenticate` stdio rules have no fixture at all,** because every authentication fixture is restricted to the unix binding.
+- **Authorization without `core.grants` has no fixture;** the named one negotiates the feature.
+- **Re-revocation ordering and cascades over already revoked descendants are unguarded,** as is disclosure of `current_epoch`.
+- **`filtered` and `next_cursor` are guarded only in their simplest cases:** nothing hidden, or hidden by `kinds` alone.
+
+### F.6 Verification
+
+Run from the worktree root at base `6c64ae4` plus this pass's changes, on macOS (Darwin 25.3) with Python 3.14.5 and the pinned Rust toolchain. The provider is real; nothing is simulated. Results are in `conformance/results/independent-python-core/` (not committed).
+
+| Command | Exit | Result |
+|---|---|---|
+| `cargo build --workspace --locked` | 0 | built |
+| `./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core` | 0 | `run: 144 fixtures, 0 not passing`: 138 pass, 6 `socket.*` not applicable (unix binding only) |
+| `python3 conformance/independent/python-core/tests/check_vectors.py` | 0 | `failures: 0` |
+| `python3 conformance/independent/python-core/tests/probe_provider.py` | 0 | 19/19 probes as documented |
+| `python3 conformance/independent/python-core/tests/probe_m2.py` | 0 | 43/43 probes as documented |
+| `python3 conformance/independent/python-core/tests/probe_f.py` | 0 | 31/31 probes as documented |
+| `python3 conformance/independent/python-core/tests/fixture_sensitivity.py --jobs 4` | 0 | the counts in F.5; the script printed "29 non-control deviations pass every fixture" before the `core.grants` row was relabelled |
+| `python3 conformance/independent/python-core/tests/fixture_sensitivity.py --check` | 0 | all 115 deviations apply to the committed sources |
+
+Not established:
+
+- the Unix-socket binding and real credentials;
+- behavior under concurrent sessions;
+- expiry of a subscription's grant by the system clock between requests;
+- anything outside the fixtures and the probes above.

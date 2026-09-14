@@ -45,16 +45,15 @@ STATUS_OF = {"pending": "pending", "acknowledged": "succeeded", "delivered": "su
 # CORE 19.3: how many tries a retryable effect gets before its outcome is
 # declared unknown (G-MAX-ATTEMPTS).
 MAX_ATTEMPTS = 3
-SOURCE = "scripted-harness"
+SOURCE = "scripted harness"
 DEFAULT_HOST = "scripted-host"
 DEFAULT_SPOOL = 65536
 DEFAULT_READ_BYTES = 65536
 CRASH_EXIT_STATUS = 1  # G-CRASH-EXIT
 
-# Script steps that do not stand for harness interaction, so they do not
-# dispatch the prompt first (G-DISPATCH-POINT).
-CONTROL_STEPS = ("wait_until", "wait_for", "transport_errors", "on_cancel", "crash", "stale_dispatch",
-                 "probe_status", "reconcile_finds")
+# EXECUTION 15.1 "Script steps": dispatch happens only at deliver, at
+# crash: after_write and at a stale_dispatch that is not fenced.
+DISPATCH_STEPS = ("deliver", "crash", "stale_dispatch")
 EXIT_OUTCOMES = ("cancelled", "refused", "not_supported", "unknown")
 STEER_ALTERNATIVE = "live steering is not supported by this harness; cancel and submit a new execution with the revised brief"
 
@@ -352,6 +351,8 @@ class Executor:
     # ------------------------------------------------------------ effects
     def _effect_new(self, st, eid, kind, payload_digest, retry_class, operation_ref, source,
                     obligation=None, idempotency_key=None) -> None:
+        """``obligation`` is ``(suffix, expects, deadline)``; the obligation ID
+        is ``<effect>.<suffix>`` (EXECUTION 15.1 "Identifiers")."""
         now = self.now()
         descriptor = {"id": eid, "kind": kind, "target": self.subject_of(st["id"]), "payload_digest": payload_digest,
                       "authorization": dict(st["x"]["authorization"]), "retry_class": retry_class,
@@ -359,12 +360,12 @@ class Executor:
         if idempotency_key is not None:
             descriptor["idempotency_key"] = idempotency_key
         record = {"descriptor": descriptor,
-                  "observations": [{"status": "pending", "evidence": {"class": "recorded", "source": source},
+                  "observations": [{"status": "pending", "evidence": {"class": "recorded_before_dispatch", "source": source},
                                     "recorded_at": now}],
                   "attempts": [], "obligations": []}
         if obligation is not None:
-            expects, deadline = obligation
-            record["obligations"].append({"id": f"{eid}.obligation", "expects": expects, "deadline": deadline,
+            suffix, expects, deadline = obligation
+            record["obligations"].append({"id": f"{eid}.{suffix}", "expects": expects, "deadline": deadline,
                                           "state": "open"})
         self.store.put_json(EFFECT_KIND, eid, 1, record)
         st["x"]["effects"].append(eid)
@@ -384,8 +385,8 @@ class Executor:
         return record["observations"][-1]["status"]
 
     def _observe(self, record: dict, status: str, evidence: dict) -> bool:
-        if self.effect_status(record) == status:
-            return False
+        """CORE 19.1: status is "appended as evidence". Every observation is
+        appended, including one that repeats the current status (G5-OBSERVATIONS)."""
         record["observations"].append({"status": status, "evidence": dict(evidence), "recorded_at": self.now()})
         return True
 
@@ -419,7 +420,8 @@ class Executor:
 
     # --------------------------------------------------------- deliveries
     def _determine(self, st, value: str, evidence: dict, proof_class: str | None = None,
-                   reconciled: str | None = None) -> None:
+                   reconciled: str | None = None, effect_evidence: dict | None = None,
+                   close: bool = True) -> None:
         """Set the prompt delivery's current determination (EXECUTION 3.1). A
         changed determination moves the previous one, with its evidence, to
         the history; evidence recorded while the determination stays the same
@@ -454,8 +456,8 @@ class Executor:
                           "evidence": dict(evidence)})
 
         def fn(record):
-            changed = self._observe(record, STATUS_OF[value], evidence)
-            if value in TERMINAL:
+            changed = self._observe(record, STATUS_OF[value], effect_evidence or evidence)
+            if value in TERMINAL and close:
                 changed = self._close_obligations(record, "satisfied") or changed
             return changed
 
@@ -538,9 +540,11 @@ class Executor:
 
     @staticmethod
     def _finished(x: dict) -> bool:
-        """An admitted execution stops occupying capacity once its process is
-        observed to have ended or its delivery provably failed (G-CAPACITY)."""
-        return (x["runtime"] == "exited" or x["exit"] != "unavailable"
+        """EXECUTION 15.1: capacity is released when runtime is exited. The
+        convention does not say what an execution that can never run holds;
+        here a delivery that provably failed or a cancelled outcome releases
+        it too (G5-CAPACITY)."""
+        return (x["runtime"] == "exited"
                 or x["delivery"] in ("failed_before_delivery", "not_delivered")
                 or x.get("cancellation", {}).get("outcome") == "cancelled")
 
@@ -576,7 +580,7 @@ class Executor:
         # The effect is recorded before any external I/O, in the transaction
         # that admits the execution (CORE 19.1).
         self._effect_new(st, delivery_id, "execution.prompt_submission", x["brief"]["digest"], "non_repeatable",
-                         x["operation_ref"], "execution.submit", obligation=("delivery_evidence", deadline))
+                         x["operation_ref"], "execution.submit", obligation=("evidence", "delivery_evidence", deadline))
         return delivery_id
 
     # ------------------------------------------------- command handlers
@@ -647,9 +651,9 @@ class Executor:
             x["reason"] = reason
             if alternative is not None:
                 x["alternative"] = alternative
-            # No delivery exists; nothing can ever be dispatched (G-REFUSED-AXES).
+            # EXECUTION 3.1: no delivery and no effect; delivery is
+            # failed_before_delivery and the other axes keep their initial values.
             x["delivery"] = "failed_before_delivery"
-            x["runtime"] = "unknown"
             event = {"admission": "refused", "reason": reason}
         else:
             queue_reason = self._queue_reason(x)
@@ -663,7 +667,7 @@ class Executor:
                 event = {"admission": "admitted", "delivery_id": delivery_id}
             if "workspace" in payload:
                 ws = payload["workspace"]
-                lease = {"lease_id": f"{xid}.lease-1", "repository": ws["repository"], "base": ws["base"],
+                lease = {"lease_id": f"{xid}.workspace", "repository": ws["repository"], "base": ws["base"],
                          "writer": self.p.principal, "lease_epoch": 1, "cleanup": ws["cleanup"]}
                 for member in ("permitted_paths", "permitted_effects"):
                     if member in ws:
@@ -700,7 +704,7 @@ class Executor:
         # as its key, and an open obligation for the outcome.
         self._effect_new(st, eid, "execution.cancel_forwarding", sha256_of(V.canonical(env["payload"])),
                          "idempotent_key", operation_ref, "execution.cancel",
-                         obligation=("cancellation_outcome", None), idempotency_key=eid)
+                         obligation=("outcome", "cancellation_outcome", None), idempotency_key=eid)
         receipt = {"state": "cancel_requested", "operation_ref": operation_ref}
         x["cancellation"] = {"receipt": receipt, "effect": eid}
         x["cancel_forwards"].append(eid)
@@ -721,7 +725,7 @@ class Executor:
         if self.steering == "live":
             delivery_id = f"{steer_id}.delivery"
             self._effect_new(st, delivery_id, "execution.steering_delivery", env["payload"]["message"]["digest"],
-                             "non_repeatable", operation_ref, "execution.steer", obligation=("steering_evidence", None))
+                             "non_repeatable", operation_ref, "execution.steer", obligation=("evidence", "steering_evidence", None))
             entry.update(request="recorded", delivery_id=delivery_id, delivery="pending")
             x["attempts_due"].append(delivery_id)
             outcome = {"steer_id": steer_id, "request": "recorded", "delivery_id": delivery_id}
@@ -750,10 +754,10 @@ class Executor:
         x["counters"]["responses"] = n
         eid = f"{xid}.response-{n}"
         self._effect_new(st, eid, "execution.action_response", env["payload"]["response"]["digest"],
-                         "non_repeatable", operation_ref, "execution.respond_action")
+                         "non_repeatable", operation_ref, "execution.respond_action",
+                         obligation=("evidence", "response_evidence", None))
         action.update(state="answered", answered_at=self.now(), response_effect=eid)
         x["counters"]["answered"] += 1
-        x["attempts_due"].append(eid)
         self._xevent(st, "execution.action.answered", {"action_id": action_id, "response_effect": eid})
         self.store.put_json(EXECUTION_KIND, xid, st["rev"], x)
         return st["rev"], {"action_id": action_id, "state": "answered", "response_effect": eid}, st["changes"], [eid]
@@ -860,9 +864,11 @@ class Executor:
             view["runtime_detail"] = x["runtime_detail"]
         # Members of optional features appear only in sessions that selected
         # the feature (G-INSPECT-GATING).
-        if "execution.steering" in features:
+        # EXECUTION 15.1 "Inspect members": steering and actions appear only
+        # once they have an entry.
+        if "execution.steering" in features and x["steering"]:
             view["steering"] = x["steering"]
-        if "execution.actions" in features:
+        if "execution.actions" in features and x["actions"]:
             view["actions"] = x["actions"]
         if "execution.workspaces" in features and "workspace_lease" in x:
             view["workspace"] = {"lease": x["workspace_lease"], "checkpoints": x["checkpoints"]}
@@ -1028,18 +1034,19 @@ class Executor:
         delivery_id = x["delivery_id"]
         x["recovery"].append({"delivery_id": delivery_id, "decision": decision, "reason": reason,
                               "recorded_at": self.now()})
-        if decision == "dispatch_resumed":
-            # Fencing: the recovered dispatcher is a new host generation.
-            x["generation"] += 1
-            host = {"id": self.host_id, "generation": x["generation"]}
-            self._xevent(st, "execution.host.changed", {"host": host})
-            self._xevent(st, "execution.recovery.decided",
-                         {"delivery_id": delivery_id, "decision": decision, "reason": reason, "host": host})
-        else:
-            host = {"id": self.host_id, "generation": x["generation"]}
-            self._xevent(st, "execution.recovery.decided",
-                         {"delivery_id": delivery_id, "decision": decision, "reason": reason, "host": host})
-            self._determine(st, decision, {"class": "recovery", "source": reason})
+        # EXECUTION 7.1 item 3: recovery advances the host generation, whatever
+        # it decides, so no older dispatcher sends afterwards (G5-RECOVERY-GENERATION).
+        # 15.1 event order: recovery.decided, the delivery observation if any,
+        # then host.changed.
+        x["generation"] += 1
+        host = {"id": self.host_id, "generation": x["generation"]}
+        self._xevent(st, "execution.recovery.decided",
+                     {"delivery_id": delivery_id, "decision": decision, "reason": reason, "host": host})
+        if decision != "dispatch_resumed":
+            effect_class = "dispatch_uncertain" if decision == "ambiguous" else "never_dispatched"
+            self._determine(st, decision, {"class": "recovery", "source": reason},
+                            effect_evidence={"class": effect_class, "source": reason})
+        self._xevent(st, "execution.host.changed", {"host": host})
         return True
 
     # ------------------------------------------------------------- ticks
@@ -1124,12 +1131,18 @@ class Executor:
         admitted_at = x["admitted_at"]
         if x["delivery"] == "pending" and due("delivery", admitted_at):
             pass_("delivery")
-            evidence = {"class": "timeout", "source": "delivery timeout"}
-            # The evidence wait ends (EXECUTION 3.1, 8).
-            self._determine(st, "ambiguous" if x.get("marker") is not None else "failed_before_delivery", evidence)
+            dispatched = x.get("marker") is not None
+            evidence = {"class": "delivery_timeout" if dispatched else "delivery_timeout_before_dispatch",
+                        "source": "delivery timeout"}
+            # 15.1 order: timeout.passed, overdue obligations, then the
+            # determination that ends the evidence wait (EXECUTION 3.1, 8). The
+            # wait ending is not the expected observation, so the overdue
+            # obligations stay overdue (G5-TIMEOUT-OBLIGATIONS).
             self._overdue(st, x["delivery_id"])
+            self._determine(st, "ambiguous" if dispatched else "failed_before_delivery", evidence, close=False)
             progressed = True
-        if due("execution_deadline", admitted_at):
+        # EXECUTION 8: execution_deadline applies while runtime is not exited.
+        if x["runtime"] != "exited" and due("execution_deadline", admitted_at):
             pass_("execution_deadline")  # nothing else changes
             progressed = True
         if x["runtime"] != "exited" and due("inactivity", x["last_observation_at"]):
@@ -1192,7 +1205,7 @@ class Executor:
             eid = x["attempts_due"].pop(0)
             outcome = self._attempt(st, eid)  # non_repeatable: one try only
             if outcome == "unknown":
-                evidence = {"class": "attempt_outcome_unknown", "source": SOURCE}
+                evidence = {"class": "transport_error", "source": SOURCE}
                 entry = next((s for s in x["steering"] if s.get("delivery_id") == eid), None)
                 if entry is not None and entry["delivery"] == "pending":
                     entry["delivery"] = "ambiguous"
@@ -1213,10 +1226,10 @@ class Executor:
             x["cancellation"]["outcome"] = outcome
         self._xevent(st, "execution.cancel.observed", {"outcome": outcome})
         if outcome == "unknown":
-            evidence = {"class": "harness_report" if reported else "attempt_outcome_unknown", "source": SOURCE}
+            evidence = {"class": "harness_response" if reported else "transport_error", "source": SOURCE}
             self._effect_update(eid, lambda record: self._observe(record, "unknown", evidence))
         else:
-            evidence = {"class": "harness_report", "source": SOURCE}
+            evidence = {"class": "harness_response", "source": SOURCE}
 
             def fn(record):
                 changed = self._observe(record, "succeeded", evidence)
@@ -1225,21 +1238,23 @@ class Executor:
             self._effect_update(eid, fn)
 
     # ------------------------------------------------------------ scripts
-    def _dispatch_needed(self, x: dict) -> bool:
-        return not x["dispatched"] and x["delivery"] == "pending"
-
-    def _dispatch(self, st) -> bool:
-        """Write-ahead marker first, in its own committed transaction; the
-        harness write and its attempt record come in the next unit."""
+    def _write_marker(self, st) -> None:
+        """EXECUTION 7.1 item 1: the write-ahead dispatch marker, committed in
+        its own transaction before any harness write, and appended to the
+        effect as a dispatch_intent observation (15.1)."""
         x = st["x"]
-        if x.get("marker") is None:
-            x["marker"] = {"generation": x["generation"], "recorded_at": self.now()}
-            return True
+        x["marker"] = {"generation": x["generation"], "recorded_at": self.now()}
+        evidence = {"class": "dispatch_intent", "source": "write-ahead dispatch marker"}
+        self._effect_update(x["delivery_id"], lambda record: self._observe(record, "pending", evidence))
+
+    def _dispatch_attempt(self, st) -> str:
+        """The one dispatch attempt of the prompt (non_repeatable)."""
+        x = st["x"]
         outcome = self._attempt(st, x["delivery_id"])
         x["dispatched"] = True
         if outcome == "unknown":
-            self._determine(st, "ambiguous", {"class": "attempt_outcome_unknown", "source": SOURCE})
-        return True
+            self._determine(st, "ambiguous", {"class": "transport_error", "source": SOURCE})
+        return outcome
 
     def _script_step(self, st, allow_crash: bool) -> bool:
         x = st["x"]
@@ -1248,41 +1263,99 @@ class Executor:
         script = self.script_for(st["id"])
         pos = x["script_pos"]
         if pos >= len(script):
-            return self._dispatch(st) if self._dispatch_needed(x) else False
+            return False  # the end of a script dispatches nothing (15.1)
         (key, val), = script[pos].items()
         now = self.now()
+        pending = x["delivery"] == "pending"
         if key == "wait_until":
             if now < val:
                 return False
         elif key == "wait_for":
-            counters = x["counters"]
-            have, used = {"cancel": ("cancels", "wait_cancel"), "steer": ("steers", "wait_steer"),
-                          "action": ("answered", "wait_action")}[val]
-            if counters[have] <= counters[used]:
-                return False
-            counters[used] += 1
+            if val == "action":
+                if any(a["state"] == "pending" for a in x["actions"]):
+                    return False
+                self._send_responses(st)
+            else:
+                counters = x["counters"]
+                have, used = {"cancel": ("cancels", "wait_cancel"), "steer": ("steers", "wait_steer")}[val]
+                if counters[have] <= counters[used]:
+                    return False
+                counters[used] += 1
         elif key == "crash":
-            if not allow_crash:
+            if not pending:
+                pass  # 15.1: once delivery is not pending, crash steps have no effect
+            elif not allow_crash:
                 return False  # never crash in the middle of answering a request
-            if val == "after_write" and self._dispatch_needed(x):
-                return self._dispatch(st)
-            x["script_pos"] = pos + 1
-            st["crash"] = val
-            return True
-        elif key not in CONTROL_STEPS and self._dispatch_needed(x):
-            return self._dispatch(st)
+            elif val == "after_write" and x.get("marker") is None:
+                self._write_marker(st)
+                return True
+            else:
+                if val == "after_write" and not x["dispatched"]:
+                    self._attempt(st, x["delivery_id"])  # the write completed; the process dies after it
+                    x["dispatched"] = True
+                x["script_pos"] = pos + 1
+                st["crash"] = val
+                return True
+        elif key == "deliver":
+            if not pending:
+                pass  # 15.1: never dispatched twice; later evidence is reconcile_finds
+            elif x.get("marker") is None:
+                self._write_marker(st)
+                return True
+            elif not x["dispatched"]:
+                if self._dispatch_attempt(st) == "completed":
+                    self._observed(st)
+                    self._step_deliver(st, x, val, now)
+            else:
+                # Dispatch already began and the delivery is still pending:
+                # further harness evidence for the same dispatch, never a
+                # second attempt (G5-SECOND-DELIVER).
+                self._observed(st)
+                self._step_deliver(st, x, val, now)
+        elif key == "stale_dispatch":
+            if val["generation"] < x["generation"]:
+                self._step_stale_dispatch(st, x, val, now)
+            elif pending and x.get("marker") is None:
+                self._write_marker(st)
+                return True
+            elif pending and not x["dispatched"]:
+                self._dispatch_attempt(st)  # a dispatcher that is not fenced dispatches (15.1)
         else:
-            self._apply(st, key, val)
+            if key not in ("transport_errors", "on_cancel", "stall", "probe_status", "reconcile_finds"):
+                self._observed(st)
+            getattr(self, f"_step_{key}")(st, x, val, now)
         x["script_pos"] = pos + 1
         return True
 
-    def _apply(self, st, key: str, val) -> None:
+    def _send_responses(self, st) -> None:
+        """EXECUTION 15.1: when every requested action is answered,
+        wait_for: action sets runtime active and sends each response, which
+        the harness acknowledges."""
         x = st["x"]
-        now = self.now()
-        handler = getattr(self, f"_step_{key}")
-        if key not in CONTROL_STEPS:
-            self._observed(st)
-        handler(st, x, val, now)
+        sent = x.setdefault("responses_sent", [])
+        answered = [a for a in x["actions"] if a["state"] == "answered" and a["response_effect"] not in sent]
+        if not answered:
+            return
+        if x["runtime"] != "active":
+            x.pop("runtime_detail", None)
+            x["runtime"] = "active"
+            self._xevent(st, "execution.runtime.changed", {"runtime": "active"})
+        for action in answered:
+            sent.append(action["response_effect"])
+            eid = action["response_effect"]
+            if self._attempt(st, eid) == "completed":
+                evidence = {"class": "provider_ack_id", "source": SOURCE}
+
+                def fn(record, evidence=evidence):
+                    self._observe(record, "succeeded", evidence)
+                    self._close_obligations(record, "satisfied")
+                    return True
+            else:
+                evidence = {"class": "transport_error", "source": SOURCE}
+
+                def fn(record, evidence=evidence):
+                    return self._observe(record, "unknown", evidence)
+            self._effect_update(eid, fn)
 
     def _step_transport_errors(self, st, x, val, now):
         x["transport_errors"] = val
@@ -1296,9 +1369,6 @@ class Executor:
         x["stalled"] = True  # the harness never reports again
 
     def _step_deliver(self, st, x, proof_class, now):
-        if x["delivery"] in TERMINAL:
-            log("deliver step after a terminal determination ignored for", st["id"])
-            return
         evidence = {"class": proof_class, "source": SOURCE}
         establishes = proof_class == "provider_ack_id" or (proof_class == "echo" and self.echo_proves)
         if establishes:
@@ -1417,7 +1487,7 @@ class Executor:
         if entry is None:
             log("steer_behavior without a recorded steer ignored for", st["id"])
             return
-        evidence = {"class": "observed_behavior", "source": SOURCE}
+        evidence = {"class": "harness_observation", "source": SOURCE}
         entry["behavior"] = "observed"
         entry["behavior_evidence"] = evidence
         self._xevent(st, "execution.steer.behavior.observed", {"steer_id": entry["steer_id"], "evidence": evidence})
@@ -1480,14 +1550,25 @@ class Executor:
         x["counters"]["probes"] = n
         eid = f"{st['id']}.probe-{n}"
         self._effect_new(st, eid, "execution.status_probe", sha256_of(b""), "read", x["operation_ref"],
-                         "executor status probe")
+                         "executor status probe", obligation=("result", "status_result", None))
         completed = False
         for _ in range(MAX_ATTEMPTS):  # read class: retried under the executor's policy
             if self._attempt(st, eid) == "completed":
                 completed = True
                 break
-        evidence = {"class": "status_probe", "source": SOURCE}
-        self._effect_update(eid, lambda record: self._observe(record, "succeeded" if completed else "unknown", evidence))
+        if completed:
+            evidence = {"class": "harness_status", "source": SOURCE}
+
+            def fn(record):
+                self._observe(record, "succeeded", evidence)
+                self._close_obligations(record, "satisfied")
+                return True
+        else:
+            evidence = {"class": "transport_error", "source": SOURCE}
+
+            def fn(record):
+                return self._observe(record, "unknown", evidence)
+        self._effect_update(eid, fn)
 
     def _step_output(self, st, x, val, now):
         if "text" in val:

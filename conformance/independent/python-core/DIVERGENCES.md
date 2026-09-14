@@ -1133,3 +1133,57 @@ Not established:
 - the sensitivity of the M3 fixtures to deliberate deviations (`tests/fixture_sensitivity.py` was not extended in this pass);
 - crash consistency beyond scripted crashes and SIGKILL restarts;
 - anything on the Unix-socket binding.
+
+### G.5 Realignment after resolution
+
+> Added in a fifth spec-only pass, on the same branch rebased onto the resolution commit `ad91182` ([M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md)). The read and write rules were unchanged. The resolution record and the diff of `docs/spec`, `schemas`, MATRIX and M3 between `d81e49b` and `ad91182` were read first and the change list below was written from them. The five fixtures at new versions were read only after the change list was implemented and the first run recorded.
+
+The rebase replayed this branch's three commits without conflicts, and the runner was rebuilt.
+
+**Change list, each with the resolution it follows.**
+
+| # | Change | Resolution followed | Replaces |
+|---|---|---|---|
+| 1 | Obligation IDs `<effect>.evidence` (prompt, steering, action response), `<effect>.outcome` (cancel forwarding), `<effect>.result` (status probe); lease ID `<execution>.workspace`. Action responses and status probes now carry an obligation. | EXECUTION §15.1 "Identifiers" (G-OBLIGATION-ID, G-LEASE-ID) | `<effect>.obligation`, `<execution>.lease-1`, no obligation on responses and probes |
+| 2 | Evidence classes from the §15.1 table: `recorded_before_dispatch`, `dispatch_intent`, the proof class, `transport_error`, `recovery` on the delivery record with `dispatch_uncertain` or `never_dispatched` on the effect, `delivery_timeout` or `delivery_timeout_before_dispatch`, `reconciliation`, `harness_response`, `harness_status`, `harness_observation`. The harness source is `scripted harness`. | §15.1 "Evidence classes" (G-EVIDENCE-NAMES) | own class names |
+| 3 | Writing the dispatch marker appends a `pending` `dispatch_intent` observation to the prompt effect | §15.1 (G-DISPATCH-INTENT) | marker as executor state only |
+| 4 | Dispatch happens only at `deliver`, `crash: after_write` and an unfenced `stale_dispatch`. Other steps and the end of a script no longer dispatch. Once delivery is not `pending`, `deliver` and `crash` steps have no effect. `stall` never dispatches. | §15.1 "Script steps" (G-DELIVER-STEP, G-STALL) | lazy dispatch at the first harness step (G-DISPATCH-POINT) |
+| 5 | `wait_for: action` waits until every requested action is answered, then sets runtime `active` and sends each response once; the harness acknowledges it (`provider_ack_id`, effect `succeeded`, obligation satisfied) | §15.1 (G-RESPONSE-STATUS) | response attempt right after the command; effect left `pending` |
+| 6 | `steering` and `actions` appear in inspect only once they have an entry | §15.1 "Inspect members" (G-ACTIONS-ABSENT) | present, possibly empty, in sessions with the feature |
+| 7 | At a delivery timeout: `execution.timeout.passed`, then `core.effect.obligation.overdue` for each open obligation, then `execution.delivery.observed` | §15.1 "Event order" (G-OVERDUE-ORDER) | overdue after the determination |
+| 8 | Every recovery decision advances the host generation; events are `execution.recovery.decided` (naming the new host), the delivery observation if any, then `execution.host.changed` | EXECUTION §7.1 item 3, §9, §15.1 (G-RECOVERY-HOST-EVENT) | only a resumed dispatch advanced it, with `execution.host.changed` first |
+| 9 | A refused execution keeps runtime `preparing` | §3.1 (G-REFUSED-AXES) | runtime `unknown` |
+| 10 | `execution_deadline` passes only while runtime is not `exited` | §8 (G-TIMEOUT-SCOPE) | passed regardless of runtime |
+| 11 | `effect_history_unavailable` is a registered code with retry `after_reconcile`. Records are still never discarded, so it is never sent. | CORE §12 (G-EFFECT-HISTORY-CODE) | not registered |
+
+Already as resolved, so unchanged:
+- an absent controller epoch is `stale_authority_epoch` (CORE §8, G-EPOCH-ABSENT);
+- `proof_class` only for proof-class evidence (§9, G-EVENT-PROOF-CLASS);
+- correlation through inspect only (EXE-20, G-CORRELATION-EVENTS);
+- the clock file (CORE §16.5, G-IDLE-EXPIRY-FIXED-CLOCK);
+- `exit` sets runtime `exited` (§15.1, G-EXIT-RUNTIME);
+- three attempts for retryable classes, one for `non_repeatable` (§15.1, G-MAX-ATTEMPTS);
+- the remaining §8 timeout scopes;
+- the notification split (G-NOTIFY-BATCH), which fixture version 2 no longer observes.
+
+**Runs.** 211 fixtures each.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| First run after changes 1–11 | 195 | 0 | 0 | 0 | 4 | 12 |
+| After restoring G5-CAPACITY (below), and two repeats | 195 | 0 | 0 | 0 | 4 | 12 |
+
+The four `unsupported` fixtures are the backpressure fixtures; one is listed under `coverage_limits` for the undeclared signal `backpressure.limit.reached`. The twelve `skipped` fixtures are `socket.*`. The probes and the vector check pass as in G.4.
+
+After the first run, the five fixtures at new versions were read. They agree with the change list, including the reading in G5-RECOVERY-GENERATION: `execution.crash-during-dispatch-is-reconciled-without-resending` version 2 expects `execution.host.changed` with generation 2 after an ambiguous recovery.
+
+**Remaining disagreements and underspecified points.** None of these fails a fixture.
+
+- **G5-CAPACITY (behavior kept).** §15.1 says "Capacity is released when runtime is `exited`". It does not say what an execution holds when it can never run: a delivery `failed_before_delivery` (a delivery timeout before dispatch, or recovery) or `not_delivered`, or an outcome `cancelled`. Read as the only release condition, such an execution would hold capacity forever and queued work would wait for its queue timeout. This implementation released capacity in those cases before the resolution and still does. The step was briefly narrowed to runtime `exited` only for the first run, then restored; the capacity fixture passes either way. Suggested: state whether these cases release capacity.
+- **G5-RECOVERY-GENERATION (underspecified).** §7.1 item 3, "Recovery advances the host generation", sits among the conditions for resuming dispatch, so it could be read as applying only to `dispatch_resumed`. The §15.1 event order ("the delivery observation if any, then `execution.host.changed`") and the crash-during-dispatch fixture imply every decision advances it, which is what this implementation now does. Suggested: say so in §7.1.
+- **G5-SECOND-DELIVER (underspecified).** §15.1 says `deliver` is one dispatch attempt, and a delivery is never dispatched twice, but only says `deliver` has no effect once delivery is *not* `pending`. A second `deliver` while delivery is still `pending` (after `transport_only`, say) is either a second attempt, which the rule forbids, or further evidence. Here it records the harness report as further evidence for the same dispatch, with no new marker or attempt. Unguarded.
+- **G5-TIMEOUT-OBLIGATIONS (underspecified).** At a delivery timeout the obligations become `overdue` before the determination. Whether a timeout-driven `failed_before_delivery` then satisfies them is not stated. Here they stay `overdue`, because the wait ending is not the expected observation, while an evidence-driven terminal determination satisfies them. Unguarded.
+- **G5-OBSERVATIONS (decision).** Every harness report, reconciliation finding and timeout determination appends an effect observation, even when the status is unchanged (for example `pending` with `transport_only`), as CORE §19.1 "appended as evidence" and the `dispatch_intent` row suggest. Fixtures that list observations exactly contain no repeated status apart from `dispatch_intent`.
+- **G5-CRASH-ATTEMPT (decision).** `crash: after_write` records the dispatch attempt as `completed`, since the write finished before the process died, and then exits. Unguarded.
+- **G5-STALE-HIGHER (underspecified).** A `stale_dispatch` whose generation is *above* the current one is not fenced, so under §15.1 it dispatches if the delivery is still `pending`. A generation the executor never issued arguably should not dispatch. Unguarded.
+- **G5-REFUSED-RUNTIME (followed, with a reservation).** §3.1 now keeps runtime `preparing` for a refused execution. That reads as work about to start. This implementation follows the text; an explicit "not started" value, or leaving runtime out for refusals, would be clearer.

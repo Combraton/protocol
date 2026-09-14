@@ -1187,3 +1187,17 @@ After the first run, the five fixtures at new versions were read. They agree wit
 - **G5-CRASH-ATTEMPT (decision).** `crash: after_write` records the dispatch attempt as `completed`, since the write finished before the process died, and then exits. Unguarded.
 - **G5-STALE-HIGHER (underspecified).** A `stale_dispatch` whose generation is *above* the current one is not fenced, so under §15.1 it dispatches if the delivery is still `pending`. A generation the executor never issued arguably should not dispatch. Unguarded.
 - **G5-REFUSED-RUNTIME (followed, with a reservation).** §3.1 now keeps runtime `preparing` for a refused execution. That reads as work about to start. This implementation follows the text; an explicit "not started" value, or leaving runtime out for refusals, would be clearer.
+
+### G.6 Final alignment
+
+> Base `c3e79d6`, which resolves G.5 (section G of [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md)). The rebase fast-forwarded. Read: the EXECUTION §7.1 and §15.1 changes, the resolution table, then the new fixture.
+
+**Change:** one. A `stale_dispatch` naming any generation other than the current one is now fenced (`execution.dispatch.fenced`, nothing sent), including a generation above the current one that was never issued. This follows §15.1, which resolves G5-STALE-HIGHER. Before the change the suite at this base gave 195 pass, 1 fail (`execution.dispatcher-from-an-unissued-generation-is-fenced`, step 5: two events where three were expected), 4 unsupported, 12 skipped.
+
+**The other G.5 points against the resolved text:**
+- G5-RECOVERY-GENERATION (§7.1), G5-SECOND-DELIVER and G5-TIMEOUT-OBLIGATIONS (§15.1) were already implemented as now stated.
+- G5-CAPACITY: §15.1 now releases capacity on `failed_before_delivery` and `not_delivered`, and allows release on `cancelled`, which this implementation does. Nothing is left in dispute.
+
+**Run** (212 fixtures, twice): **196 pass, 0 fail, 0 timeout, 0 harness_error, 4 unsupported, 12 skipped.**
+
+**Remaining disagreement:** only G5-REFUSED-RUNTIME, which the resolution leaves open for the owner. This implementation follows EXECUTION §3.1 (`preparing`).

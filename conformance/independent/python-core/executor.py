@@ -1313,7 +1313,9 @@ class Executor:
                 self._observed(st)
                 self._step_deliver(st, x, val, now)
         elif key == "stale_dispatch":
-            if val["generation"] < x["generation"]:
+            # EXECUTION 15.1: any generation other than the current one is
+            # fenced, including one never issued (G6).
+            if val["generation"] != x["generation"]:
                 self._step_stale_dispatch(st, x, val, now)
             elif pending and x.get("marker") is None:
                 self._write_marker(st)
@@ -1448,7 +1450,7 @@ class Executor:
         self._xevent(st, "execution.exit.observed", {"exit": dict(exit_value)})
 
     def _step_stale_dispatch(self, st, x, val, now):
-        if val["generation"] < x["generation"]:
+        if val["generation"] != x["generation"]:
             self._xevent(st, "execution.dispatch.fenced",
                          {"delivery_id": x.get("delivery_id", ""), "generation": val["generation"],
                           "current_generation": x["generation"]})

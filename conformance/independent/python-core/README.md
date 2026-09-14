@@ -10,7 +10,7 @@ It was written in five spec-only passes:
 2. the three M2 features (base `3b32037`);
 3. bringing those features level with the resolved documents (base `6c64ae4`);
 4. Core effects, `execution/1` and the test controls (M3, base `d81e49b`);
-5. realignment with the resolution of that pass's findings (base `ad91182`).
+5. realignment with the resolution of that pass's findings (base `ad91182`), and a final alignment (base `c3e79d6`).
 
 The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) and, in the fifth pass, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md). The third to fifth passes read the documents before the fixtures.
 
@@ -121,7 +121,13 @@ The Protocol session resolved those findings at `ad91182`: the conventions the f
 |---|---|---|---|---|---|---|
 | First run and two repeats | 195 | 0 | 0 | 0 | 4 | 12 |
 
-Every applicable fixture passes, and `run` exits 0. G.5 records the points still underspecified, and one behavior kept against a literal reading of the capacity convention (G5-CAPACITY). The two clock-file fixtures that were coverage limits before this pass, `core.events.subscription-ends-at-grant-expiry` and `core.grants.test-clock-never-moves-backward`, now run and pass. The four backpressure fixtures remain `unsupported`, and the 12 `socket.*` fixtures are skipped.
+Every applicable fixture passed, and `run` exited 0. G.5 recorded the points still underspecified. The Protocol session resolved them at `c3e79d6`. At that base a `stale_dispatch` from a generation never issued is fenced, the one change of the final alignment (DIVERGENCES G.6):
+
+| Run (final alignment, base `c3e79d6`) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Final run and one repeat | 196 | 0 | 0 | 0 | 4 | 12 |
+
+The only open point is G5-REFUSED-RUNTIME, left for the owner; this implementation follows EXECUTION §3.1. The two clock-file fixtures that were coverage limits before this pass, `core.events.subscription-ends-at-grant-expiry` and `core.grants.test-clock-never-moves-backward`, now run and pass. The four backpressure fixtures remain `unsupported`, and the 12 `socket.*` fixtures are skipped.
 
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 

@@ -1234,3 +1234,27 @@ Before the changes, the three failures were the C1 fixtures. `execution.admissio
 **Underspecified points.**
 - **G7-RECOVERY-OBLIGATIONS.** CORE §19.4 says an obligation is `overdue` when "a profile ends a wait because it timed out". §7.1 recovery also ends the delivery wait for reasons that are not timeouts: `cancelled`, `authorization_lost` and `recovery_policy`, each with an intact journal and no marker. Here those decisions satisfy the obligations, because provable non-dispatch is evidence of the effect's outcome (`never_dispatched`). A `deadline_passed` decision leaves them `overdue`. Neither text nor fixture states which applies, and no fixture observes it.
 - **G7-EXIT-ORDER.** §9's causal-order rule covers decisions and passed timeouts only. For an observed process exit, this implementation appends `execution.runtime.changed` (`exited`) before `execution.exit.observed`. Whether an observation that causes another axis change must precede it is not stated.
+
+### G.8 Exit causal order and recovery obligations
+
+> Base `25f9c0b`, which resolves G.7 (section H of [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md)). Read first: EXECUTION §7.1 "Obligations", the §9 `execution.exit.observed` row and "Causal order", and the CORE §16.5 "Declared bounds" change. Then the two fixtures at version 2.
+
+**Change.** One. A scripted exit now appends `execution.exit.observed` first, then the separate `execution.runtime.changed` (`exited`) it causes (§9: causal order covers observations). The README limit on backpressure now says this provider makes no backpressure guarantee, as CORE §16.5 now scopes the bound to providers that implement the feature. Recovery obligations already matched §7.1 (G.7).
+
+**Runs** (212 fixtures).
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| At `25f9c0b` before the change | 194 | 2 | 0 | 0 | 4 | 12 |
+| After the change, and one repeat | 195 | 1 | 0 | 0 | 4 | 12 |
+
+Before the change, the failures were `execution.evaluation-is-never-derived-from-exit` (step 5, event order) and the one below. The remaining failure is left failing, so `run` exits 1.
+
+**Remaining disagreement.**
+
+- **G8-INSPECT-OBLIGATIONS.** `execution.recovery-revalidates-before-dispatch` version 2, step 18, expects `execution.inspect`'s `obligations` to contain `e-cancel.delivery-1.evidence` with state `satisfied`.
+  - **What the text says.** EXECUTION §4 defines `execution.inspect` as returning "Current axes, receipts, **open** obligations and an events cursor", and `execution.reconcile` as returning "any **open** obligations". CORE §19.4 treats `open` and `overdue` together as the obligations still waiting (`abort_obligation` refuses any other).
+  - **This implementation.** Inspect lists `open` and `overdue` obligations only. A satisfied obligation is not open, so it is omitted; its state is observable through `core.effects.get` on `e-cancel.delivery-1`. The satisfaction the fixture wants to show does happen here, as §7.1 requires.
+  - **Suggested.** Either §4 should say inspect lists every obligation of the execution's effects, or the fixture should read the obligation through `core.effects.get`.
+
+The step 20 expectation of the same fixture (`deadline_passed` leaves the obligation `overdue` in inspect) passes, since `overdue` is listed.

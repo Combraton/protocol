@@ -10,7 +10,7 @@ It was written in five spec-only passes:
 2. the three M2 features (base `3b32037`);
 3. bringing those features level with the resolved documents (base `6c64ae4`);
 4. Core effects, `execution/1` and the test controls (M3, base `d81e49b`);
-5. realignment with the resolution of that pass's findings (base `ad91182`), a final alignment (base `c3e79d6`), and the acceptance corrections C1–C3 (base `2d8402a`).
+5. realignment with the resolution of that pass's findings (base `ad91182`), a final alignment (base `c3e79d6`), the acceptance corrections C1–C3 (base `2d8402a`), and exit causal order (base `25f9c0b`).
 
 The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) and, in the fifth pass, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md). The third to fifth passes read the documents before the fixtures.
 
@@ -134,7 +134,14 @@ The owner's acceptance corrections at `2d8402a` added runtime `not_started` for 
 | Before the changes | 193 | 3 | 0 | 0 | 4 | 12 |
 | After the changes, and one repeat | 196 | 0 | 0 | 0 | 4 | 12 |
 
-G.7 records the points still underspecified (G7-RECOVERY-OBLIGATIONS, G7-EXIT-ORDER). The two clock-file fixtures that were coverage limits before this pass, `core.events.subscription-ends-at-grant-expiry` and `core.grants.test-clock-never-moves-backward`, now run and pass. The four backpressure fixtures remain `unsupported`, and the 12 `socket.*` fixtures are skipped.
+The Protocol session resolved those points at `25f9c0b`. There an observed exit precedes the runtime change it causes, which is the one change of DIVERGENCES G.8:
+
+| Run (base `25f9c0b`) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Before the change | 194 | 2 | 0 | 0 | 4 | 12 |
+| After the change, and one repeat | 195 | 1 | 0 | 0 | 4 | 12 |
+
+The remaining failure, `execution.recovery-revalidates-before-dispatch` version 2, expects `execution.inspect` to list a satisfied obligation. EXECUTION §4 says inspect returns open obligations, so it is left failing (G8-INSPECT-OBLIGATIONS) and `run` exits 1. The two clock-file fixtures that were coverage limits before this pass, `core.events.subscription-ends-at-grant-expiry` and `core.grants.test-clock-never-moves-backward`, now run and pass. The four backpressure fixtures remain `unsupported`, and the 12 `socket.*` fixtures are skipped.
 
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 
@@ -143,7 +150,7 @@ Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows w
 - Stdio binding only; there is no Unix-socket form and no credential store. `core.authenticate` always answers `already_authenticated` (CORE §18.2). Requests on a connection are processed one at a time under one lock, which an idle re-check thread also takes every 100 ms; notifications are sent only after the response to the request being processed.
 - One principal per process, taken from the launch configuration. Cross-principal behavior (grants held by others, per-principal deduplication) is exercised across restarts over the same data directory, never concurrently.
 - Grants: provider-held records only (no bearer tokens). The tracked authority scopes are `core-test` and `execution.controller:<host id>`. Rights are defined for `core-test`, `core.events.read`, `core.effects.abort_obligation` and the Execution operations.
-- Events: one stream per data directory with a random ID. Retention, new epochs and unvouched events happen only through the launch configuration. Subscriptions live only as long as the session; they are re-authorized after every request and end with a final notification when their grant stops authorizing or an item cannot fit the caller's receive limit. An expiry alone is reported at the next request. `core.events.backpressure` is not implemented. Nor is the bound CORE §16.5 requires for sessions without it: the stdio writer blocks when the caller stops reading, with no room deadline and no closure (DIVERGENCES G.7).
+- Events: one stream per data directory with a random ID. Retention, new epochs and unvouched events happen only through the launch configuration. Subscriptions live only as long as the session; they are re-authorized after every request and end with a final notification when their grant stops authorizing or an item cannot fit the caller's receive limit. An expiry alone is reported at the next request. `core.events.backpressure` is not implemented. It therefore makes no backpressure guarantee (CORE §16.5): the stdio writer blocks when the caller stops reading, with no room deadline and no closure (DIVERGENCES G.7, G.8).
 - Capabilities: `core-test.writes` and the configured adapter predicates; only `core-test.subject.put` depends on a capability. Statuses change only between starts.
 - Effects: records are never discarded, so `effect_history_unavailable` never occurs. Effects exist only for Execution operations; every M1 and M2 command returns `effect_refs: []`.
 - Execution: one scripted host. The harness is the launch configuration's script, interpreted by the conformance executor conventions of EXECUTION §15.1; there is no real adapter, no inline brief and no barrier or signal. A scripted crash exits with status 1 between requests.

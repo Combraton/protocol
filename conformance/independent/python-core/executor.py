@@ -1452,12 +1452,14 @@ class Executor:
         # The scripted harness process exits: its observed runtime state is
         # exited, and the exit value is the process outcome. Evaluation stays
         # untouched (EXE-5). Changed after the first run (G-EXIT-RUNTIME).
+        # EXECUTION 9: the exit observation sets runtime exited and, by
+        # causal order, precedes the separate runtime change it causes (G.8).
+        x["exit"] = dict(exit_value)
+        self._xevent(st, "execution.exit.observed", {"exit": dict(exit_value)})
         if x["runtime"] != "exited":
             x.pop("runtime_detail", None)
             x["runtime"] = "exited"
             self._xevent(st, "execution.runtime.changed", {"runtime": "exited"})
-        x["exit"] = dict(exit_value)
-        self._xevent(st, "execution.exit.observed", {"exit": dict(exit_value)})
 
     def _step_stale_dispatch(self, st, x, val, now):
         if val["generation"] != x["generation"]:

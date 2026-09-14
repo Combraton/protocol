@@ -17,9 +17,12 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_millis(5000);
 pub enum Outcome {
     Pass,
     Fail,
-    NotApplicable,
     Timeout,
     HarnessError,
+    /// The fixture needs a profile or feature the participant does not claim.
+    Unsupported,
+    /// The fixture targets another transport binding than the participant's.
+    Skipped,
 }
 
 impl Outcome {
@@ -27,9 +30,10 @@ impl Outcome {
         match self {
             Outcome::Pass => "pass",
             Outcome::Fail => "fail",
-            Outcome::NotApplicable => "not_applicable",
             Outcome::Timeout => "timeout",
             Outcome::HarnessError => "harness_error",
+            Outcome::Unsupported => "unsupported",
+            Outcome::Skipped => "skipped",
         }
     }
 }
@@ -99,17 +103,17 @@ fn base64_url_nopad(bytes: &[u8]) -> String {
     out
 }
 
-/// Whether a fixture applies to a participant (profiles, features, binding).
-pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), String> {
+/// Whether a fixture applies to a participant (profiles, features, binding), and if not, why.
+pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), (Outcome, String)> {
     for profile in fixture["profiles"].as_array().into_iter().flatten() {
         let wanted = (
             profile["name"].as_str().unwrap_or_default().to_string(),
             profile["major"].as_i64().unwrap_or_default(),
         );
         if !descriptor.profiles.contains(&wanted) {
-            return Err(format!(
-                "participant does not claim {}/{}",
-                wanted.0, wanted.1
+            return Err((
+                Outcome::Unsupported,
+                format!("participant does not claim {}/{}", wanted.0, wanted.1),
             ));
         }
     }
@@ -126,21 +130,27 @@ pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), String
         .filter_map(Value::as_str)
     {
         if !claimed.contains(&feature) {
-            return Err(format!("participant does not claim feature {feature}"));
+            return Err((
+                Outcome::Unsupported,
+                format!("participant does not claim feature {feature}"),
+            ));
         }
     }
     if let Some(binding) = fixture["binding"].as_str()
         && binding != descriptor.binding
     {
-        return Err(format!("fixture requires the {binding} binding"));
+        return Err((
+            Outcome::Skipped,
+            format!("fixture requires the {binding} binding"),
+        ));
     }
     Ok(())
 }
 
 pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
-    if let Err(reason) = applicable(fixture, ctx.descriptor) {
+    if let Err((outcome, reason)) = applicable(fixture, ctx.descriptor) {
         return CaseResult {
-            outcome: Outcome::NotApplicable,
+            outcome,
             step: None,
             reason: Some(reason),
             transcript: vec![],

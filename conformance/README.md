@@ -1,17 +1,18 @@
 # Conformance suite
 
-> **Status: draft for Protocol 0.1, milestone M1 (Core command path, stdio binding).** Nothing here is a released conformance claim. Design: [decision 001](../docs/decisions/001-conformance-suite-architecture.md). Plan: [release plan](../docs/work/release-0.1/PLAN.md). Commands: [VERIFICATION](../docs/VERIFICATION.md).
+> **Status: draft for Protocol 0.1, milestones M1–M2 (Core command path, grants, events, capabilities; stdio and Unix-socket bindings).** Nothing here is a released conformance claim. Design: [decision 001](../docs/decisions/001-conformance-suite-architecture.md). Plan: [release plan](../docs/work/release-0.1/PLAN.md). Commands: [VERIFICATION](../docs/VERIFICATION.md).
 
 This directory holds the normative, language-neutral conformance material for Protocol:
 
 | Path | Contents |
 |---|---|
-| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 153 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2), `socket/` for the Unix-socket binding. |
+| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 155 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2), `socket/` for the Unix-socket binding. |
 | `vectors/` | Encoding and digest test vectors |
 | `schemas/` | Schema for fixture files |
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |
 | `runner/` | The black-box runner (Rust crate `combraton-conformance`) |
-| `reference/` | The reference provider and its 78 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product) |
+| `reference/` | The reference provider and its 147 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product). Its `tests/` hold implementation-specific checks, such as constructed cursors, that portable fixtures must not rely on. |
+| `scripts/peer_user_check.py` | Different-OS-user check for the Unix-socket binding, run as root through passwordless `sudo` (CI) |
 | `independent/python-core/` | Independent Core provider in Python written from the documents only, with its divergence log (M2) |
 | `crosscheck/` | Independent non-Rust checks of the encoding vectors (Python `rfc8785`, Node `canonicalize`) |
 
@@ -20,6 +21,21 @@ This directory holds the normative, language-neutral conformance material for Pr
 The runner reaches an implementation only through the published [stream binding](../docs/spec/bindings/STREAM.md). It validates every frame it receives against the schemas, as well as the fixture's expectations. For every error it checks the symbolic code, the JSON-RPC numeric code and the retry class.
 
 It launches the provider with a data directory and a launch configuration file. Restarts and deduplication retention changes happen through process lifecycle and that configuration. Domain state — subjects, commands, epochs — is created only through real protocol operations. There is no control endpoint.
+
+## Outcomes and result files
+
+`run` writes `manifest.json` (fixture digests, participant, environment, per-fixture outcome and reason) and `transcripts/<fixture>.jsonl`, plus `transcripts/<fixture>.stderr.log` when the participant wrote to standard error. `check-mutants` writes one manifest per mutant under `mutants/<name>/` and a `mutants.json` summary of every mutant-fixture outcome. Per-fixture outcomes are kept distinct:
+
+| Outcome | Meaning | Counts as passing |
+|---|---|---|
+| `pass` | Every step matched | yes |
+| `fail` | A step did not match, or the participant broke the binding | no |
+| `timeout` | An expected frame or exit did not arrive in time | no |
+| `harness_error` | The runner or fixture could not run the case | no |
+| `unsupported` | The participant does not claim a profile or feature the fixture needs | not run |
+| `skipped` | The fixture is written for another transport binding | not run |
+
+A mutant is killed only by `fail` or `timeout`. The CI workflow uploads `conformance/results/` from every job, whatever the outcome.
 
 ## Writing a fixture
 

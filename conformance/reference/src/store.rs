@@ -425,7 +425,7 @@ impl Store {
         static_revision: bool,
         event_flaws: (bool, bool),
     ) -> rusqlite::Result<i64> {
-        let digest = crate::json::sha256_digest(predicates.to_string().as_bytes());
+        let digest = capability_meaning_digest(predicates);
         let tx = self.connection.transaction()?;
         let stored: Option<String> = tx
             .query_row(
@@ -519,4 +519,125 @@ pub fn append_event(
         params![epoch, sequence, record.to_string()],
     )?;
     Ok((epoch, sequence))
+}
+
+/// Digest of what a capability revision tracks (CORE section 17.1): the name set and each
+/// predicate's status, enforcement and evidence source. `observed_at` is deliberately excluded.
+fn capability_meaning_digest(predicates: &serde_json::Value) -> String {
+    let mut meaning: Vec<serde_json::Value> = predicates
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|predicate| {
+            serde_json::json!([
+                predicate["name"],
+                predicate["status"],
+                predicate["enforcement"],
+                predicate["evidence"]["source"],
+            ])
+        })
+        .collect();
+    meaning.sort_by_key(|entry| entry[0].to_string());
+    crate::json::sha256_digest(serde_json::Value::Array(meaning).to_string().as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn writes(status: &str, source: &str, extra: Value) -> Value {
+        let mut predicate =
+            json!({"name": "core-test.writes", "status": status, "evidence": {"source": source}});
+        if let (Some(target), Some(fields)) = (predicate.as_object_mut(), extra.as_object()) {
+            for (key, value) in fields {
+                if key == "observed_at" {
+                    target["evidence"]["observed_at"] = value.clone();
+                } else {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        json!([predicate])
+    }
+
+    fn changed_events(store: &Store) -> i64 {
+        store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE record LIKE '%core.capabilities.changed%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// Provider-local evidence for CORE section 17.1. Evidence sources are provider-chosen, so a
+    /// universal fixture cannot force a source-only change; this test drives the store directly.
+    #[test]
+    fn capability_revision_tracks_meaning_not_observation_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(dir.path(), false).unwrap();
+        let apply = |store: &mut Store, predicates: Value| {
+            store
+                .apply_capabilities(
+                    "p",
+                    &predicates,
+                    "2030-01-01T00:00:00Z",
+                    false,
+                    (false, false),
+                )
+                .unwrap()
+        };
+        assert_eq!(apply(&mut store, writes("supported", "a", json!({}))), 1);
+        assert_eq!(
+            changed_events(&store),
+            0,
+            "the initial snapshot is not a change"
+        );
+        assert_eq!(apply(&mut store, writes("supported", "a", json!({}))), 1);
+        assert_eq!(
+            apply(
+                &mut store,
+                writes(
+                    "supported",
+                    "a",
+                    json!({"observed_at": "2030-01-02T00:00:00Z"})
+                )
+            ),
+            1,
+            "observed_at alone does not raise the revision"
+        );
+        assert_eq!(
+            apply(&mut store, writes("supported", "b", json!({}))),
+            2,
+            "evidence source change"
+        );
+        assert_eq!(
+            apply(
+                &mut store,
+                writes("supported", "b", json!({"enforcement": "cooperative"}))
+            ),
+            3,
+            "enforcement change"
+        );
+        assert_eq!(
+            apply(
+                &mut store,
+                writes("unknown", "b", json!({"enforcement": "cooperative"}))
+            ),
+            4
+        );
+        assert_eq!(changed_events(&store), 3);
+        drop(store);
+        let mut reopened = Store::open(dir.path(), false).unwrap();
+        assert_eq!(
+            apply(
+                &mut reopened,
+                writes("unknown", "b", json!({"enforcement": "cooperative"}))
+            ),
+            4,
+            "stable across restarts when nothing changed"
+        );
+    }
 }

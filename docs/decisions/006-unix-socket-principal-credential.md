@@ -39,7 +39,7 @@ A Unix domain socket can be reached by any process the socket's permissions allo
 
 - One provider process serves several concurrent authenticated sessions sharing state. Owner transactions must serialize command processing across sessions (Core §10), and subscriptions receive events committed by any session.
 - Conformance runs every applicable fixture over both stdio and Unix-socket participants. The runner authenticates socket sessions automatically unless a fixture tests authentication itself.
-- Rejecting a different peer user cannot be tested in unprivileged CI, because it needs a second operating-system account. That rule is exercised by code review and documented as untested in CI. The directory-permission refusal is tested.
+- Rejecting a different peer user needs a second operating-system account, which a portable fixture cannot assume. *Updated 2026-09-13 in the M2 close-out:* `conformance/scripts/peer_user_check.py` now tests the rule in CI on Linux and macOS. A client run as root through passwordless `sudo` is a different user that directory permissions do not stop, so the provider's own peer-credential check is what must close it. A same-user control and the mutant `skip-peer-check` show the check detects the rule. **Remaining limit:** root is the only other user exercised, and hosts without passwordless `sudo` report `unsupported`. The directory-permission refusal is tested by a fixture.
 
 ## Verification
 

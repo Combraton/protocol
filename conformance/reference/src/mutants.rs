@@ -5,6 +5,22 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "issue-binding-before-expiry",
+        "checks an issue's binding scope before its expiry",
+    ),
+    (
+        "issuing-rules-before-validity",
+        "applies the issuing rules before the audience, expiry and binding-scope checks",
+    ),
+    (
+        "idle-subscriptions-not-rechecked",
+        "re-checks subscription authorization only after requests on the subscriber's own connection",
+    ),
+    (
+        "skip-peer-check",
+        "accepts Unix-socket connections from other operating-system users",
+    ),
+    (
         "current-epoch-always-disclosed",
         "includes current_epoch in stale_authority_epoch for principals that may not read the authority subject",
     ),

@@ -281,7 +281,7 @@ fn serve_unix(socket: &std::path::Path, shared: std::sync::Arc<Shared>) -> Resul
     });
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        if peer_uid(stream.as_raw_fd()) != Some(own_uid) {
+        if peer_uid(stream.as_raw_fd()) != Some(own_uid) && !mutant_set.on("skip-peer-check") {
             continue; // Different user: close without a frame.
         }
         let shared = shared.clone();
@@ -389,7 +389,7 @@ fn serve<R: std::io::Read, W: Write>(
                     ) =>
             {
                 if cross_session {
-                    for notification in provider.drain_notifications() {
+                    for notification in provider.drain_notifications(true) {
                         if !send(&notification) {
                             return Ok(());
                         }
@@ -496,7 +496,7 @@ fn serve<R: std::io::Read, W: Write>(
         let method = object["method"].as_str().unwrap_or_default().to_string();
         let response = provider.handle(id, &method, object["params"].clone());
         if notify_first {
-            for notification in provider.drain_notifications() {
+            for notification in provider.drain_notifications(false) {
                 if !send(&notification) {
                     return Ok(());
                 }
@@ -505,7 +505,7 @@ fn serve<R: std::io::Read, W: Write>(
         if !send(&response) {
             return Ok(());
         }
-        for notification in provider.drain_notifications() {
+        for notification in provider.drain_notifications(false) {
             if !send(&notification) {
                 return Ok(());
             }

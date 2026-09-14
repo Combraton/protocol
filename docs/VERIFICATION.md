@@ -39,18 +39,23 @@ cargo test --workspace --locked
 ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
 ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
 ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
+python3 conformance/scripts/peer_user_check.py --require --out conformance/results/peer-user
+python3 conformance/scripts/peer_user_check.py --require --mutant skip-peer-check --expect accepted --out conformance/results/peer-user-mutant
 ```
+
+The two peer-user commands need passwordless `sudo`, as on GitHub-hosted runners. Without `--require` they exit 77 with outcome `unsupported` on hosts that lack it.
 
 What each command establishes:
 
 | Command | Exit 0 means | Does not mean |
 |---|---|---|
-| `cargo test` | The reference provider's hand-written parser and canonical encoder agree with `conformance/vectors/encoding.json`; runner pattern matching works | Any provider behavior over the wire |
+| `cargo test` | The reference provider's hand-written parser and canonical encoder agree with `conformance/vectors/encoding.json`; runner pattern matching works. Reference-only checks also pass: its capability revision follows CORE §17.1 when only an evidence source or `observed_at` changes, and it refuses constructed cursors past its head. | Portable conformance: these tests know the reference's private cursor format and store |
 | `self-test` | The runner's strict parser and RFC 8785 canonicalization agree with the vectors | That the vectors are correct; see the cross-checks below |
 | `check-fixtures` | Every fixture validates against `conformance/schemas/fixture.schema.json`, IDs are unique, requirement IDs exist in the matrix, and negative fixtures declare mutants | That fixtures are semantically right |
-| `run` | The named participant passed every applicable fixture over the stdio binding. A result manifest with fixture digests and per-case transcripts is written to `conformance/results/<participant>/` (not committed). | Conformance for any profile without fixtures; real-adapter behavior; the Unix-socket binding |
+| `run` | The named participant passed every applicable fixture over its binding (stdio or Unix socket); `unsupported` and `skipped` fixtures are reported separately and not run. A result manifest with fixture digests and per-case transcripts is written to `conformance/results/<participant>/` (not committed). | Conformance for any profile without fixtures; real-adapter behavior |
 | `run` on `independent-python-core.json` | The spec-only Python implementation passes every fixture applicable to the profiles, features and binding it claims (Core with grants, events and capabilities, over stdio) | That it or the reference is correct where fixtures are silent; see its divergence log |
 | `check-mutants` | Each of the reference provider's deliberately broken mutants fails every fixture that declares it, and every mutant is declared by at least one fixture | That no other wrong implementation can pass. Mutants share the reference author's assumptions. |
+| `peer_user_check.py` | A root client, a different OS user, is closed without a frame while a same-user client is answered; with mutant `skip-peer-check` the root client is answered, so the check detects the missing rule | Separation between principals of the same OS user; that is the credential's job (decision 006) |
 
 To test another stdio provider, write a participant descriptor like `conformance/participants/reference-provider.json` (launch argv with `{repo}`, `{data_dir}` and `{config_file}` placeholders, plus claimed profiles) and pass it to `run`. The provider must accept a data directory and the launch configuration file ([decision 001](decisions/001-conformance-suite-architecture.md)).
 

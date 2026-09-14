@@ -818,6 +818,21 @@ impl Provider {
         {
             return invalid("/payload/audience", "audience is not this provider");
         }
+        let binding_check = || {
+            if let Some(binding) = payload.get("authority_binding")
+                && binding["scope"] != AUTHORITY_ID
+                && !self.mutants.on("unknown-binding-scope-accepted")
+            {
+                return invalid(
+                    "/payload/authority_binding/scope",
+                    "not an authority scope of this provider",
+                );
+            }
+            Ok(())
+        };
+        if self.mutants.on("issue-binding-before-expiry") {
+            binding_check()?;
+        }
         if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
             let now = grants::now(self.identity.fixed_clock.as_deref());
             let too_early = if self.mutants.on("issue-at-now-accepted") {
@@ -829,22 +844,62 @@ impl Provider {
                 return invalid("/payload/expires_at", "grant would already be expired");
             }
         }
-        if let Some(binding) = payload.get("authority_binding")
-            && binding["scope"] != AUTHORITY_ID
-            && !self.mutants.on("unknown-binding-scope-accepted")
-        {
-            return invalid(
-                "/payload/authority_binding/scope",
-                "not an authority scope of this provider",
-            );
+        binding_check()
+    }
+
+    /// Issuing rules for `core.grant.issue` (CORE section 15.3).
+    fn authorize_issuing(&self, params: &Value) -> Result<(), Reject> {
+        let denied = |reason: &str| Err(reject("permission_denied", json!({"reason": reason})));
+        let payload = &params["payload"];
+        match payload.get("parent").and_then(Value::as_str) {
+            None if self.is_authority() => Ok(()),
+            None => denied("not_authority"),
+            Some(parent_id) => {
+                let parent = if self.mutants.on("stale-parent-delegates") {
+                    match self.store.grant(parent_id).map_err(storage)? {
+                        Some((_, grant)) if grant["holder"] == self.identity.principal.as_str() => {
+                            grant
+                        }
+                        _ => return denied("grant_not_found"),
+                    }
+                } else {
+                    self.usable_grant_checked(parent_id, !self.mutants.on("anyone-may-delegate"))?
+                };
+                let allowed = (parent["delegation"]["allowed"].as_bool().unwrap_or(false)
+                    || self.mutants.on("delegation-ignores-allowed-flag"))
+                    && parent["delegation"]["max_depth"].as_i64().unwrap_or(0) >= 1;
+                let mut child = payload.clone();
+                if self.mutants.on("child-may-outlive-parent") {
+                    child["expires_at"] = parent.get("expires_at").cloned().unwrap_or(Value::Null);
+                    if child["expires_at"].is_null() {
+                        child.as_object_mut().map(|m| m.remove("expires_at"));
+                    }
+                }
+                if self.mutants.on("child-drops-authority-binding")
+                    && let Some(binding) = parent.get("authority_binding")
+                {
+                    child["authority_binding"] = binding.clone();
+                }
+                if !self.mutants.on("allow-delegation-escalation")
+                    && !(allowed && grants::within_parent(&parent, &child))
+                {
+                    return denied("delegation_exceeded");
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     /// Step 6 (CORE section 15.5).
     fn authorize(&self, operation: &str, params: &Value) -> Result<(), Reject> {
-        if operation == "core.grant.issue" && !self.mutants.on("issue-validation-before-dedupe") {
+        let validate_now =
+            operation == "core.grant.issue" && !self.mutants.on("issue-validation-before-dedupe");
+        if validate_now && !self.mutants.on("issuing-rules-before-validity") {
             self.validate_issue(&params["payload"])?;
+        }
+        if validate_now && self.mutants.on("issuing-rules-before-validity") {
+            self.authorize_issuing(params)?;
+            return self.validate_issue(&params["payload"]);
         }
         if self.mutants.on("ignore-grants")
             || (self.mutants.on("authorization-needs-grants-feature") && !self.grants_negotiated())
@@ -853,52 +908,7 @@ impl Provider {
         }
         let denied = |reason: &str| Err(reject("permission_denied", json!({"reason": reason})));
         match operation {
-            "core.grant.issue" => {
-                let payload = &params["payload"];
-                match payload.get("parent").and_then(Value::as_str) {
-                    None if self.is_authority() => Ok(()),
-                    None => denied("not_authority"),
-                    Some(parent_id) => {
-                        let parent = if self.mutants.on("stale-parent-delegates") {
-                            match self.store.grant(parent_id).map_err(storage)? {
-                                Some((_, grant))
-                                    if grant["holder"] == self.identity.principal.as_str() =>
-                                {
-                                    grant
-                                }
-                                _ => return denied("grant_not_found"),
-                            }
-                        } else {
-                            self.usable_grant_checked(
-                                parent_id,
-                                !self.mutants.on("anyone-may-delegate"),
-                            )?
-                        };
-                        let allowed = (parent["delegation"]["allowed"].as_bool().unwrap_or(false)
-                            || self.mutants.on("delegation-ignores-allowed-flag"))
-                            && parent["delegation"]["max_depth"].as_i64().unwrap_or(0) >= 1;
-                        let mut child = payload.clone();
-                        if self.mutants.on("child-may-outlive-parent") {
-                            child["expires_at"] =
-                                parent.get("expires_at").cloned().unwrap_or(Value::Null);
-                            if child["expires_at"].is_null() {
-                                child.as_object_mut().map(|m| m.remove("expires_at"));
-                            }
-                        }
-                        if self.mutants.on("child-drops-authority-binding")
-                            && let Some(binding) = parent.get("authority_binding")
-                        {
-                            child["authority_binding"] = binding.clone();
-                        }
-                        if !self.mutants.on("allow-delegation-escalation")
-                            && !(allowed && grants::within_parent(&parent, &child))
-                        {
-                            return denied("delegation_exceeded");
-                        }
-                        Ok(())
-                    }
-                }
-            }
+            "core.grant.issue" => self.authorize_issuing(params),
             "core.grant.revoke" => {
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
                 let record = self.store.grant(id).map_err(storage)?;
@@ -1994,12 +2004,22 @@ impl Provider {
         }))
     }
 
-    /// Notification frames owed to this session's subscriptions (sent after each response).
-    pub fn drain_notifications(&mut self) -> Vec<Value> {
+    /// Notification frames owed to this session's subscriptions, sent after each response and,
+    /// on shared transports, whenever the connection is idle (`idle`).
+    ///
+    /// The re-authorization and the event read run under the processing lock, so no command
+    /// can commit between them: an item committed after a revocation is never delivered.
+    pub fn drain_notifications(&mut self, idle: bool) -> Vec<Value> {
+        let _guard = PROCESSING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut frames = Vec::new();
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
         subscriptions.retain(|subscription| {
             let Some(grant_id) = &subscription.grant_id else { return true };
+            if idle && self.mutants.on("idle-subscriptions-not-rechecked") {
+                return true;
+            }
             let still_authorized = if self.mutants.on("subscription-reauth-epoch-only") {
                 self.usable_grant_epoch_only(grant_id)
             } else {

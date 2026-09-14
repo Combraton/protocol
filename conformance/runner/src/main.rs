@@ -278,7 +278,10 @@ fn run_suite(
 }
 
 fn passing(outcome: Outcome) -> bool {
-    matches!(outcome, Outcome::Pass | Outcome::NotApplicable)
+    matches!(
+        outcome,
+        Outcome::Pass | Outcome::Unsupported | Outcome::Skipped
+    )
 }
 
 fn main() -> ExitCode {
@@ -334,9 +337,18 @@ fn real_main() -> Result<bool, String> {
                 .iter()
                 .filter(|(_, outcome)| !passing(*outcome))
                 .count();
+            let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+            for (_, outcome) in &results {
+                *counts.entry(outcome.as_str()).or_default() += 1;
+            }
+            let breakdown: Vec<String> = counts
+                .iter()
+                .map(|(status, count)| format!("{count} {status}"))
+                .collect();
             println!(
-                "run: {} fixtures, {failed} not passing; manifest {}",
+                "run: {} fixtures ({}), {failed} not passing; manifest {}",
                 results.len(),
+                breakdown.join(", "),
                 out.join("manifest.json").display()
             );
             Ok(failed == 0)
@@ -349,6 +361,7 @@ fn real_main() -> Result<bool, String> {
                 .iter()
                 .filter(|f| exec::applicable(&f.value, &descriptor).is_ok())
                 .collect();
+            let mut record = Vec::new();
             for mutant in &descriptor.mutants {
                 let targets: Vec<&Fixture> = fixtures
                     .iter()
@@ -361,6 +374,7 @@ fn real_main() -> Result<bool, String> {
                     .collect();
                 if targets.is_empty() {
                     println!("MUTANT NOT COVERED  {mutant}: no fixture declares it");
+                    record.push(json!({"mutant": mutant, "fixture": null, "outcome": null, "killed": false}));
                     ok = false;
                     continue;
                 }
@@ -375,6 +389,7 @@ fn real_main() -> Result<bool, String> {
                 )?;
                 for (fixture, outcome) in &results {
                     let killed = matches!(outcome, Outcome::Fail | Outcome::Timeout);
+                    record.push(json!({"mutant": mutant, "fixture": fixture, "outcome": outcome.as_str(), "killed": killed}));
                     println!(
                         "{:<10} {mutant:<28} {fixture} ({})",
                         if killed { "killed" } else { "SURVIVED" },
@@ -383,6 +398,19 @@ fn real_main() -> Result<bool, String> {
                     ok &= killed;
                 }
             }
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            std::fs::write(
+                out.join("mutants.json"),
+                serde_json::to_vec_pretty(&json!({
+                    "format": "combraton-conformance-mutants/1",
+                    "participant": descriptor.name,
+                    "protocol_commit": git_head(&options.repo),
+                    "all_killed": ok,
+                    "results": record,
+                }))
+                .unwrap(),
+            )
+            .map_err(|e| e.to_string())?;
             println!(
                 "check-mutants: {}",
                 if ok {

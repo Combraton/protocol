@@ -189,9 +189,9 @@ def run(index, name, edits):
     json.dump(d, open(participant, "w"))
     out = subprocess.run(["./target/debug/combraton-conformance", "run", "--participant", participant,
                           "--out", os.path.join(SCR, f"variant-{index}-results")], capture_output=True, text=True)
-    # Every per-fixture status other than pass and not_applicable (fail, timeout, ...) counts as failing.
+    # Every per-fixture status other than pass, skipped and unsupported (fail, timeout, ...) counts as failing.
     rows = [l.split() for l in out.stdout.splitlines()]
-    return [r[1] for r in rows if len(r) > 1 and "." in r[1] and r[0] not in ("pass", "not_applicable", "run:")]
+    return [r[1] for r in rows if len(r) > 1 and "." in r[1] and r[0] not in ("pass", "skipped", "unsupported", "not_applicable", "run:")]
 
 
 if check_only:

@@ -175,7 +175,9 @@
       "cursor-stops-at-last-item",
       "snapshot-grant-state-only",
       "subscription-reauth-epoch-only",
-      "gap-hides-epoch-change"
+      "gap-hides-epoch-change",
+      "issue-binding-before-expiry",
+      "issuing-rules-before-validity"
     ]
   }
 }

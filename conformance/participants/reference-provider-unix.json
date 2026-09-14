@@ -46,7 +46,8 @@
       "revoked-credential-accepted",
       "echo-credential",
       "unchecked-socket-directory",
-      "no-cross-session-delivery"
+      "no-cross-session-delivery",
+      "idle-subscriptions-not-rechecked"
     ]
   }
 }

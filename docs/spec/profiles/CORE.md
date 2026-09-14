@@ -390,7 +390,7 @@ A grant is a provider-owned subject of kind `core.grant`. Its record contains:
   - the child has the same `authority_binding` as the parent, if the parent has one.
 
   A violation is `permission_denied` with reason `delegation_exceeded`.
-- The step 6 validity checks on `issue` run in this order, before the issuing rules above: `audience`, `expires_at`, then `authority_binding` scope.
+- The step 6 validity checks on `issue` run in this order, before the issuing rules above: `audience`, `expires_at`, then `authority_binding` scope. Their `invalid_envelope` `details.path` values are `/payload/audience`, `/payload/expires_at` and `/payload/authority_binding/scope`.
 - `issue` and `revoke` carry exactly one precondition, on the grant subject itself: revision `0` for `issue` and at least `1` for `revoke`. Anything else is `invalid_envelope` at step 2.
 - An `authority_binding` whose `scope` is not an authority scope the provider tracks is `invalid_envelope`, checked with `audience` and `expires_at` at step 6. A binding to a later epoch of a known scope is accepted; the grant authorizes once that epoch is current.
 - Unknown right names and resource kinds are accepted. They never match an operation or subject.
@@ -522,6 +522,13 @@ Rules:
 - **Ordering.** A notification carrying events caused by a command on the same connection is sent after that command's response.
 - **Lifetime.** A subscription ends with its session or with `core.events.unsubscribe` (payload `{ "subscription" }`). If the grant it was created under stops authorizing (revoked, expired or epoch-stale), the provider sends one final `core.events.notify` with `"items": []` and `"ended": { "reason": "authorization_lost" }`, then delivers nothing more on it. If a single item cannot fit the caller's receive limit even alone, the subscription ends the same way with reason `item_too_large`; the item is never skipped. The final notification's `next_cursor` is where delivery stopped: after the last position the subscription covered, never past an item it would still have delivered.
 - **Authorization.** Subscribing needs the same authorization as reading (§16.6), checked when subscribing, after every request on the connection, and before each delivery. A lapse ends the subscription even when nothing is pending for it.
+- **Lapses caused elsewhere.** On a shared transport, a command on another connection can end a subscription's authorization, for example by revoking its grant or claiming a new authority epoch. The provider then sends the final notification without waiting for a request on the subscriber's connection. Two rules make this observable:
+  - **Ordering, normative.** No item committed after the command that ended authorization is delivered on that subscription. Authorization and the items to deliver are evaluated against the same committed state.
+  - **Latency, conformance bound.** Fixtures expect the final notification within 2 seconds of the ending command's response on the other connection.
+- **Expiry while idle.** Expiry needs no command. A grant stops authorizing at `expires_at` on the provider clock (§15.3), and no item committed at or after that instant is delivered under it.
+  - On a shared transport the provider re-checks idle subscriptions at the same latency as other lapses, so the final notification follows without a request.
+  - On stdio, only the session itself commits commands, so nothing can become deliverable while it is idle. There the provider may report the end after the next request.
+  - The conformance launch clock is fixed for a process's lifetime, so no portable fixture observes expiry during a session.
 - **Consumers.** Semantic events are never dropped silently. Consumers deduplicate by position and resume from the last cursor they durably processed. A reconnect may therefore replay items.
 
 ### 16.6 Authorization

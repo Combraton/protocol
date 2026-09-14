@@ -14,15 +14,21 @@
       {
         "name": "core-test",
         "major": 1
+      },
+      {
+        "name": "execution",
+        "major": 1
       }
     ],
     "features": [
       "core.grants",
       "core.events",
-      "core.capabilities"
+      "core.capabilities",
+      "core.effects"
     ],
     "test_controls": [
-      "clock.file"
+      "clock.file",
+      "executor.script"
     ]
   },
   "launch": {
@@ -183,7 +189,24 @@
       "issuing-rules-before-validity",
       "clock-file-ignored",
       "clock-follows-backward-time",
-      "clock-malformed-resets"
+      "clock-malformed-resets",
+      "execution-dependency-unchecked",
+      "admits-weaker-enforcement",
+      "unknown-predicate-supported",
+      "predecessor-dropped",
+      "effect-recorded-after-dispatch",
+      "cancel-reports-cancelled",
+      "restart-redispatches",
+      "ambiguity-overwritten",
+      "echo-always-acknowledged",
+      "bytes-written-acknowledged",
+      "old-attempt-finalizes",
+      "last-completion-wins",
+      "evaluation-from-exit",
+      "timeouts-collapsed",
+      "deadline-marks-effect-failed",
+      "reconcile-resubmits",
+      "unknown-effect-not-found"
     ]
   }
 }

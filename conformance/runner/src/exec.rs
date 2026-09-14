@@ -919,7 +919,8 @@ impl State<'_> {
             if socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_ok() {
                 process.kill();
                 return Err(Fail(
-                    "participant listened despite the unsafe socket directory".into(),
+                    "participant listened although the fixture expects it to refuse to start"
+                        .into(),
                 ));
             }
             if Instant::now() > deadline {

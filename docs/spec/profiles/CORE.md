@@ -265,7 +265,7 @@ A successful command returns:
 }
 ```
 
-An acknowledgment means the provider durably recorded the command and its immediate state change. It does not mean any external effect happened, succeeded, was verified or was accepted by anyone. Each profile defines what its outcome establishes.
+`effect_refs` lists the IDs of effects the command recorded (§19, M3 draft), such as an execution's prompt submission. It is empty for commands that record none, which includes every M1 and M2 operation. An acknowledgment means the provider durably recorded the command and its immediate state change. It does not mean any external effect happened, succeeded, was verified or was accepted by anyone. Each profile defines what its outcome establishes.
 
 A replay returns an `acknowledgment` and `outcome` byte-for-byte equal under canonical encoding to the original, with `replay: true`.
 
@@ -650,7 +650,7 @@ Its **status** is observed separately and appended as evidence: `pending`, `succ
 
 ### 19.2 Querying after response loss
 
-`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns the descriptor, every status observation and any open obligation.
+`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "status", "observations", "obligations" }`. `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target.
 
 - After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
 - A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.

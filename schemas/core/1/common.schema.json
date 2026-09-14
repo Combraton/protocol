@@ -207,7 +207,12 @@
         },
         "effect_refs": {
           "type": "array",
-          "maxItems": 0
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "description": "Effects recorded by this command (CORE section 19); empty for commands that record none."
         }
       },
       "unevaluatedProperties": false
@@ -658,6 +663,149 @@
       "type": "string",
       "pattern": "^ccred1\\.[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}\\.[A-Za-z0-9_-]{43}$",
       "maxLength": 200
+    },
+    "retry_class": {
+      "enum": [
+        "pure",
+        "read",
+        "idempotent_key",
+        "compensatable",
+        "non_repeatable"
+      ]
+    },
+    "effect_status": {
+      "enum": [
+        "pending",
+        "succeeded",
+        "failed",
+        "unknown"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "class",
+        "source"
+      ],
+      "properties": {
+        "class": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "effect_descriptor": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "target",
+        "payload_digest",
+        "authorization",
+        "retry_class",
+        "operation_ref"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "$ref": "#/$defs/dotted_name"
+        },
+        "target": {
+          "$ref": "#/$defs/subject"
+        },
+        "payload_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "authorization": {
+          "type": "object",
+          "required": [
+            "principal"
+          ],
+          "properties": {
+            "principal": {
+              "$ref": "#/$defs/principal"
+            },
+            "grant": {
+              "$ref": "#/$defs/identifier"
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        "retry_class": {
+          "$ref": "#/$defs/retry_class"
+        },
+        "operation_ref": {
+          "$ref": "#/$defs/identifier"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "effect_observation": {
+      "type": "object",
+      "required": [
+        "status",
+        "evidence",
+        "recorded_at"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/effect_status"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "recorded_at": {
+          "$ref": "#/$defs/instant"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "obligation": {
+      "type": "object",
+      "required": [
+        "id",
+        "expects",
+        "deadline",
+        "state"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "expects": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "deadline": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "open",
+            "satisfied",
+            "overdue",
+            "aborted"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
     }
   }
 }

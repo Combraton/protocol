@@ -153,7 +153,149 @@
         }
       },
       "description": "Implementation-specific barriers enabled for this launch (decision 007)."
+    },
+    "executor": {
+      "type": "object",
+      "description": "Scripted executor test adapter (decision 007, owner decision Q4): adapter capabilities and per-execution harness scripts. Normative only for the conformance tests that use it.",
+      "properties": {
+        "adapter": {
+          "type": "object",
+          "properties": {
+            "enforcement": {
+              "enum": [
+                "enforced",
+                "mediated",
+                "cooperative"
+              ]
+            },
+            "echo_proves_delivery": {
+              "type": "boolean"
+            },
+            "predicates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "status"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "supported",
+                      "unsupported",
+                      "unknown"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/script"
+          }
+        },
+        "default_script": {
+          "$ref": "#/$defs/script"
+        }
+      },
+      "additionalProperties": false
     }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "script": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "properties": {
+          "deliver": {
+            "enum": [
+              "provider_ack_id",
+              "echo",
+              "transport_only",
+              "bytes_written"
+            ]
+          },
+          "crash": {
+            "enum": [
+              "before_dispatch",
+              "after_write"
+            ]
+          },
+          "reconcile_finds": {
+            "enum": [
+              "delivered",
+              "not_delivered",
+              "unknown"
+            ]
+          },
+          "runtime": {
+            "enum": [
+              "preparing",
+              "active",
+              "requires_action",
+              "quiescent",
+              "exited",
+              "unknown"
+            ]
+          },
+          "host_restart": {
+            "const": true
+          },
+          "complete": {
+            "type": "object",
+            "required": [
+              "completion_id",
+              "content"
+            ],
+            "properties": {
+              "completion_id": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "generation": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "exit": {
+            "type": "object"
+          },
+          "on_cancel": {
+            "enum": [
+              "cancelled",
+              "refused",
+              "not_supported",
+              "unknown"
+            ]
+          },
+          "wait_until": {
+            "type": "string"
+          },
+          "wait_for": {
+            "const": "cancel"
+          },
+          "stall": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
 }

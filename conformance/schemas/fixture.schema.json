@@ -1130,7 +1130,8 @@
       "uniqueItems": true,
       "items": {
         "enum": [
-          "clock.file"
+          "clock.file",
+          "executor.script"
         ]
       },
       "description": "Portable test controls the participant must declare under claims.test_controls; otherwise the fixture is unsupported (a coverage limit)."

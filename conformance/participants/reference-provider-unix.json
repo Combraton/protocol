@@ -14,15 +14,21 @@
       {
         "name": "core-test",
         "major": 1
+      },
+      {
+        "name": "execution",
+        "major": 1
       }
     ],
     "features": [
       "core.grants",
       "core.events",
-      "core.capabilities"
+      "core.capabilities",
+      "core.effects"
     ],
     "test_controls": [
-      "clock.file"
+      "clock.file",
+      "executor.script"
     ],
     "test_barriers": [
       "subscription.recheck.after_authorization"

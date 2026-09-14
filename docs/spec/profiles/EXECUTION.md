@@ -11,6 +11,10 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 ## 1. Dependencies and negotiation
 
 - `execution/1` depends on `core/1` with features `core.events`, `core.capabilities` and `core.effects` (CORE §19, M3 draft). `core.grants` is optional; without it only authority principals operate.
+- **Feature dependencies are enforced at negotiation, not advertised.**
+  - The manifest's `depends_on` names only `core`, because Core's accepted manifest schema allows only profile names there.
+  - Selecting `execution/1` without one of those Core features is refused, or reported unselected for an optional request, as `dependency_not_selected` with the missing `feature` (CORE §4.2).
+  - *Open for the owner:* whether a later versioned manifest should advertise feature dependencies.
 - A provider advertises `execution/1` and the optional features it implements (§12). A caller lists the features it requires; an unsupported required feature is refused at negotiation (CORE §4).
 - Every execution operation follows the Core command path (CORE §10): deduplication before authorization, authorization before capabilities, authority epoch and preconditions, then one owner transaction that commits the state change, its events and its effect records.
 
@@ -20,7 +24,7 @@ Identities are distinct and never reused for one another (PIO-I §2, SPEC §3).
 
 | Identity | Scope and meaning | Must not be used as |
 |---|---|---|
-| `execution` subject `{ "kind": "execution", "id" }` | One admitted unit of work. The caller chooses the ID and creates it with precondition revision 0. | A retry counter |
+| `execution` subject `{ "kind": "execution.execution", "id" }` | One admitted unit of work. The caller chooses the ID and creates it with precondition revision 0. | A retry counter |
 | `predecessor` | The execution this one retries or continues. A retry is always a new execution (EXE-1). | Permission to reuse the predecessor's identity, receipts or effects |
 | `command_id` | Core command identity. Retransmission reads or completes the prior operation; it never runs work again. | A new attempt |
 | `invocation_id` | One executor-visible external invocation inside an execution. Opaque harness-internal calls are outside it and declared as a coverage limit. | Whichever result was selected |
@@ -52,7 +56,18 @@ Execution state is six independent axes. Each axis changes only through an execu
 | `transport_only` | The transport accepted the bytes; the harness said nothing |
 | `bytes_written` | Bytes were written to a terminal or stream. Never reported as `acknowledged` |
 
-An `ambiguous` delivery is an immutable observation about one episode. A later reconciliation appends `delivered` or `not_delivered` evidence for the same `delivery_id`; both observations are retained.
+An `ambiguous` delivery is an immutable observation about one episode. A later reconciliation appends `delivered`, `not_delivered` or `unknown` evidence for the same `delivery_id`. Both observations are retained: the delivery axis stays `ambiguous`, and the delivery record gains `reconciliation`.
+
+**Implementation clarifications (M3 step 3–4, candidates for owner review):**
+- **Which proof classes acknowledge.**
+  - `provider_ack_id` sets delivery to `acknowledged`.
+  - `echo` does so only if the adapter declares that an echo proves delivery.
+  - `transport_only` and `bytes_written` leave delivery `pending`, with the proof class recorded and the effect status `unknown`.
+- **Recovery after a restart.** A delivery that is still `pending` becomes:
+  - `failed_before_delivery` if dispatch had not durably begun, and is never dispatched afterwards (a later attempt is a new execution);
+  - `ambiguous` if dispatch had begun without an observation.
+  - Dispatch start is recorded durably before any harness write, which is what makes the distinction sound.
+- **Refused admission** records the execution with no delivery and no effect.
 
 `requires_action` is a runtime condition, not a progress level. `cancel_requested` is not `cancelled` (§7).
 
@@ -67,7 +82,7 @@ A minimal executor implements these. *Candidate* names.
 | `execution.cancel` | command | Records a cancellation request and returns a **request receipt** (`cancel_requested`). The outcome is observed later as `cancelled`, `refused`, `not_supported` or `unknown` (EXE-8). |
 | `execution.reconcile` | query | Given a `command_id` or `delivery_id`, returns the scoped observations the executor holds and any open obligations. It MUST NOT submit, resubmit or restart anything (EXE-10). |
 
-**Watching** uses Core subscriptions with `kinds: ["execution"]` (CORE §16). Execution events are ordinary Core events; Core cursors, gaps, epochs, filtering and idle-lapse rules apply unchanged (EXE-7).
+**Subject kind.** Executions use subject kind `execution.execution`, following Core's `<profile>.<kind>` grammar; the earlier draft's bare `execution` was invalid. **Watching** uses Core subscriptions with `kinds: ["execution.execution"]` (CORE §16). Executor observations appear no later than the provider's next request or idle re-check. Execution events are ordinary Core events; Core cursors, gaps, epochs, filtering and idle-lapse rules apply unchanged (EXE-7).
 
 **Detaching is not cancellation** (EXE-22). Closing a session, disconnecting or restarting a client leaves executions running. A reconnecting caller queries or reconciles; it does not replay a remembered submit as new work.
 
@@ -116,7 +131,7 @@ Timeouts are evaluated against the provider clock. Conformance controls that clo
 
 ## 9. Execution events
 
-Execution events use Core event records (CORE §16.2) with subject `{ "kind": "execution", "id" }`. *Candidate* types:
+Execution events use Core event records (CORE §16.2) with subject `{ "kind": "execution.execution", "id" }`. *Candidate* types:
 
 | Type | Payload |
 |---|---|
@@ -129,6 +144,8 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.completion.recorded` | `{ "completion_id", "digest", "invocation_id", "host", "status": "recorded" \| "duplicate" \| "conflict" \| "superseded_attempt" }` |
 | `execution.cancel.requested` / `execution.cancel.observed` | `{ "receipt" }` / `{ "outcome" }` |
 | `execution.timeout.passed` | `{ "timeout" }` |
+| `execution.host.changed` | `{ "host" }`, when the host generation changes |
+| `core.effect.obligation.overdue` | `{ "effect", "obligation" }`, on the execution subject whose effect it is |
 
 `origin` is `command` for events caused by a caller command, and `provider` for observations from the harness or host (CORE §16.2). Provider-origin events never carry a `command_id`.
 

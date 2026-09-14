@@ -19,6 +19,18 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "core-test.claim".to_string(),
             params["subject"].clone(),
         )]),
+        "execution.submit" => Some(vec![(
+            "execution.submit".to_string(),
+            params["subject"].clone(),
+        )]),
+        "execution.cancel" => Some(vec![(
+            "execution.cancel".to_string(),
+            params["subject"].clone(),
+        )]),
+        "execution.inspect" => Some(vec![(
+            "execution.read".to_string(),
+            serde_json::json!({"kind": crate::execution::KIND, "id": params["payload"]["execution"]}),
+        )]),
         "core-test.subject.get" | "core-test.subject.applied_count" => Some(vec![(
             "core-test.read".to_string(),
             params["payload"]["subject"].clone(),

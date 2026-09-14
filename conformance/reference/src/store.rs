@@ -45,6 +45,8 @@ impl Store {
              CREATE TABLE IF NOT EXISTS epoch_changes (
                to_epoch INTEGER PRIMARY KEY, from_epoch INTEGER NOT NULL, vouched_through INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS meta_text (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS effects (
+               id TEXT PRIMARY KEY, execution TEXT NOT NULL, record TEXT NOT NULL);
              INSERT OR IGNORE INTO meta VALUES ('stream_epoch', 1), ('discarded_epoch', 0), ('discarded_sequence', 0), ('capability_revision', 0);
              INSERT OR IGNORE INTO meta VALUES ('dedupe_oldest', 1), ('dedupe_current', 1), ('operation_seq', 0);",
         )?;
@@ -409,6 +411,19 @@ impl Store {
         let tx = self.connection.transaction()?;
         append_event(&tx, record, gap)?;
         tx.commit()
+    }
+
+    pub fn effect_execution(&self, effect: &str) -> rusqlite::Result<Option<String>> {
+        self.connection
+            .query_row("SELECT execution FROM effects WHERE id=?1", [effect], |r| {
+                r.get(0)
+            })
+            .optional()
+    }
+
+    /// An owner transaction for execution changes made outside a command (scripted executor ticks).
+    pub fn transaction(&mut self) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+        self.connection.transaction()
     }
 
     pub fn capability_revision(&self) -> rusqlite::Result<i64> {

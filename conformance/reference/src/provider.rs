@@ -93,6 +93,31 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.effects.get",
+        profile: "core",
+        command: false,
+    },
+    Operation {
+        name: "execution.submit",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.inspect",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
+        name: "execution.cancel",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.reconcile",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -119,20 +144,37 @@ struct SupportedProfile {
     majors: &'static [i64],
     features: &'static [&'static str],
     depends_on: &'static [&'static str],
+    /// Core features the profile needs selected. Stated by the profile document and enforced at
+    /// negotiation; not advertised in the manifest (EXECUTION section 1).
+    requires_core_features: &'static [&'static str],
 }
 
 const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "core",
         majors: &[1],
-        features: &["core.grants", "core.events", "core.capabilities"],
+        features: &[
+            "core.grants",
+            "core.events",
+            "core.capabilities",
+            "core.effects",
+        ],
         depends_on: &[],
+        requires_core_features: &[],
+    },
+    SupportedProfile {
+        name: "execution",
+        majors: &[1],
+        features: &[],
+        depends_on: &["core"],
+        requires_core_features: &["core.events", "core.capabilities", "core.effects"],
     },
     SupportedProfile {
         name: "core-test",
         majors: &[1],
         features: &[],
         depends_on: &["core"],
+        requires_core_features: &[],
     },
 ];
 const DECLARED_UNSUPPORTED: &[&str] = &["coordination", "remote-trust"];
@@ -201,6 +243,8 @@ pub struct Identity {
     pub provider_id: String,
     pub authorities: Vec<String>,
     pub clock: std::sync::Arc<crate::clock::Clock>,
+    /// Scripted executor configuration (test environment; decision 007).
+    pub executor: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -305,7 +349,18 @@ impl Provider {
             || crate::json::encode_frame(value).len() - 1 + overhead <= self.caller_frame_limit
     }
 
+    /// Advance the scripted executor against the provider clock (EXECUTION section 15).
+    fn tick(&mut self) {
+        let now = self.identity.clock.now();
+        let executor = self.identity.executor.clone();
+        if let Err(error) = crate::execution::tick(&mut self.store, &now, &executor, &self.mutants)
+        {
+            eprintln!("executor tick: {error}");
+        }
+    }
+
     fn process(&mut self, id: &Value, method: &str, params: Value) -> Result<Value, Reject> {
+        self.tick();
         let route = if self.mutants.on("route-by-operation") {
             params
                 .get("operation")
@@ -381,6 +436,8 @@ impl Provider {
                 Some("core.events")
             } else if operation.name == "core.capabilities" {
                 Some("core.capabilities")
+            } else if operation.name.starts_with("core.effects.") {
+                Some("core.effects")
             } else {
                 None
             };
@@ -586,17 +643,41 @@ impl Provider {
         let sequence_gap = self.mutants.on("event-sequence-gap");
         let no_issued_events = self.mutants.on("no-grant-issued-events");
         let revoke_target_only = self.mutants.on("revoke-event-target-only");
+        let executor = self.identity.executor.clone();
+        let grant_id = params
+            .get("grant")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let mutants = &self.mutants;
         let response = self
             .store
             .commit_with(&scope, &key, generation, &digest, |tx, sequence| {
-                let (revision, outcome, events) = apply_change(
-                    tx,
-                    operation_name,
-                    &subject,
-                    &payload,
-                    &principal,
-                    &revoke_ids,
-                )?;
+                let context = crate::execution::Context {
+                    now: recorded_at.clone(),
+                    executor: &executor,
+                    mutants,
+                    principal: &principal,
+                    grant: grant_id.as_deref(),
+                };
+                let (revision, outcome, events, effect_refs) = match operation_name {
+                    "execution.submit" => {
+                        crate::execution::submit(tx, &subject_id, &payload, sequence, &context)?
+                    }
+                    "execution.cancel" => {
+                        crate::execution::cancel(tx, &subject_id, sequence, &context)?
+                    }
+                    _ => {
+                        let (revision, outcome, events) = apply_change(
+                            tx,
+                            operation_name,
+                            &subject,
+                            &payload,
+                            &principal,
+                            &revoke_ids,
+                        )?;
+                        (revision, outcome, events, Vec::new())
+                    }
+                };
                 if record_events {
                     for (event_type, event_subject, event_revision, event_payload) in events {
                         if (event_type == "core.grant.issued" && no_issued_events)
@@ -628,7 +709,7 @@ impl Provider {
                         "operation_ref": format!("op-{sequence}"),
                         "subject": subject,
                         "revision": revision,
-                        "effect_refs": [],
+                        "effect_refs": effect_refs,
                     },
                     "outcome": outcome,
                 })
@@ -737,6 +818,47 @@ impl Provider {
                 json!({"capability": "core-test.writes", "status": status}),
             ))
         }
+    }
+
+    /// Rights whose subject is known only after a lookup: an effect's target, or the execution a
+    /// principal's own command created. Unresolvable targets use an ID no grant covers.
+    fn resolved_rights(
+        &self,
+        operation: &str,
+        params: &Value,
+    ) -> Result<Option<Vec<(String, Value)>>, Reject> {
+        let execution = match operation {
+            "core.effects.get" => {
+                self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
+            }
+            "execution.reconcile" => match params["payload"]["delivery_id"].as_str() {
+                Some(delivery) => self.effect_execution(delivery)?,
+                None => self
+                    .store
+                    .find_command(
+                        &self.identity.principal,
+                        params["payload"]["command_id"].as_str().unwrap_or_default(),
+                    )
+                    .map_err(storage)?
+                    .and_then(|stored| serde_json::from_str::<Value>(&stored.response).ok())
+                    .and_then(|response| {
+                        response["acknowledgment"]["subject"]["id"]
+                            .as_str()
+                            .map(String::from)
+                    }),
+            },
+            _ => return Ok(None),
+        };
+        // Not a valid identifier, so no grant resource can name it exactly.
+        let id = execution.unwrap_or_else(|| "-unresolved".to_string());
+        Ok(Some(vec![(
+            "execution.read".to_string(),
+            json!({"kind": crate::execution::KIND, "id": id}),
+        )]))
+    }
+
+    fn effect_execution(&self, effect: &str) -> Result<Option<String>, Reject> {
+        self.store.effect_execution(effect).map_err(storage)
     }
 
     fn grants_negotiated(&self) -> bool {
@@ -940,7 +1062,10 @@ impl Provider {
                 Ok(())
             }
             _ => {
-                let Some(mut needed) = grants::required_rights(operation, params) else {
+                let resolved = self.resolved_rights(operation, params)?;
+                let Some(mut needed) =
+                    resolved.or_else(|| grants::required_rights(operation, params))
+                else {
                     let grant_id = params.get("grant").and_then(Value::as_str);
                     if operation == "core.capabilities"
                         && self.mutants.on("capabilities-protected")
@@ -1401,6 +1526,46 @@ impl Provider {
                     None => Err(reject("not_found", json!({}))),
                 }
             }
+            "execution.inspect" => {
+                let id = params["payload"]["execution"].as_str().unwrap_or_default();
+                let cursor = self.cursor(self.head()?, false)?;
+                crate::execution::inspect(&mut self.store, id, cursor)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "execution.reconcile" => {
+                let payload = &params["payload"];
+                let execution = match payload["command_id"].as_str() {
+                    Some(command_id) => self
+                        .store
+                        .find_command(&self.identity.principal, command_id)
+                        .map_err(storage)?
+                        .and_then(|stored| serde_json::from_str::<Value>(&stored.response).ok())
+                        .and_then(|response| {
+                            let subject = &response["acknowledgment"]["subject"];
+                            (subject["kind"] == crate::execution::KIND)
+                                .then(|| subject["id"].as_str().map(String::from))
+                                .flatten()
+                        }),
+                    None => None,
+                };
+                if payload.get("command_id").is_some() && execution.is_none() {
+                    return Ok(json!({"executions": [], "deliveries": [], "obligations": []}));
+                }
+                crate::execution::reconcile(
+                    &mut self.store,
+                    execution,
+                    payload["delivery_id"].as_str(),
+                    &self.mutants,
+                )
+                .map_err(storage)
+            }
+            "core.effects.get" => {
+                let id = params["payload"]["effect"].as_str().unwrap_or_default();
+                crate::execution::effect(&mut self.store, id, &self.mutants)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
             "core-test.subject.applied_count" => {
                 let subject = &params["payload"]["subject"];
                 let found = self
@@ -1566,23 +1731,43 @@ impl Provider {
             }
             selected.insert(name, (major, chosen, required));
         }
-        // Dependencies.
+        // Dependencies: profiles, then Core features a profile document requires.
         let names: Vec<String> = selected.keys().cloned().collect();
         for name in names {
-            let depends = SUPPORTED
+            let Some(profile) = SUPPORTED.iter().find(|p| p.name == name) else {
+                continue;
+            };
+            let core_features: Vec<String> = selected
+                .get("core")
+                .map(|(_, features, _)| features.clone())
+                .unwrap_or_default();
+            let missing_profile = profile
+                .depends_on
                 .iter()
-                .find(|p| p.name == name)
-                .map_or(&[][..], |p| p.depends_on);
-            if depends
-                .iter()
-                .any(|dependency| !selected.contains_key(*dependency))
-            {
+                .any(|dependency| !selected.contains_key(*dependency));
+            let missing_features: Vec<&str> = if self.mutants.on("execution-dependency-unchecked") {
+                Vec::new()
+            } else {
+                profile
+                    .requires_core_features
+                    .iter()
+                    .copied()
+                    .filter(|feature| !core_features.iter().any(|f| f == feature))
+                    .collect()
+            };
+            if missing_profile || !missing_features.is_empty() {
                 let (_, _, required) = selected.remove(&name).unwrap();
-                let item = json!({"profile": name, "reason": "dependency_not_selected"});
+                let mut items = Vec::new();
+                if missing_profile {
+                    items.push(json!({"profile": name, "reason": "dependency_not_selected"}));
+                }
+                for feature in missing_features {
+                    items.push(json!({"profile": name, "feature": feature, "reason": "dependency_not_selected"}));
+                }
                 if required {
-                    unsatisfied.push(item)
+                    unsatisfied.extend(items)
                 } else {
-                    unselected.push(item)
+                    unselected.extend(items)
                 }
             }
         }
@@ -1765,6 +1950,13 @@ impl Provider {
                             || (record["issuer"] == self.identity.principal.as_str()
                                 && !self.mutants.on("grant-events-holder-only"))
                     })
+        } else if kind == crate::execution::KIND {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "execution.read")
         } else if kind == "core.capabilities" {
             (covers || self.mutants.on("capability-events-ignore-resources"))
                 && (test_read || !self.mutants.on("capability-events-need-test-read"))
@@ -1800,6 +1992,12 @@ impl Provider {
         for (kind, id, revision, value) in self.store.all_subjects().map_err(storage)? {
             let state = if kind == AUTHORITY_KIND {
                 json!({"epoch": revision})
+            } else if kind == crate::execution::KIND {
+                let record: Value = serde_json::from_str(&value).unwrap_or(Value::Null);
+                json!({
+                    "admission": record["admission"], "delivery": record["delivery"], "runtime": record["runtime"],
+                    "result": record["result"], "exit": record["exit"], "evaluation": record["evaluation"],
+                })
             } else {
                 json!({"value": value})
             };
@@ -2023,6 +2221,7 @@ impl Provider {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         });
+        self.tick();
         let mut frames = Vec::new();
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
         subscriptions.retain(|subscription| {

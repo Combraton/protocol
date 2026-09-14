@@ -2,7 +2,7 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-14 (M3 step 2, test controls, done).
+- **Updated:** 2026-09-14 (M3 steps 3–4 base slice done).
 - **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
   - Current milestone: [M3 task](release-0.1/M3.md), the Execution profile.
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
@@ -11,20 +11,16 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - PR #3 (M2) as `7bd5cb9`, after the owner accepted M2's scope and documented limitations on 2026-09-14. [PR #3 checks](https://github.com/Combraton/protocol/pull/3/checks) passed on its final head `e7937ef`.
 - **Branch:** `release-0.1/m3` from `7bd5cb9`, in draft [PR #4](https://github.com/Combraton/protocol/pull/4); not merged.
 - **Done in M3 so far:**
-  - **Step 1:** Execution contract draft, CORE §19 effects draft, refined matrix, task packet.
-  - **Owner decisions Q1–Q4**, and decision 007 accepted with refinements.
-  - **Step 2:**
-    - test controls outside the protocol: clock file, pipelined sends, `kill`, barriers and signals, coverage limits, kill expectations;
-    - idle-expiry fixtures;
-    - the deterministic regression of the M2 idle re-check race;
-    - clock robustness fixtures.
-- **Evidence (step 2, local macOS arm64):**
-  - fmt, clippy, build and test clean; check-fixtures 160;
-  - reference stdio: 150 pass, 10 skipped; reference Unix socket: 160 pass;
-  - `check-mutants` on both: every mutant killed as intended, per `mutants.json`;
-  - independent: 148 pass, 10 skipped, 2 unsupported (clock-file coverage limits);
-  - race regression: 20/20 passes on the correct provider and 20/20 intended failures on `recheck-outside-lock`;
-  - peer-user check `unsupported` locally (runs in CI).
+  - **Step 1:** Execution contract, Core effects draft, refined matrix, task packet.
+  - **Owner decisions:** Q1–Q4; decision 007 accepted with refinements.
+  - **Step 2:** test controls, idle-expiry fixtures, deterministic race regression, clock robustness.
+  - **Steps 3–4 (base slice):** Core effects and the execution base profile over the scripted executor, with 12 fixtures and 17 mutants.
+- **Evidence (steps 3–4, local macOS arm64):**
+  - fmt, clippy, build and test clean; check-fixtures 172;
+  - reference over stdio: 162 pass, 10 skipped; reference over the Unix socket: 172 pass;
+  - `check-mutants` on both: all as intended (`mutants.json`);
+  - independent: 148 pass, 10 skipped, 14 unsupported (execution profile and clock-file coverage limits);
+  - race regression 20/20 both ways.
 
   CI: [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
 - **Owner decisions recorded:**
@@ -32,8 +28,8 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - decision records 001–006 accepted (001 amended for distinct outcomes);
   - M2 accepted;
   - M3 acceptance must keep effects/reconciliation, telemetry gaps, backpressure, fault injection, a controllable test clock, idle-expiry coverage, a deterministic concurrency regression where feasible, test controls outside the protocol, a scripted executor, independent checks and uploaded CI evidence.
-- **Open owner decisions:** none pending. Substantive contract changes found during implementation go back to the owner.
+- **Open owner decisions:** five contract clarifications from steps 3–4, listed in the [M3 task](release-0.1/M3.md#status).
 - **Prompt disposition:** no active continuation prompt. The workspace M2 prompt is retired, and this file and the handoff are the entry points.
-- **Next action:** M3 steps 3–4, Core effects together with the execution base profile and the scripted executor.
+- **Next action:** owner review of the five clarifications, then M3 step 5 (optional features).
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

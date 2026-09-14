@@ -5,6 +5,74 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "execution-dependency-unchecked",
+        "selects execution/1 without the Core features it requires",
+    ),
+    (
+        "admits-weaker-enforcement",
+        "admits a restriction the adapter cannot enforce at the required level",
+    ),
+    (
+        "unknown-predicate-supported",
+        "admits a submit whose required adapter predicate is unknown or missing",
+    ),
+    (
+        "predecessor-dropped",
+        "does not record a retry's predecessor",
+    ),
+    (
+        "effect-recorded-after-dispatch",
+        "records the prompt submission effect at dispatch instead of in the submit transaction",
+    ),
+    (
+        "cancel-reports-cancelled",
+        "reports a cancellation as cancelled when it is only requested",
+    ),
+    (
+        "restart-redispatches",
+        "re-sends a prompt after a restart that happened before dispatch",
+    ),
+    (
+        "ambiguity-overwritten",
+        "skips the ambiguous delivery observation after a crash during dispatch",
+    ),
+    (
+        "echo-always-acknowledged",
+        "treats an echo as acknowledged delivery whatever the adapter says",
+    ),
+    (
+        "bytes-written-acknowledged",
+        "labels bytes written to a terminal as acknowledged delivery",
+    ),
+    (
+        "old-attempt-finalizes",
+        "lets a completion from a superseded host generation finalize the execution",
+    ),
+    (
+        "last-completion-wins",
+        "lets conflicting content under a recorded completion ID replace it",
+    ),
+    (
+        "evaluation-from-exit",
+        "derives an evaluation from exit status zero",
+    ),
+    (
+        "timeouts-collapsed",
+        "reports every timeout when any one of them passes",
+    ),
+    (
+        "deadline-marks-effect-failed",
+        "marks the delivery effect failed when the execution deadline passes",
+    ),
+    (
+        "reconcile-resubmits",
+        "creates a new delivery when asked to reconcile",
+    ),
+    (
+        "unknown-effect-not-found",
+        "answers not_found for a recorded effect whose outcome is unknown",
+    ),
+    (
         "clock-file-start-unchecked",
         "starts with an arbitrary instant when the clock file is malformed",
     ),

@@ -5,6 +5,7 @@
 
 mod barriers;
 mod clock;
+mod execution;
 mod frames;
 mod grants;
 mod json;
@@ -177,6 +178,7 @@ fn run(args: Args) -> Result<(), String> {
         .to_string();
     let clock = std::sync::Arc::new(clock::Clock::from_config(&config, &mutant_set)?);
     barriers::init(&config);
+    execution::recover(&mut store, &clock.now(), &mutant_set).map_err(|e| e.to_string())?;
     let writes = config["capabilities"]["core-test.writes"]
         .as_str()
         .unwrap_or("supported");
@@ -217,6 +219,7 @@ fn run(args: Args) -> Result<(), String> {
         identity: provider::Identity {
             provider_id,
             clock,
+            executor: std::sync::Arc::new(config["executor"].clone()),
             capabilities,
             authorities,
             principal,

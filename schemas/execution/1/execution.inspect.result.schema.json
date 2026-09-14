@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Combraton/protocol/schemas/execution/1/execution.inspect.result.schema.json",
+  "title": "execution.inspect result",
+  "type": "object",
+  "required": [
+    "execution",
+    "revision",
+    "admission",
+    "delivery",
+    "runtime",
+    "result",
+    "exit",
+    "evaluation",
+    "deliveries",
+    "completions",
+    "effects",
+    "host",
+    "next_cursor"
+  ],
+  "properties": {
+    "execution": {
+      "$ref": "common.schema.json#/$defs/execution_subject"
+    },
+    "revision": {
+      "$ref": "../../core/1/common.schema.json#/$defs/revision"
+    },
+    "admission": {
+      "$ref": "common.schema.json#/$defs/admission"
+    },
+    "delivery": {
+      "$ref": "common.schema.json#/$defs/delivery"
+    },
+    "runtime": {
+      "$ref": "common.schema.json#/$defs/runtime"
+    },
+    "result": {
+      "$ref": "common.schema.json#/$defs/result"
+    },
+    "exit": {
+      "$ref": "common.schema.json#/$defs/exit"
+    },
+    "evaluation": {
+      "$ref": "common.schema.json#/$defs/evaluation"
+    },
+    "predecessor": {
+      "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+    },
+    "correlation": {
+      "type": "object"
+    },
+    "finalized_by": {
+      "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+    },
+    "deliveries": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/delivery_record"
+      }
+    },
+    "completions": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/completion_record"
+      }
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+      }
+    },
+    "obligations": {
+      "type": "array",
+      "items": {
+        "$ref": "../../core/1/common.schema.json#/$defs/obligation"
+      }
+    },
+    "cancellation": {
+      "$ref": "common.schema.json#/$defs/cancellation"
+    },
+    "host": {
+      "type": "object",
+      "required": [
+        "id",
+        "generation"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "next_cursor": {
+      "$ref": "../../core/1/common.schema.json#/$defs/cursor"
+    }
+  },
+  "unevaluatedProperties": false
+}

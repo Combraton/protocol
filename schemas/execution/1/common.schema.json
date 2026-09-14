@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Combraton/protocol/schemas/execution/1/common.schema.json",
+  "title": "execution/1 common definitions",
+  "$defs": {
+    "execution_subject": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "execution.execution"
+        },
+        "id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "enforcement": {
+      "enum": [
+        "enforced",
+        "mediated",
+        "cooperative"
+      ]
+    },
+    "restriction": {
+      "type": "object",
+      "required": [
+        "scope",
+        "enforcement"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "enforcement": {
+          "$ref": "#/$defs/enforcement"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 31536000
+    },
+    "timeouts": {
+      "type": "object",
+      "properties": {
+        "queue": {
+          "$ref": "#/$defs/seconds"
+        },
+        "delivery": {
+          "$ref": "#/$defs/seconds"
+        },
+        "execution_deadline": {
+          "$ref": "#/$defs/seconds"
+        },
+        "inactivity": {
+          "$ref": "#/$defs/seconds"
+        },
+        "reconciliation": {
+          "$ref": "#/$defs/seconds"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "admission": {
+      "enum": [
+        "queued",
+        "admitted",
+        "refused"
+      ]
+    },
+    "delivery": {
+      "enum": [
+        "pending",
+        "acknowledged",
+        "failed_before_delivery",
+        "ambiguous"
+      ]
+    },
+    "proof_class": {
+      "enum": [
+        "provider_ack_id",
+        "echo",
+        "transport_only",
+        "bytes_written"
+      ]
+    },
+    "runtime": {
+      "enum": [
+        "preparing",
+        "active",
+        "requires_action",
+        "quiescent",
+        "exited",
+        "unknown"
+      ]
+    },
+    "result": {
+      "enum": [
+        "absent",
+        "partial",
+        "returned"
+      ]
+    },
+    "exit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "code"
+          ],
+          "properties": {
+            "code": {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "signal"
+          ],
+          "properties": {
+            "signal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        {
+          "enum": [
+            "forced_termination",
+            "unavailable"
+          ]
+        }
+      ]
+    },
+    "evaluation": {
+      "oneOf": [
+        {
+          "const": "not_requested"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reference"
+          ],
+          "properties": {
+            "reference": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "delivery_record": {
+      "type": "object",
+      "required": [
+        "delivery_id",
+        "delivery"
+      ],
+      "properties": {
+        "delivery_id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "delivery": {
+          "$ref": "#/$defs/delivery"
+        },
+        "proof_class": {
+          "$ref": "#/$defs/proof_class"
+        },
+        "reconciliation": {
+          "enum": [
+            "delivered",
+            "not_delivered",
+            "unknown"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "completion_record": {
+      "type": "object",
+      "required": [
+        "completion_id",
+        "digest",
+        "generation",
+        "status"
+      ],
+      "properties": {
+        "completion_id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "digest": {
+          "$ref": "../../core/1/common.schema.json#/$defs/digest"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "enum": [
+            "recorded",
+            "duplicate",
+            "conflict",
+            "superseded_attempt"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "cancellation": {
+      "type": "object",
+      "required": [
+        "receipt"
+      ],
+      "properties": {
+        "receipt": {
+          "$ref": "#/$defs/cancel_receipt"
+        },
+        "outcome": {
+          "enum": [
+            "cancelled",
+            "refused",
+            "not_supported",
+            "unknown"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "cancel_receipt": {
+      "type": "object",
+      "required": [
+        "state",
+        "operation_ref"
+      ],
+      "properties": {
+        "state": {
+          "const": "cancel_requested"
+        },
+        "operation_ref": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

@@ -38,7 +38,8 @@
     ],
     "test_controls": [
       "clock.file",
-      "executor.script"
+      "executor.script",
+      "store.faults"
     ],
     "test_barriers": [
       "subscription.recheck.after_authorization",

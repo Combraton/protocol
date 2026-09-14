@@ -240,6 +240,7 @@ fn run(args: Args) -> Result<(), String> {
             provider_id,
             clock,
             executor: std::sync::Arc::new(config["executor"].clone()),
+            faults: std::sync::Arc::new(std::sync::Mutex::new(config["faults"].clone())),
             capabilities,
             authorities,
             principal,

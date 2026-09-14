@@ -168,6 +168,18 @@ impl Store {
             .map_or(0, |(revision, _, _)| revision))
     }
 
+    /// Remove a command record (only for mutant `internal-error-state-without-binding`).
+    pub fn forget_command(&mut self, scope: &str, command_id: &str) -> rusqlite::Result<()> {
+        if let Some(map) = &mut self.volatile_commands {
+            map.remove(&(scope.to_string(), command_id.to_string()));
+        }
+        self.connection.execute(
+            "DELETE FROM commands WHERE scope=?1 AND command_id=?2",
+            params![scope, command_id],
+        )?;
+        Ok(())
+    }
+
     /// Record a rejected command identity (only for mutant `bind-on-rejection`).
     pub fn bind_rejection(
         &mut self,

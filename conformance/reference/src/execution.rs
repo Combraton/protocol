@@ -463,7 +463,9 @@ pub fn submit(
     {
         record["predecessor"] = predecessor.clone();
     }
-    if let Some(correlation) = payload.get("correlation") {
+    if let Some(correlation) = payload.get("correlation")
+        && !mutants.on("correlation-dropped")
+    {
         record["correlation"] = correlation.clone();
     }
     // Usage and liability (EXECUTION section 12).

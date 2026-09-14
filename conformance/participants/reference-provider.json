@@ -38,7 +38,8 @@
     ],
     "test_controls": [
       "clock.file",
-      "executor.script"
+      "executor.script",
+      "store.faults"
     ],
     "test_barriers": [
       "backpressure.limit.reached",
@@ -267,7 +268,10 @@
       "consumer-too-slow-to-older-consumers",
       "notice-waits-indefinitely",
       "unbounded-pending-output",
-      "semantic-events-dropped-under-pressure"
+      "semantic-events-dropped-under-pressure",
+      "unavailable-after-binding",
+      "internal-error-state-without-binding",
+      "correlation-dropped"
     ]
   }
 }

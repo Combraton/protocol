@@ -85,8 +85,8 @@ Several decisions are pinned "as the independent implementation chose". Its read
 
 **Still unguarded:**
 - Selecting the highest common major needs a second major version (M6 compatibility).
-- Pipelined requests need a runner step that accepts responses in any order (M3, where execution watch needs it).
-- `unavailable` and `internal_error` "nothing bound" semantics need fault injection (M3).
+- Pipelined requests need a runner step that accepts responses in any order (M3, where execution watch needs it). *M3 step 2 added `await: false` and `expect_response`.*
+- `unavailable` and `internal_error` "nothing bound" semantics need fault injection (M3). *M3 step 7 added launch-configuration store faults and two Execution fixtures.*
 - The limit + 1 buffering and inherited-descriptor rules are not observable over stdio; they stay documented requirements.
 
 ## E. M2 features — second independent pass

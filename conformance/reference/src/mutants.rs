@@ -5,6 +5,18 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "unavailable-after-binding",
+        "answers unavailable for a submit it had already committed and bound",
+    ),
+    (
+        "internal-error-state-without-binding",
+        "commits a command's state change without binding its command identity",
+    ),
+    (
+        "correlation-dropped",
+        "drops the caller's opaque correlation from the execution record",
+    ),
+    (
         "output-dropped-silently",
         "discards spooled output without declaring a lost range",
     ),

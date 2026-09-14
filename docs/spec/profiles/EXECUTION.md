@@ -343,6 +343,7 @@ Execution fixtures need harness behavior, faults and time that ordinary operatio
   - Virtual time never moves backward. A missing or malformed file at start refuses the launch; during a run, the provider keeps its last good instant.
   - Real-time watchdogs in the runner and in any barrier stay independent of it, so a frozen clock cannot hang a suite.
 - **Process faults.** The runner kills the provider at points the script or a barrier reaches, then restarts it over the same data directory.
+- **Store faults.** Launch configuration can make the next owner transactions of an operation fail and roll back (`commit_unavailable`, answered `unavailable` with nothing bound), or commit and then answer `internal_error` (`response_internal_error`, outcome unknown to the caller). Participants declare `store.faults`.
 - **Barriers, implementation-specific.**
   - A participant may declare named pause points. The runner waits for a point to be reached, synchronizes on explicit provider signals, and releases it. That gives a deterministic interleaving for concurrency regressions, with bounded failure handling instead of sleeps.
   - Fixtures that use barriers apply only to participants declaring those names. Others report `unsupported`, recorded as a coverage limit and never as a pass.

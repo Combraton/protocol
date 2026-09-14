@@ -361,6 +361,53 @@
         }
       },
       "additionalProperties": false
+    },
+    "faults": {
+      "type": "object",
+      "description": "Injected store faults (decision 007): commit_unavailable makes the next owner transactions for an operation fail and roll back; response_internal_error commits them and answers internal_error.",
+      "properties": {
+        "commit_unavailable": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "operation",
+              "times"
+            ],
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "times": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "response_internal_error": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "operation",
+              "times"
+            ],
+            "properties": {
+              "operation": {
+                "type": "string"
+              },
+              "times": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,

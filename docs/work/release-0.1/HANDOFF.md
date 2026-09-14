@@ -6,7 +6,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-14, M3 step 6 (output telemetry and backpressure) done.
+- **Checkpoint:** 2026-09-14, M3 step 7 (acceptance re-check) done.
 - **Status:** M0, M1 and M2 merged. M3 in progress on `release-0.1/m3` ([M3 task](M3.md)).
 
 ## Goal, decisions and constraints
@@ -74,6 +74,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
     - **reference:** `conformance/reference/src/outbox.rs`, output spool in `execution.rs`, six new mutants;
     - **runner:** `pause_reading`, `resume_reading`, `collect_until_close`;
     - **fixtures:** five new, on both bindings.
+  - **Step 7:** launch-configuration store faults (`faults`, control `store.faults`), two fault fixtures, EXE-20 mutant, acceptance evidence table in [M3](M3.md#acceptance-evidence-step-7-re-check).
 
 ## Evidence
 
@@ -82,17 +83,17 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **M3 steps 3–4 base slice:** issue #1 checkpoint and PR #4 checks.
 - **Owner decisions D1–D5:** issue #1 checkpoint and PR #4 checks.
 - **M3 step 5:** PR #4 checks on `d8aa553` passed on Ubuntu and macOS.
-- **M3 step 6, local on macOS arm64:**
+- **M3 step 6:** PR #4 checks on `ce40da9`.
+- **M3 step 7, local on macOS arm64:**
 
 | Check | Result |
 |---|---|
 | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo build --locked`, `cargo test --locked`, `self-test` | clean |
-| `check-fixtures` | 209 fixtures, 138 matrix IDs, ok |
-| `run` reference stdio | 197 pass, 12 skipped (Unix-socket fixtures) |
-| `run` reference Unix socket | 209 pass |
-| backpressure fixtures repeated | 3 runs on each binding, all pass |
-| `check-mutants`, both bindings | all killed as intended (see `mutants.json`) |
-| `run` independent Python | 151 pass, 12 skipped, 46 unsupported (Execution, backpressure signals and the clock file not claimed) |
+| `check-fixtures` | 211 fixtures, 138 matrix IDs, ok |
+| `run` reference stdio | 199 pass, 12 skipped (Unix-socket fixtures) |
+| `run` reference Unix socket | 211 pass |
+| `check-mutants` | 244 stdio and 22 socket results, all as intended |
+| `run` independent Python | 151 pass, 12 skipped, 48 unsupported |
 | `python3 scripts/check_docs.py` | 0 errors |
 
 - **CI:** [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
@@ -117,5 +118,5 @@ None.
 
 ## Next action
 
-1. M3 step 7: re-check the acceptance items; add fault injection for `unavailable` (nothing bound) and `internal_error` (outcome unknown) on execution commands, and a killing mutant for EXE-20.
-2. Steps 8–9 per the [M3 task](M3.md): the independent spec-only pass with a disposition of its clock-file coverage limits, close-out.
+1. M3 step 8: a spec-only helper extends the independent Python provider in worktree `.worktrees/independent-m3` (branch `release-0.1/m3-independent`), under the read rules in its README; its divergences are then resolved as in M2, and the two clock-file coverage limits are resolved or dispositioned.
+2. Step 9: close-out and owner review.

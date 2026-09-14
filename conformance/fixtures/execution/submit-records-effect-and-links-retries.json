@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.submit-records-effect-and-links-retries",
-  "version": 2,
+  "version": 3,
   "title": "Submit records the delivery effect in its own transaction, writes a dispatch marker before sending, keeps caller correlation, and links a retry to its predecessor",
   "requirements": [
     "EXE-1",
@@ -31,12 +31,17 @@
   ],
   "polarity": "negative",
   "kills": [
-    "predecessor-dropped"
+    "predecessor-dropped",
+    "correlation-dropped"
   ],
   "kill_expectations": {
     "predecessor-dropped": {
       "step": 6,
       "reason_contains": "result/predecessor: missing"
+    },
+    "correlation-dropped": {
+      "step": 3,
+      "reason_contains": "result/correlation"
     }
   },
   "steps": [

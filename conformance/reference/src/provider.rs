@@ -314,6 +314,8 @@ pub struct Identity {
     pub clock: std::sync::Arc<crate::clock::Clock>,
     /// Scripted executor configuration (test environment; decision 007).
     pub executor: std::sync::Arc<Value>,
+    /// Injected store faults remaining in this process (test environment; decision 007).
+    pub faults: std::sync::Arc<std::sync::Mutex<Value>>,
 }
 
 pub struct Provider {
@@ -747,6 +749,9 @@ impl Provider {
             .get("grant")
             .and_then(Value::as_str)
             .map(String::from);
+        let fault = self.take_fault(operation_name);
+        let fail_commit =
+            fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
         let mutants = &self.mutants;
         let response = self
             .store
@@ -825,6 +830,10 @@ impl Provider {
                         crate::store::append_event(tx, record, sequence_gap)?;
                     }
                 }
+                if fail_commit {
+                    // Injected: the owner transaction cannot commit, so it rolls back.
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
                 Ok(json!({
                     "acknowledgment": {
                         "command_id": command_id,
@@ -839,10 +848,39 @@ impl Provider {
                 .to_string())
             })
             .map_err(storage)?;
+        match fault {
+            Some("commit_unavailable") => return Err(reject("unavailable", json!({}))),
+            Some("response_internal_error") => {
+                if self.mutants.on("internal-error-state-without-binding") {
+                    self.store.forget_command(&scope, &key).map_err(storage)?;
+                }
+                return Err(reject("internal_error", json!({})));
+            }
+            _ => {}
+        }
         let mut result: Value =
             serde_json::from_str(&response).map_err(|_| reject("internal_error", json!({})))?;
         result["replay"] = json!(false);
         Ok(result)
+    }
+
+    /// Consume one injected fault for this operation, if launch configuration scheduled one.
+    fn take_fault(&self, operation: &str) -> Option<&'static str> {
+        let mut faults = self
+            .identity
+            .faults
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for kind in ["commit_unavailable", "response_internal_error"] {
+            for entry in faults[kind].as_array_mut().into_iter().flatten() {
+                let times = entry["times"].as_i64().unwrap_or(0);
+                if entry["operation"] == operation && times > 0 {
+                    entry["times"] = json!(times - 1);
+                    return Some(kind);
+                }
+            }
+        }
+        None
     }
 
     /// The target grant plus, unless mutated, every grant delegated from it.

@@ -1,8 +1,15 @@
 //! Reference executor for `execution/1` over a scripted fake harness (EXECUTION draft, decision 007).
 //!
 //! The script is test environment selected by launch configuration (`executor.scripts`). It is
-//! never a protocol message. Execution records live in the subjects table (kind `execution`) so
-//! Core preconditions and revisions apply unchanged; effects live in their own table.
+//! never a protocol message. Execution records live in the subjects table (kind
+//! `execution.execution`) so Core preconditions and revisions apply unchanged; effects live in their
+//! own table.
+//!
+//! Delivery model (owner decisions, 2026-09-14): the delivery axis is the current determination
+//! with its evidence; earlier determinations are kept in `history`. A write-ahead dispatch marker
+//! is recorded before any harness write. Recovery after a restart may resume an undispatched
+//! delivery under the same identity only with an intact journal and after revalidation, and it
+//! fences older dispatchers by advancing the host generation.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -13,13 +20,24 @@ use crate::store::{Store, append_event};
 pub const KIND: &str = "execution.execution";
 const CRASH_STATUS: i32 = 86;
 
-/// Everything a command or tick needs besides the store.
+/// Everything a command needs besides the store.
 pub struct Context<'a> {
     pub now: String,
     pub executor: &'a Value,
     pub mutants: &'a Mutants,
     pub principal: &'a str,
     pub grant: Option<&'a str>,
+}
+
+/// What recovery needs to revalidate a resumable delivery.
+pub struct Recovery<'a> {
+    pub now: String,
+    pub executor: &'a Value,
+    pub mutants: &'a Mutants,
+    pub authorities: &'a [String],
+    /// False when the provider cannot vouch for journal continuity (for example, a new stream
+    /// epoch at this start); a missing dispatch marker is then not proof that dispatch never began.
+    pub journal_intact: bool,
 }
 
 type Draft = (&'static str, Value, i64, Value);
@@ -101,6 +119,55 @@ fn add_seconds(instant: &str, seconds: i64) -> String {
     crate::clock::from_seconds(crate::clock::to_seconds(instant) + seconds)
 }
 
+/// Effect status implied by a delivery determination (CORE section 19).
+fn status_for(delivery: &str) -> &'static str {
+    match delivery {
+        "acknowledged" | "delivered" => "succeeded",
+        "not_delivered" | "failed_before_delivery" => "failed",
+        "ambiguous" => "unknown",
+        _ => "pending",
+    }
+}
+
+fn is_terminal(delivery: &str) -> bool {
+    matches!(
+        delivery,
+        "acknowledged" | "delivered" | "not_delivered" | "failed_before_delivery"
+    )
+}
+
+/// Replace the current delivery determination, keeping the previous one in history.
+fn determine(
+    record: &mut Value,
+    delivery: &str,
+    evidence: Value,
+    proof_class: Option<&str>,
+    now: &str,
+    keep_history: bool,
+) {
+    let current = record["deliveries"][0].clone();
+    let mut history = current["history"].as_array().cloned().unwrap_or_default();
+    if keep_history {
+        let mut previous =
+            json!({"delivery": current["delivery"], "recorded_at": current["determined_at"]});
+        if let Some(evidence) = current.get("evidence") {
+            previous["evidence"] = evidence.clone();
+        }
+        history.push(previous);
+    } else {
+        history.clear();
+    }
+    let slot = &mut record["deliveries"][0];
+    slot["delivery"] = json!(delivery);
+    slot["evidence"] = evidence;
+    slot["determined_at"] = json!(now);
+    slot["history"] = json!(history);
+    if let Some(proof) = proof_class {
+        slot["proof_class"] = json!(proof);
+    }
+    record["delivery"] = json!(delivery);
+}
+
 /// `execution.submit` inside the Core owner transaction (CORE section 10 step 8).
 pub fn submit(
     tx: &Transaction,
@@ -159,12 +226,14 @@ pub fn submit(
         "deliveries": [],
         "completions": [],
         "effects": [],
+        "recovery": [],
         "host": {"id": "scripted-host", "generation": 1},
         "submitted_at": ctx.now,
         "timeouts": payload["timeouts"].clone(),
         "timeouts_passed": [],
         "script": script,
         "script_position": 0,
+        "authorization": {"principal": ctx.principal, "grant": ctx.grant},
     });
     if let Some(predecessor) = payload.get("predecessor")
         && !ctx.mutants.on("predecessor-dropped")
@@ -203,7 +272,7 @@ pub fn submit(
             },
             "observations": [],
             "obligations": [{"id": format!("{delivery_id}.evidence"), "expects": "delivery evidence", "deadline": deadline, "state": "open"}],
-            "dispatch_started": false,
+            "dispatch": Value::Null,
         });
         if let Some(grant) = ctx.grant {
             effect["descriptor"]["authorization"]["grant"] = json!(grant);
@@ -215,12 +284,12 @@ pub fn submit(
             "execution.submit owner transaction",
             &ctx.now,
         );
-        if !ctx.mutants.on("effect-recorded-after-dispatch") {
-            save_effect(tx, &delivery_id, execution_id, &effect)?;
-        } else {
+        if ctx.mutants.on("effect-recorded-after-dispatch") {
             record["deferred_effect"] = effect;
+        } else {
+            save_effect(tx, &delivery_id, execution_id, &effect)?;
         }
-        record["deliveries"] = json!([{"delivery_id": delivery_id, "delivery": "pending"}]);
+        record["deliveries"] = json!([{"delivery_id": delivery_id, "delivery": "pending", "determined_at": ctx.now, "history": []}]);
         record["effects"] = json!([delivery_id]);
         outcome["delivery_id"] = json!(delivery_id);
         effect_refs.push(delivery_id);
@@ -278,16 +347,88 @@ fn execution_ids(tx: &Transaction) -> rusqlite::Result<Vec<String>> {
     rows.collect()
 }
 
-/// Crash recovery at process start: pending deliveries become `failed_before_delivery` when dispatch
-/// never began, and `ambiguous` when it began without an observation (EXECUTION section 3).
-pub fn recover(store: &mut Store, now: &str, mutants: &Mutants) -> rusqlite::Result<()> {
+/// Whether the submitting principal may still act: an authority, or an active, unexpired grant
+/// held by the submitter and bound to a current epoch.
+fn still_authorized(
+    tx: &Transaction,
+    record: &Value,
+    recovery: &Recovery,
+) -> rusqlite::Result<bool> {
+    if recovery.mutants.on("recovery-ignores-revocation") {
+        return Ok(true);
+    }
+    let principal = record["authorization"]["principal"]
+        .as_str()
+        .unwrap_or_default();
+    let Some(grant_id) = record["authorization"]["grant"].as_str() else {
+        return Ok(recovery.authorities.iter().any(|a| a == principal));
+    };
+    let grant: Option<String> = tx
+        .query_row("SELECT record FROM grants WHERE id=?1", [grant_id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    let Some(grant) = grant.and_then(|g| serde_json::from_str::<Value>(&g).ok()) else {
+        return Ok(false);
+    };
+    if grant["state"] != "active" || grant["holder"] != principal {
+        return Ok(false);
+    }
+    if let Some(expiry) = grant["expires_at"].as_str()
+        && recovery.now.as_str() >= expiry
+    {
+        return Ok(false);
+    }
+    if let Some(binding) = grant.get("authority_binding") {
+        let epoch: i64 = tx
+            .query_row(
+                "SELECT revision FROM subjects WHERE kind='core-test.authority' AND id=?1",
+                [binding["scope"].as_str().unwrap_or_default()],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if binding["epoch"].as_i64() != Some(epoch) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn deadline_passed(record: &Value, now: &str) -> bool {
+    let submitted = record["submitted_at"].as_str().unwrap_or_default();
+    ["delivery", "execution_deadline"].iter().any(|name| {
+        record["timeouts"][*name]
+            .as_i64()
+            .is_some_and(|seconds| now >= add_seconds(submitted, seconds).as_str())
+    })
+}
+
+fn bump_generation(record: &mut Value) {
+    let generation = record["host"]["generation"].as_i64().unwrap_or(1) + 1;
+    record["host"]["generation"] = json!(generation);
+}
+
+/// Crash recovery at process start (EXECUTION section 7.1). Every still-pending delivery gets a
+/// recorded decision:
+/// - a dispatch marker exists, or the journal is not intact: `ambiguous`, never re-sent;
+/// - otherwise revalidate cancellation, authorization and deadlines, then apply the executor's
+///   recovery policy: resume under the same identity, or terminate as `failed_before_delivery`.
+///
+/// A resumed or ambiguous delivery advances the host generation so older dispatchers are fenced.
+/// A delivery already declared `failed_before_delivery` is never reopened.
+pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
     let stream = store.stream_id()?;
     let tx = store.transaction()?;
+    let now = recovery.now.as_str();
+    let mutants = recovery.mutants;
     for id in execution_ids(&tx)? {
         let Some((mut revision, mut record)) = load(&tx, &id)? else {
             continue;
         };
-        if record["delivery"] != "pending" || record["admission"] != "admitted" {
+        let reopen = record["delivery"] == "failed_before_delivery"
+            && mutants.on("failed-before-delivery-reopened");
+        if record["admission"] != "admitted" || (record["delivery"] != "pending" && !reopen) {
             continue;
         }
         let Some(delivery_id) = record["deliveries"][0]["delivery_id"]
@@ -299,68 +440,86 @@ pub fn recover(store: &mut Store, now: &str, mutants: &Mutants) -> rusqlite::Res
         let Some(mut effect) = load_effect(&tx, &delivery_id)? else {
             continue;
         };
-        if effect["observations"]
-            .as_array()
-            .is_some_and(|o| o.len() > 1)
+        let marker = !effect["dispatch"].is_null();
+        let journal_intact =
+            recovery.journal_intact || mutants.on("recovery-trusts-damaged-journal");
+        let (decision, reason) = if marker && !mutants.on("ambiguous-dispatch-resent") {
+            if mutants.on("ambiguity-overwritten") {
+                continue;
+            }
+            ("ambiguous", "dispatch_may_have_begun")
+        } else if reopen {
+            ("dispatch_resumed", "provably_not_dispatched")
+        } else if !journal_intact {
+            ("ambiguous", "journal_not_intact")
+        } else if record.get("cancellation").is_some()
+            && !mutants.on("recovery-ignores-cancellation")
         {
-            continue;
-        }
-        let dispatched = effect["dispatch_started"].as_bool().unwrap_or(false);
-        let (delivery, status, class, source) = if dispatched {
-            (
-                "ambiguous",
-                "unknown",
-                "dispatch_uncertain",
-                "provider restarted after dispatch began",
-            )
-        } else if mutants.on("restart-redispatches") {
-            (
-                "acknowledged",
-                "succeeded",
-                "provider_ack_id",
-                "provider restarted and dispatched again",
-            )
+            ("failed_before_delivery", "cancelled")
+        } else if !still_authorized(&tx, &record, recovery)? {
+            ("failed_before_delivery", "authorization_lost")
+        } else if deadline_passed(&record, now) && !mutants.on("recovery-ignores-deadline") {
+            ("failed_before_delivery", "deadline_passed")
+        } else if recovery.executor["recovery_policy"] == "terminate" {
+            ("failed_before_delivery", "recovery_policy")
         } else {
-            (
-                "failed_before_delivery",
-                "failed",
-                "never_dispatched",
-                "provider restarted before dispatch began",
-            )
+            ("dispatch_resumed", "provably_not_dispatched")
         };
-        if dispatched && mutants.on("ambiguity-overwritten") {
-            continue;
+        let evidence =
+            json!({"class": "recovery", "source": format!("restart recovery: {reason}")});
+        revision += 1;
+        let mut drafts: Vec<Draft> = vec![(
+            "execution.recovery.decided",
+            subject(&id),
+            revision,
+            json!({"delivery_id": delivery_id, "decision": decision, "reason": reason}),
+        )];
+        match decision {
+            "ambiguous" => {
+                determine(&mut record, "ambiguous", evidence.clone(), None, now, true);
+                observe_effect(&mut effect, "unknown", "dispatch_uncertain", reason, now);
+                bump_generation(&mut record);
+                drafts.push((
+                    "execution.delivery.observed",
+                    subject(&id),
+                    revision,
+                    json!({"delivery_id": delivery_id, "delivery": "ambiguous", "evidence": evidence}),
+                ));
+            }
+            "failed_before_delivery" => {
+                determine(
+                    &mut record,
+                    "failed_before_delivery",
+                    evidence.clone(),
+                    None,
+                    now,
+                    true,
+                );
+                observe_effect(&mut effect, "failed", "never_dispatched", reason, now);
+                set_obligation(&mut effect, "satisfied");
+                drafts.push((
+                    "execution.delivery.observed",
+                    subject(&id),
+                    revision,
+                    json!({"delivery_id": delivery_id, "delivery": "failed_before_delivery", "evidence": evidence}),
+                ));
+            }
+            _ => {
+                if reopen {
+                    determine(&mut record, "pending", evidence.clone(), None, now, true);
+                }
+                bump_generation(&mut record);
+            }
         }
-        observe_effect(&mut effect, status, class, source, now);
-        if status != "unknown" {
-            set_obligation(&mut effect, "satisfied");
+        drafts[0].3["host"] = record["host"].clone();
+        if let Some(list) = record["recovery"].as_array_mut() {
+            list.push(json!({"delivery_id": delivery_id, "decision": decision, "reason": reason, "recorded_at": now}));
         }
         save_effect(&tx, &delivery_id, &id, &effect)?;
-        record["delivery"] = json!(delivery);
-        record["deliveries"][0]["delivery"] = json!(delivery);
-        if mutants.on("restart-redispatches")
-            && !dispatched
-            && let Some(d) = record["deliveries"].as_array_mut()
-        {
-            d.push(json!({"delivery_id": format!("{id}.delivery-2"), "delivery": "acknowledged", "proof_class": "provider_ack_id"}))
-        }
-        revision += 1;
         save(&tx, &id, revision, &record)?;
-        let mut payload = json!({"delivery_id": delivery_id, "delivery": delivery, "evidence": {"class": class, "source": source}});
-        if delivery == "acknowledged" {
-            payload["proof_class"] = json!("provider_ack_id");
+        for draft in drafts {
+            provider_event(&tx, &stream, now, draft)?;
         }
-        provider_event(
-            &tx,
-            &stream,
-            now,
-            (
-                "execution.delivery.observed",
-                subject(&id),
-                revision,
-                payload,
-            ),
-        )?;
     }
     tx.commit()
 }
@@ -400,6 +559,20 @@ pub fn tick(
     Ok(())
 }
 
+/// Record the write-ahead dispatch marker before any harness write.
+fn mark_dispatch(effect: &mut Value, generation: &Value, now: &str) {
+    if effect["dispatch"].is_null() {
+        effect["dispatch"] = json!({"generation": generation});
+        observe_effect(
+            effect,
+            "pending",
+            "dispatch_intent",
+            "write-ahead dispatch marker",
+            now,
+        );
+    }
+}
+
 /// Apply one script step. Returns whether the script advanced.
 #[allow(clippy::too_many_arguments)]
 fn step(
@@ -427,10 +600,11 @@ fn step(
     let revision = revision + 1;
     let mut drafts: Vec<Draft> = Vec::new();
     record["script_position"] = json!(position + 1);
+    let generation = record["host"]["generation"].clone();
+    let may_dispatch = record["delivery"] == "pending";
 
-    let never_dispatched = record["delivery"] == "failed_before_delivery";
-    if never_dispatched && (step.get("deliver").is_some() || step.get("crash").is_some()) {
-        // Recovery decided this delivery was never dispatched; a later attempt is a new execution.
+    if (step.get("deliver").is_some() || step.get("crash").is_some()) && !may_dispatch {
+        // A terminal or ambiguous delivery is never dispatched again under this identity.
     } else if let Some(instant) = step["wait_until"].as_str() {
         if now < instant {
             return Ok(false);
@@ -454,28 +628,67 @@ fn step(
         }
     } else if let Some(when) = step["crash"].as_str() {
         if record.get("deferred_effect").is_some() {
-            // Mutant effect-recorded-after-dispatch: the effect is only written at dispatch.
             if when == "after_write" {
                 let mut deferred = record["deferred_effect"].take();
-                deferred["dispatch_started"] = json!(true);
+                mark_dispatch(&mut deferred, &generation, now);
                 save_effect(tx, &delivery_id, id, &deferred)?;
             }
-            record.as_object_mut().map(|m| m.remove("deferred_effect"));
+            if let Some(map) = record.as_object_mut() {
+                map.remove("deferred_effect");
+            }
         } else if when == "after_write" && effect.is_object() {
-            effect["dispatch_started"] = json!(true);
+            mark_dispatch(&mut effect, &generation, now);
             save_effect(tx, &delivery_id, id, &effect)?;
         }
         save(tx, id, revision - 1, &record)?;
-        // The script position is committed with this transaction by the caller only on success,
-        // so commit explicitly before exiting.
         tx.execute_batch("COMMIT; BEGIN;")?;
         std::process::exit(CRASH_STATUS);
+    } else if let Some(stale) = step["stale_dispatch"]["generation"].as_i64() {
+        let current = generation.as_i64().unwrap_or(1);
+        if stale < current && !mutants.on("stale-dispatcher-sends") {
+            drafts.push((
+                "execution.dispatch.fenced",
+                subject(id),
+                revision,
+                json!({"delivery_id": delivery_id, "generation": stale, "current_generation": current}),
+            ));
+        } else if effect.is_object() && may_dispatch {
+            mark_dispatch(&mut effect, &json!(stale), now);
+            observe_effect(
+                &mut effect,
+                "succeeded",
+                "provider_ack_id",
+                "stale dispatcher",
+                now,
+            );
+            set_obligation(&mut effect, "satisfied");
+            save_effect(tx, &delivery_id, id, &effect)?;
+            let evidence = json!({"class": "provider_ack_id", "source": "stale dispatcher"});
+            determine(
+                &mut record,
+                "acknowledged",
+                evidence.clone(),
+                Some("provider_ack_id"),
+                now,
+                true,
+            );
+            drafts.push((
+                "execution.delivery.observed",
+                subject(id),
+                revision,
+                json!({"delivery_id": delivery_id, "delivery": "acknowledged", "proof_class": "provider_ack_id", "evidence": evidence}),
+            ));
+        }
     } else if let Some(proof) = step["deliver"].as_str() {
         if record.get("deferred_effect").is_some() {
             effect = record["deferred_effect"].take();
-            record.as_object_mut().map(|m| m.remove("deferred_effect"));
+            if let Some(map) = record.as_object_mut() {
+                map.remove("deferred_effect");
+            }
         }
-        effect["dispatch_started"] = json!(true);
+        if effect.is_object() {
+            mark_dispatch(&mut effect, &generation, now);
+        }
         let proves = match proof {
             "provider_ack_id" => true,
             "echo" => {
@@ -487,50 +700,61 @@ fn step(
             "bytes_written" => mutants.on("bytes-written-acknowledged"),
             _ => false,
         };
-        let delivery = if proves { "acknowledged" } else { "pending" };
-        observe_effect(
-            &mut effect,
-            if proves { "succeeded" } else { "unknown" },
-            proof,
-            "scripted harness",
-            now,
-        );
+        let evidence = json!({"class": proof, "source": "scripted harness"});
         if proves {
+            observe_effect(&mut effect, "succeeded", proof, "scripted harness", now);
             set_obligation(&mut effect, "satisfied");
+            determine(
+                &mut record,
+                "acknowledged",
+                evidence.clone(),
+                Some(proof),
+                now,
+                true,
+            );
+        } else {
+            // Evidence that does not establish delivery: still awaiting evidence.
+            observe_effect(&mut effect, "pending", proof, "scripted harness", now);
+            record["deliveries"][0]["proof_class"] = json!(proof);
+            record["deliveries"][0]["evidence"] = evidence.clone();
         }
-        save_effect(tx, &delivery_id, id, &effect)?;
-        record["delivery"] = json!(delivery);
-        record["deliveries"][0]["delivery"] = json!(delivery);
-        record["deliveries"][0]["proof_class"] = json!(proof);
+        if effect.is_object() {
+            save_effect(tx, &delivery_id, id, &effect)?;
+        }
         drafts.push((
             "execution.delivery.observed",
             subject(id),
             revision,
-            json!({"delivery_id": delivery_id, "delivery": delivery, "proof_class": proof, "evidence": {"class": proof, "source": "scripted harness"}}),
+            json!({"delivery_id": delivery_id, "delivery": record["delivery"], "proof_class": proof, "evidence": evidence}),
         ));
     } else if let Some(found) = step["reconcile_finds"].as_str() {
-        let status = match found {
-            "delivered" => "succeeded",
-            "not_delivered" => "failed",
-            _ => "unknown",
+        let resolved = match found {
+            "delivered" => "delivered",
+            "not_delivered" => "not_delivered",
+            _ => "ambiguous",
         };
+        let evidence =
+            json!({"class": "reconciliation", "source": "scripted harness reconciliation"});
         observe_effect(
             &mut effect,
-            status,
+            status_for(resolved),
             "reconciliation",
             "scripted harness reconciliation",
             now,
         );
-        if status != "unknown" {
+        if resolved != "ambiguous" {
             set_obligation(&mut effect, "satisfied");
         }
         save_effect(tx, &delivery_id, id, &effect)?;
-        record["deliveries"][0]["reconciliation"] = json!(found);
+        if resolved != "ambiguous" && !mutants.on("reconciliation-keeps-ambiguous") {
+            let keep = !mutants.on("reconciliation-erases-ambiguity");
+            determine(&mut record, resolved, evidence.clone(), None, now, keep);
+        }
         drafts.push((
             "execution.delivery.reconciled",
             subject(id),
             revision,
-            json!({"delivery_id": delivery_id, "outcome": found, "evidence": {"class": "reconciliation", "source": "scripted harness reconciliation"}}),
+            json!({"delivery_id": delivery_id, "outcome": found, "delivery": record["delivery"], "evidence": evidence}),
         ));
     } else if let Some(runtime) = step["runtime"].as_str() {
         record["runtime"] = json!(runtime);
@@ -541,8 +765,7 @@ fn step(
         }
         drafts.push(("execution.runtime.changed", subject(id), revision, payload));
     } else if step.get("host_restart").is_some() {
-        let generation = record["host"]["generation"].as_i64().unwrap_or(1) + 1;
-        record["host"]["generation"] = json!(generation);
+        bump_generation(&mut record);
         record["runtime"] = json!("unknown");
         drafts.push((
             "execution.host.changed",
@@ -551,51 +774,7 @@ fn step(
             json!({"host": record["host"]}),
         ));
     } else if let Some(completion) = step.get("complete") {
-        let completion_id = completion["completion_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let digest = crate::json::sha256_digest(
-            completion["content"]
-                .as_str()
-                .unwrap_or_default()
-                .as_bytes(),
-        );
-        let current = record["host"]["generation"].as_i64().unwrap_or(1);
-        let generation = completion["generation"].as_i64().unwrap_or(current);
-        let prior = record["completions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|c| c["completion_id"] == completion_id.as_str() && c["status"] == "recorded")
-            .cloned();
-        let status = if generation < current && !mutants.on("old-attempt-finalizes") {
-            "superseded_attempt"
-        } else {
-            match prior {
-                Some(prior) if prior["digest"] == digest.as_str() => "duplicate",
-                Some(_) if mutants.on("last-completion-wins") => {
-                    record["finalized_digest"] = json!(digest);
-                    "recorded"
-                }
-                Some(_) => "conflict",
-                None => "recorded",
-            }
-        };
-        if status == "recorded" && record.get("finalized_by").is_none() {
-            record["finalized_by"] = json!(completion_id);
-            record["finalized_digest"] = json!(digest);
-            record["result"] = json!("returned");
-        }
-        if let Some(c) = record["completions"].as_array_mut() {
-            c.push(json!({"completion_id": completion_id, "digest": digest, "generation": generation, "status": status}))
-        }
-        drafts.push((
-            "execution.completion.recorded",
-            subject(id),
-            revision,
-            json!({"completion_id": completion_id, "digest": digest, "host": {"id": record["host"]["id"], "generation": generation}, "status": status}),
-        ));
+        complete(&mut record, completion, mutants, id, revision, &mut drafts);
     } else if let Some(exit) = step.get("exit") {
         record["exit"] = exit.clone();
         record["runtime"] = json!("exited");
@@ -616,6 +795,61 @@ fn step(
         provider_event(tx, stream, now, draft)?;
     }
     Ok(true)
+}
+
+fn complete(
+    record: &mut Value,
+    completion: &Value,
+    mutants: &Mutants,
+    id: &str,
+    revision: i64,
+    drafts: &mut Vec<Draft>,
+) {
+    let completion_id = completion["completion_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let digest = crate::json::sha256_digest(
+        completion["content"]
+            .as_str()
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    let current = record["host"]["generation"].as_i64().unwrap_or(1);
+    let generation = completion["generation"].as_i64().unwrap_or(current);
+    let prior = record["completions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|c| c["completion_id"] == completion_id.as_str() && c["status"] == "recorded")
+        .cloned();
+    let status = if generation < current && !mutants.on("old-attempt-finalizes") {
+        "superseded_attempt"
+    } else {
+        match prior {
+            Some(prior) if prior["digest"] == digest.as_str() => "duplicate",
+            Some(_) if mutants.on("last-completion-wins") => {
+                record["finalized_digest"] = json!(digest);
+                "recorded"
+            }
+            Some(_) => "conflict",
+            None => "recorded",
+        }
+    };
+    if status == "recorded" && record.get("finalized_by").is_none() {
+        record["finalized_by"] = json!(completion_id);
+        record["finalized_digest"] = json!(digest);
+        record["result"] = json!("returned");
+    }
+    if let Some(list) = record["completions"].as_array_mut() {
+        list.push(json!({"completion_id": completion_id, "digest": digest, "generation": generation, "status": status}));
+    }
+    drafts.push((
+        "execution.completion.recorded",
+        subject(id),
+        revision,
+        json!({"completion_id": completion_id, "digest": digest, "host": {"id": record["host"]["id"], "generation": generation}, "status": status}),
+    ));
 }
 
 fn timeouts(
@@ -645,7 +879,7 @@ fn timeouts(
     for (name, applies) in [
         (
             "delivery",
-            matches!(record["delivery"].as_str(), Some("pending" | "ambiguous")),
+            !is_terminal(record["delivery"].as_str().unwrap_or_default()),
         ),
         ("execution_deadline", record["runtime"] != "exited"),
     ] {
@@ -671,25 +905,21 @@ fn timeouts(
         .to_string();
     let mut effect = load_effect(tx, &delivery_id)?.unwrap_or(Value::Null);
     let mut revision = revision;
+    let mut drafts: Vec<Draft> = Vec::new();
     for name in due {
         if passed.contains(&name.to_string()) {
             continue;
         }
         revision += 1;
-        if let Some(p) = record["timeouts_passed"].as_array_mut() {
-            p.push(json!(name))
+        if let Some(list) = record["timeouts_passed"].as_array_mut() {
+            list.push(json!(name));
         }
-        provider_event(
-            tx,
-            stream,
-            now,
-            (
-                "execution.timeout.passed",
-                subject(id),
-                revision,
-                json!({"timeout": name}),
-            ),
-        )?;
+        drafts.push((
+            "execution.timeout.passed",
+            subject(id),
+            revision,
+            json!({"timeout": name}),
+        ));
         if name == "delivery" && effect.is_object() {
             let open: Vec<Value> = effect["obligations"]
                 .as_array()
@@ -700,17 +930,36 @@ fn timeouts(
                 .collect();
             set_obligation(&mut effect, "overdue");
             for obligation in open {
-                provider_event(
-                    tx,
-                    stream,
+                drafts.push((
+                    "core.effect.obligation.overdue",
+                    subject(id),
+                    revision,
+                    json!({"effect": delivery_id, "obligation": obligation["id"]}),
+                ));
+            }
+            // The wait for delivery evidence ended without a known outcome (owner decision 3).
+            if record["delivery"] == "pending" && !mutants.on("pending-forever") {
+                let dispatched = !effect["dispatch"].is_null();
+                let (delivery, class) = if dispatched {
+                    ("ambiguous", "delivery_timeout")
+                } else {
+                    ("failed_before_delivery", "delivery_timeout_before_dispatch")
+                };
+                let evidence = json!({"class": class, "source": "delivery timeout passed"});
+                determine(&mut record, delivery, evidence.clone(), None, now, true);
+                observe_effect(
+                    &mut effect,
+                    status_for(delivery),
+                    class,
+                    "delivery timeout passed",
                     now,
-                    (
-                        "core.effect.obligation.overdue",
-                        subject(id),
-                        revision,
-                        json!({"effect": delivery_id, "obligation": obligation["id"]}),
-                    ),
-                )?;
+                );
+                drafts.push((
+                    "execution.delivery.observed",
+                    subject(id),
+                    revision,
+                    json!({"delivery_id": delivery_id, "delivery": delivery, "evidence": evidence}),
+                ));
             }
         }
         if name == "execution_deadline"
@@ -729,7 +978,11 @@ fn timeouts(
     if effect.is_object() {
         save_effect(tx, &delivery_id, id, &effect)?;
     }
-    save(tx, id, revision, &record)
+    save(tx, id, revision, &record)?;
+    for draft in drafts {
+        provider_event(tx, stream, now, draft)?;
+    }
+    Ok(())
 }
 
 fn effect_status(effect: &Value) -> Value {
@@ -737,6 +990,16 @@ fn effect_status(effect: &Value) -> Value {
         .as_array()
         .and_then(|o| o.last())
         .map_or(json!("pending"), |o| o["status"].clone())
+}
+
+fn public_delivery(delivery: &Value) -> Value {
+    let mut out = json!({"delivery_id": delivery["delivery_id"], "delivery": delivery["delivery"], "history": delivery["history"]});
+    for key in ["evidence", "proof_class", "determined_at"] {
+        if let Some(value) = delivery.get(key) {
+            out[key] = value.clone();
+        }
+    }
+    out
 }
 
 /// `execution.inspect`.
@@ -761,6 +1024,12 @@ pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<
             );
         }
     }
+    let deliveries: Vec<Value> = record["deliveries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(public_delivery)
+        .collect();
     let mut result = json!({
         "execution": subject(id),
         "revision": revision,
@@ -770,10 +1039,11 @@ pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<
         "result": record["result"],
         "exit": record["exit"],
         "evaluation": record["evaluation"],
-        "deliveries": record["deliveries"],
+        "deliveries": deliveries,
         "completions": record["completions"],
         "effects": record["effects"],
         "obligations": obligations,
+        "recovery": record["recovery"],
         "host": record["host"],
         "next_cursor": cursor,
     });
@@ -805,18 +1075,19 @@ pub fn reconcile(
             .optional()?,
         _ => None,
     };
+    let empty = json!({"executions": [], "deliveries": [], "obligations": []});
     let Some(id) = id else {
         tx.commit()?;
-        return Ok(json!({"executions": [], "deliveries": [], "obligations": []}));
+        return Ok(empty);
     };
     let Some((revision, mut record)) = load(&tx, &id)? else {
         tx.commit()?;
-        return Ok(json!({"executions": [], "deliveries": [], "obligations": []}));
+        return Ok(empty);
     };
     if mutants.on("reconcile-resubmits") {
         let count = record["deliveries"].as_array().map_or(0, Vec::len) + 1;
-        if let Some(d) = record["deliveries"].as_array_mut() {
-            d.push(json!({"delivery_id": format!("{id}.delivery-{count}"), "delivery": "pending"}))
+        if let Some(list) = record["deliveries"].as_array_mut() {
+            list.push(json!({"delivery_id": format!("{id}.delivery-{count}"), "delivery": "pending", "history": []}));
         }
         save(&tx, &id, revision + 1, &record)?;
     }
@@ -839,9 +1110,13 @@ pub fn reconcile(
         }
     }
     tx.commit()?;
-    Ok(
-        json!({"executions": [subject(&id)], "deliveries": record["deliveries"], "obligations": obligations}),
-    )
+    let deliveries: Vec<Value> = record["deliveries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(public_delivery)
+        .collect();
+    Ok(json!({"executions": [subject(&id)], "deliveries": deliveries, "obligations": obligations}))
 }
 
 /// `core.effects.get` (CORE section 19.2).

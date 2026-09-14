@@ -5,6 +5,58 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "recovery-ignores-cancellation",
+        "resumes dispatch during recovery although cancellation was requested",
+    ),
+    (
+        "recovery-ignores-revocation",
+        "resumes dispatch during recovery although the submitter's grant no longer authorizes",
+    ),
+    (
+        "recovery-ignores-deadline",
+        "resumes dispatch during recovery after the delivery or execution deadline passed",
+    ),
+    (
+        "recovery-trusts-damaged-journal",
+        "treats a missing dispatch marker as proof of non-dispatch when journal continuity is lost",
+    ),
+    (
+        "stale-dispatcher-sends",
+        "lets a dispatcher from an older host generation send after recovery",
+    ),
+    (
+        "failed-before-delivery-reopened",
+        "reopens a delivery already declared failed before delivery",
+    ),
+    (
+        "reconciliation-keeps-ambiguous",
+        "leaves the current delivery ambiguous after reconciliation resolves it",
+    ),
+    (
+        "reconciliation-erases-ambiguity",
+        "drops the earlier ambiguous determination from history when reconciliation resolves it",
+    ),
+    (
+        "pending-forever",
+        "leaves delivery pending after its evidence wait ends",
+    ),
+    (
+        "execution-selected-implicitly",
+        "selects execution/1 for a caller that did not request it",
+    ),
+    (
+        "effect-refs-on-core-operations",
+        "returns effect references for Core and core-test operations that record no effects",
+    ),
+    (
+        "replay-effect-refs-differ",
+        "returns different effect references on replay",
+    ),
+    (
+        "effect-visible-across-principals",
+        "lets any principal read an effect whose target it may not read",
+    ),
+    (
         "execution-dependency-unchecked",
         "selects execution/1 without the Core features it requires",
     ),
@@ -29,8 +81,8 @@ pub const ALL: &[(&str, &str)] = &[
         "reports a cancellation as cancelled when it is only requested",
     ),
     (
-        "restart-redispatches",
-        "re-sends a prompt after a restart that happened before dispatch",
+        "ambiguous-dispatch-resent",
+        "resumes dispatch after a restart although a write-ahead dispatch marker shows dispatch may have begun",
     ),
     (
         "ambiguity-overwritten",

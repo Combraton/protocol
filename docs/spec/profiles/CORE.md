@@ -265,7 +265,13 @@ A successful command returns:
 }
 ```
 
-`effect_refs` lists the IDs of effects the command recorded (§19, M3 draft), such as an execution's prompt submission. It is empty for commands that record none, which includes every M1 and M2 operation. An acknowledgment means the provider durably recorded the command and its immediate state change. It does not mean any external effect happened, succeeded, was verified or was accepted by anyone. Each profile defines what its outcome establishes.
+`effect_refs` lists the IDs of effects the command durably recorded (§19, M3 draft), such as an execution's prompt submission. It does not imply that those effects occurred or succeeded.
+
+**Compatibility (owner decision, 2026-09-14):**
+- **Widening.** Earlier drafts allowed only an empty array here, so widening it is a real schema change.
+- **Gating.** Effect references appear only for operations of a negotiated profile or feature that records effects, such as `execution/1` with `core.effects`. Every M1 and M2 operation, and every effect-free command, still returns `[]`.
+- **Replay.** A replay returns the same original references.
+- **Reading effects.** References resolve only through `core.effects.get`, under read authority on the effect's target. Another principal's effect and a nonexistent effect are refused alike. An acknowledgment means the provider durably recorded the command and its immediate state change. It does not mean any external effect happened, succeeded, was verified or was accepted by anyone. Each profile defines what its outcome establishes.
 
 A replay returns an `acknowledgment` and `outcome` byte-for-byte equal under canonical encoding to the original, with `replay: true`.
 
@@ -650,7 +656,7 @@ Its **status** is observed separately and appended as evidence: `pending`, `succ
 
 ### 19.2 Querying after response loss
 
-`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "status", "observations", "obligations" }`. `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target.
+`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "status", "observations", "obligations" }`. `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
 
 - After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
 - A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.

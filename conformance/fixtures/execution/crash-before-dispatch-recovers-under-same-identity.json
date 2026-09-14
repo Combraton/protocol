@@ -1,15 +1,16 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "execution.crash-before-dispatch-is-never-delivered",
+  "id": "execution.crash-before-dispatch-recovers-under-same-identity",
   "version": 1,
-  "title": "A crash after the submit was journaled but before dispatch leaves a recorded effect that failed before delivery, and nothing is re-sent",
+  "title": "A crash before the dispatch marker lets recovery resume the same delivery once, record the decision and fence the old host generation; a retransmitted submit replays the original acknowledgment",
   "requirements": [
+    "EXE-24",
     "SCN-10",
     "EFF-1",
-    "EXE-3"
+    "CMP-6"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#3-status-axes",
+    "docs/spec/profiles/EXECUTION.md#71-restart-recovery",
     "docs/spec/profiles/CORE.md#19-effects-and-obligations-proposed-m3-draft"
   ],
   "role": "provider",
@@ -30,16 +31,16 @@
   "polarity": "negative",
   "kills": [
     "effect-recorded-after-dispatch",
-    "restart-redispatches"
+    "replay-effect-refs-differ"
   ],
   "kill_expectations": {
     "effect-recorded-after-dispatch": {
       "step": 8,
-      "reason_contains": "result/deliveries/0/delivery: expected \"failed_before_delivery\""
+      "reason_contains": "result/"
     },
-    "restart-redispatches": {
-      "step": 8,
-      "reason_contains": "result/deliveries: expected 1 items, found 2"
+    "replay-effect-refs-differ": {
+      "step": 7,
+      "reason_contains": "acknowledgment"
     }
   },
   "steps": [
@@ -235,11 +236,21 @@
       },
       "expect": {
         "ok": {
-          "delivery": "failed_before_delivery",
+          "delivery": "acknowledged",
+          "host": {
+            "generation": 2
+          },
           "deliveries": [
             {
               "delivery_id": "e-1.delivery-1",
-              "delivery": "failed_before_delivery"
+              "delivery": "acknowledged"
+            }
+          ],
+          "recovery": [
+            {
+              "delivery_id": "e-1.delivery-1",
+              "decision": "dispatch_resumed",
+              "reason": "provably_not_dispatched"
             }
           ]
         }
@@ -253,7 +264,7 @@
       },
       "expect": {
         "ok": {
-          "status": "failed",
+          "status": "succeeded",
           "observations": [
             {
               "status": "pending",
@@ -262,9 +273,15 @@
               }
             },
             {
-              "status": "failed",
+              "status": "pending",
               "evidence": {
-                "class": "never_dispatched"
+                "class": "dispatch_intent"
+              }
+            },
+            {
+              "status": "succeeded",
+              "evidence": {
+                "class": "provider_ack_id"
               }
             }
           ]

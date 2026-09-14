@@ -16,7 +16,8 @@
     "completions",
     "effects",
     "host",
-    "next_cursor"
+    "next_cursor",
+    "recovery"
   ],
   "properties": {
     "execution": {
@@ -99,6 +100,12 @@
     },
     "next_cursor": {
       "$ref": "../../core/1/common.schema.json#/$defs/cursor"
+    },
+    "recovery": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/recovery_decision"
+      }
     }
   },
   "unevaluatedProperties": false

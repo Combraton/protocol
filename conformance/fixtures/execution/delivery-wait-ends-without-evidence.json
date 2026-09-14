@@ -1,13 +1,16 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "execution.delivery-proof-classes-stay-distinct",
-  "version": 2,
-  "title": "A correlated acknowledgment establishes acknowledgment; an echo only when the adapter says so; transport acceptance and terminal writes leave delivery awaiting evidence",
+  "id": "execution.delivery-wait-ends-without-evidence",
+  "version": 1,
+  "title": "When the delivery wait ends without evidence, a dispatched delivery becomes ambiguous and an undispatched one fails before delivery; neither stays pending",
   "requirements": [
-    "EXE-3"
+    "EXE-3",
+    "EXE-19",
+    "EFF-4"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#3-status-axes"
+    "docs/spec/profiles/EXECUTION.md#3-status-axes",
+    "docs/spec/profiles/EXECUTION.md#8-timeouts"
   ],
   "role": "provider",
   "profiles": [
@@ -22,21 +25,17 @@
     "core.effects"
   ],
   "requires_controls": [
-    "executor.script"
+    "executor.script",
+    "clock.file"
   ],
   "polarity": "negative",
   "kills": [
-    "bytes-written-acknowledged",
-    "echo-always-acknowledged"
+    "pending-forever"
   ],
   "kill_expectations": {
-    "bytes-written-acknowledged": {
-      "step": 10,
-      "reason_contains": "result/delivery"
-    },
-    "echo-always-acknowledged": {
-      "step": 8,
-      "reason_contains": "result/delivery"
+    "pending-forever": {
+      "step": 6,
+      "reason_contains": "expected \"ambiguous\", found \"pending\""
     }
   },
   "steps": [
@@ -48,31 +47,21 @@
           "owner"
         ],
         "executor": {
-          "adapter": {
-            "echo_proves_delivery": false
-          },
           "scripts": {
-            "e-ack": [
-              {
-                "deliver": "provider_ack_id"
-              }
-            ],
-            "e-echo": [
-              {
-                "deliver": "echo"
-              }
-            ],
-            "e-transport": [
-              {
-                "deliver": "transport_only"
-              }
-            ],
             "e-bytes": [
               {
                 "deliver": "bytes_written"
               }
+            ],
+            "e-never": [
+              {
+                "stall": true
+              }
             ]
           }
+        },
+        "clock": {
+          "controlled": "2030-01-01T00:00:00Z"
         }
       }
     },
@@ -115,78 +104,6 @@
     {
       "step": "command",
       "operation": "execution.submit",
-      "command_id": "submit-e-ack",
-      "subject": {
-        "kind": "execution.execution",
-        "id": "e-ack"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "execution.execution",
-            "id": "e-ack"
-          },
-          "revision": 0
-        }
-      ],
-      "payload": {
-        "brief": {
-          "digest": "sha256:abababababababababababababababababababababababababababababababab",
-          "media_type": "text/plain"
-        }
-      }
-    },
-    {
-      "step": "command",
-      "operation": "execution.submit",
-      "command_id": "submit-e-echo",
-      "subject": {
-        "kind": "execution.execution",
-        "id": "e-echo"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "execution.execution",
-            "id": "e-echo"
-          },
-          "revision": 0
-        }
-      ],
-      "payload": {
-        "brief": {
-          "digest": "sha256:abababababababababababababababababababababababababababababababab",
-          "media_type": "text/plain"
-        }
-      }
-    },
-    {
-      "step": "command",
-      "operation": "execution.submit",
-      "command_id": "submit-e-transport",
-      "subject": {
-        "kind": "execution.execution",
-        "id": "e-transport"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "execution.execution",
-            "id": "e-transport"
-          },
-          "revision": 0
-        }
-      ],
-      "payload": {
-        "brief": {
-          "digest": "sha256:abababababababababababababababababababababababababababababababab",
-          "media_type": "text/plain"
-        }
-      }
-    },
-    {
-      "step": "command",
-      "operation": "execution.submit",
       "command_id": "submit-e-bytes",
       "subject": {
         "kind": "execution.execution",
@@ -205,6 +122,36 @@
         "brief": {
           "digest": "sha256:abababababababababababababababababababababababababababababababab",
           "media_type": "text/plain"
+        },
+        "timeouts": {
+          "delivery": 60
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "execution.submit",
+      "command_id": "submit-e-never",
+      "subject": {
+        "kind": "execution.execution",
+        "id": "e-never"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "execution.execution",
+            "id": "e-never"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "brief": {
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "media_type": "text/plain"
+        },
+        "timeouts": {
+          "delivery": 60
         }
       }
     },
@@ -212,55 +159,8 @@
       "step": "describe"
     },
     {
-      "step": "query",
-      "operation": "execution.inspect",
-      "payload": {
-        "execution": "e-ack"
-      },
-      "expect": {
-        "ok": {
-          "delivery": "acknowledged",
-          "deliveries": [
-            {
-              "proof_class": "provider_ack_id"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "step": "query",
-      "operation": "execution.inspect",
-      "payload": {
-        "execution": "e-echo"
-      },
-      "expect": {
-        "ok": {
-          "delivery": "pending",
-          "deliveries": [
-            {
-              "proof_class": "echo"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "step": "query",
-      "operation": "execution.inspect",
-      "payload": {
-        "execution": "e-transport"
-      },
-      "expect": {
-        "ok": {
-          "delivery": "pending",
-          "deliveries": [
-            {
-              "proof_class": "transport_only"
-            }
-          ]
-        }
-      }
+      "step": "set_clock",
+      "instant": "2030-01-01T00:01:00Z"
     },
     {
       "step": "query",
@@ -270,10 +170,40 @@
       },
       "expect": {
         "ok": {
-          "delivery": "pending",
+          "delivery": "ambiguous",
           "deliveries": [
             {
-              "proof_class": "bytes_written"
+              "delivery": "ambiguous",
+              "evidence": {
+                "class": "delivery_timeout"
+              },
+              "history": [
+                {
+                  "delivery": "pending",
+                  "evidence": {
+                    "class": "bytes_written"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "execution.inspect",
+      "payload": {
+        "execution": "e-never"
+      },
+      "expect": {
+        "ok": {
+          "delivery": "failed_before_delivery",
+          "deliveries": [
+            {
+              "evidence": {
+                "class": "delivery_timeout_before_dispatch"
+              }
             }
           ]
         }
@@ -287,7 +217,19 @@
       },
       "expect": {
         "ok": {
-          "status": "pending"
+          "status": "unknown"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "core.effects.get",
+      "payload": {
+        "effect": "e-never.delivery-1"
+      },
+      "expect": {
+        "ok": {
+          "status": "failed"
         }
       }
     },

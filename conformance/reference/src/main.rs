@@ -178,7 +178,6 @@ fn run(args: Args) -> Result<(), String> {
         .to_string();
     let clock = std::sync::Arc::new(clock::Clock::from_config(&config, &mutant_set)?);
     barriers::init(&config);
-    execution::recover(&mut store, &clock.now(), &mutant_set).map_err(|e| e.to_string())?;
     let writes = config["capabilities"]["core-test.writes"]
         .as_str()
         .unwrap_or("supported");
@@ -199,6 +198,19 @@ fn run(args: Args) -> Result<(), String> {
             ),
         )
         .map_err(|e| e.to_string())?;
+    execution::recover(
+        &mut store,
+        &execution::Recovery {
+            now: clock.now(),
+            executor: &config["executor"],
+            mutants: &mutant_set,
+            authorities: &authorities,
+            journal_intact: !config["events"]["new_epoch_on_start"]
+                .as_bool()
+                .unwrap_or(false),
+        },
+    )
+    .map_err(|e| e.to_string())?;
     let credentials: Vec<provider::Credential> = config["credentials"]
         .as_array()
         .into_iter()

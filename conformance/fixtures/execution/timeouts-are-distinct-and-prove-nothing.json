@@ -1,8 +1,8 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.timeouts-are-distinct-and-prove-nothing",
-  "version": 1,
-  "title": "Delivery and execution-deadline timeouts pass separately; an overdue obligation leaves the effect's status unchanged",
+  "version": 2,
+  "title": "Delivery and execution-deadline timeouts pass separately; an overdue obligation and a passed deadline never mark the effect failed",
   "requirements": [
     "EXE-19",
     "EFF-4",
@@ -35,11 +35,11 @@
   ],
   "kill_expectations": {
     "timeouts-collapsed": {
-      "step": 5,
+      "step": 6,
       "reason_contains": "result/items"
     },
     "deadline-marks-effect-failed": {
-      "step": 9,
+      "step": 10,
       "reason_contains": "result/status"
     }
   },
@@ -55,7 +55,7 @@
           "scripts": {
             "e-1": [
               {
-                "stall": true
+                "deliver": "bytes_written"
               }
             ]
           }
@@ -130,6 +130,9 @@
       }
     },
     {
+      "step": "describe"
+    },
+    {
       "step": "set_clock",
       "instant": "2030-01-01T00:01:00Z"
     },
@@ -141,7 +144,7 @@
       },
       "expect": {
         "ok": {
-          "delivery": "pending",
+          "delivery": "ambiguous",
           "obligations": [
             {
               "id": "e-1.delivery-1.evidence",
@@ -172,6 +175,15 @@
             },
             {
               "event": {
+                "type": "execution.delivery.observed",
+                "payload": {
+                  "delivery": "pending",
+                  "proof_class": "bytes_written"
+                }
+              }
+            },
+            {
+              "event": {
                 "type": "execution.timeout.passed",
                 "payload": {
                   "timeout": "delivery"
@@ -183,6 +195,14 @@
                 "type": "core.effect.obligation.overdue",
                 "payload": {
                   "effect": "e-1.delivery-1"
+                }
+              }
+            },
+            {
+              "event": {
+                "type": "execution.delivery.observed",
+                "payload": {
+                  "delivery": "ambiguous"
                 }
               }
             }
@@ -198,7 +218,7 @@
       },
       "expect": {
         "ok": {
-          "status": "pending"
+          "status": "unknown"
         }
       }
     },
@@ -226,15 +246,22 @@
             },
             {
               "event": {
-                "type": "execution.timeout.passed",
-                "payload": {
-                  "timeout": "delivery"
-                }
+                "type": "execution.delivery.observed"
+              }
+            },
+            {
+              "event": {
+                "type": "execution.timeout.passed"
               }
             },
             {
               "event": {
                 "type": "core.effect.obligation.overdue"
+              }
+            },
+            {
+              "event": {
+                "type": "execution.delivery.observed"
               }
             },
             {
@@ -257,7 +284,7 @@
       },
       "expect": {
         "ok": {
-          "status": "pending"
+          "status": "unknown"
         }
       }
     },

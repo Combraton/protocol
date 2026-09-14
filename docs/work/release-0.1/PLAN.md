@@ -144,6 +144,8 @@ All KNW and VER rows. Adds scenarios for a provider reconnecting with a changed 
 
 Compatibility fixtures across versions, the minimal third-party executor and evidence publisher, consumer compatibility matrix, complete operation documentation, license, release record and checksums. Owner review and acceptance. Publishing or tagging the release requires the owner's authorization.
 
+M6 also takes the explicit compatibility decision on machine-readable advertising of profile feature dependencies (matrix CMP-5; owner decision 2026-09-14). Until then Execution's required Core features are published in its profile document and enforced at negotiation.
+
 ## 6. Choices that affect scope or public semantics
 
 Outcomes recorded on 2026-09-13. Choices marked **owner** were decided by the owner; the others are accepted decision records that can still change through a new versioned decision on evidence.

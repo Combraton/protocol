@@ -1,16 +1,14 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "execution.crash-during-dispatch-stays-ambiguous-then-reconciled",
+  "id": "execution.stale-dispatcher-is-fenced-after-recovery",
   "version": 1,
-  "title": "A crash after the prompt was written leaves delivery ambiguous; reconciliation appends its finding and both observations remain",
+  "title": "After recovery advances the host generation, a dispatcher from the older generation cannot send; the recovered generation delivers once",
   "requirements": [
-    "EXE-3",
-    "SCN-10",
-    "EFF-2"
+    "EXE-24",
+    "EXE-6"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#3-status-axes",
-    "docs/spec/profiles/CORE.md#19-effects-and-obligations-proposed-m3-draft"
+    "docs/spec/profiles/EXECUTION.md#71-restart-recovery"
   ],
   "role": "provider",
   "profiles": [
@@ -29,12 +27,12 @@
   ],
   "polarity": "negative",
   "kills": [
-    "ambiguity-overwritten"
+    "stale-dispatcher-sends"
   ],
   "kill_expectations": {
-    "ambiguity-overwritten": {
+    "stale-dispatcher-sends": {
       "step": 7,
-      "reason_contains": "result/deliveries/0/delivery: expected \"ambiguous\""
+      "reason_contains": "result/"
     }
   },
   "steps": [
@@ -49,10 +47,15 @@
           "scripts": {
             "e-1": [
               {
-                "crash": "after_write"
+                "crash": "before_dispatch"
               },
               {
-                "reconcile_finds": "delivered"
+                "stale_dispatch": {
+                  "generation": 1
+                }
+              },
+              {
+                "deliver": "provider_ack_id"
               }
             ]
           }
@@ -141,10 +144,15 @@
           "scripts": {
             "e-1": [
               {
-                "crash": "after_write"
+                "crash": "before_dispatch"
               },
               {
-                "reconcile_finds": "delivered"
+                "stale_dispatch": {
+                  "generation": 1
+                }
+              },
+              {
+                "deliver": "provider_ack_id"
               }
             ]
           }
@@ -195,40 +203,14 @@
       },
       "expect": {
         "ok": {
-          "delivery": "ambiguous",
+          "delivery": "acknowledged",
+          "host": {
+            "generation": 2
+          },
           "deliveries": [
             {
-              "delivery_id": "e-1.delivery-1",
-              "delivery": "ambiguous",
-              "reconciliation": "delivered"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "step": "query",
-      "operation": "core.effects.get",
-      "payload": {
-        "effect": "e-1.delivery-1"
-      },
-      "expect": {
-        "ok": {
-          "status": "succeeded",
-          "observations": [
-            {
-              "status": "pending"
-            },
-            {
-              "status": "unknown",
               "evidence": {
-                "class": "dispatch_uncertain"
-              }
-            },
-            {
-              "status": "succeeded",
-              "evidence": {
-                "class": "reconciliation"
+                "source": "scripted harness"
               }
             }
           ]
@@ -255,17 +237,26 @@
             },
             {
               "event": {
-                "type": "execution.delivery.observed",
+                "type": "execution.recovery.decided",
                 "payload": {
-                  "delivery": "ambiguous"
+                  "decision": "dispatch_resumed"
                 }
               }
             },
             {
               "event": {
-                "type": "execution.delivery.reconciled",
+                "type": "execution.dispatch.fenced",
                 "payload": {
-                  "outcome": "delivered"
+                  "generation": 1,
+                  "current_generation": 2
+                }
+              }
+            },
+            {
+              "event": {
+                "type": "execution.delivery.observed",
+                "payload": {
+                  "delivery": "acknowledged"
                 }
               }
             }

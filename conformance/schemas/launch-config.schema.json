@@ -205,6 +205,13 @@
         },
         "default_script": {
           "$ref": "#/$defs/script"
+        },
+        "recovery_policy": {
+          "enum": [
+            "resume",
+            "terminate"
+          ],
+          "description": "Recovery policy for provably undispatched deliveries after a restart (default resume)."
         }
       },
       "additionalProperties": false
@@ -292,6 +299,19 @@
           },
           "stall": {
             "const": true
+          },
+          "stale_dispatch": {
+            "type": "object",
+            "required": [
+              "generation"
+            ],
+            "properties": {
+              "generation": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

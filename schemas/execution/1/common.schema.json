@@ -81,9 +81,12 @@
       "enum": [
         "pending",
         "acknowledged",
+        "delivered",
+        "not_delivered",
         "failed_before_delivery",
         "ambiguous"
-      ]
+      ],
+      "description": "Current delivery determination (EXECUTION section 3): pending awaits evidence; acknowledged and delivered confirm arrival (neither proves comprehension or success); not_delivered and failed_before_delivery are terminal; ambiguous means dispatch may have happened and the outcome is unknown."
     },
     "proof_class": {
       "enum": [
@@ -173,7 +176,8 @@
       "type": "object",
       "required": [
         "delivery_id",
-        "delivery"
+        "delivery",
+        "history"
       ],
       "properties": {
         "delivery_id": {
@@ -182,15 +186,37 @@
         "delivery": {
           "$ref": "#/$defs/delivery"
         },
+        "evidence": {
+          "$ref": "../../core/1/common.schema.json#/$defs/evidence"
+        },
         "proof_class": {
           "$ref": "#/$defs/proof_class"
         },
-        "reconciliation": {
-          "enum": [
-            "delivered",
-            "not_delivered",
-            "unknown"
-          ]
+        "determined_at": {
+          "$ref": "../../core/1/common.schema.json#/$defs/instant"
+        },
+        "history": {
+          "type": "array",
+          "description": "Earlier determinations, oldest first; never rewritten.",
+          "items": {
+            "type": "object",
+            "required": [
+              "delivery",
+              "recorded_at"
+            ],
+            "properties": {
+              "delivery": {
+                "$ref": "#/$defs/delivery"
+              },
+              "evidence": {
+                "$ref": "../../core/1/common.schema.json#/$defs/evidence"
+              },
+              "recorded_at": {
+                "$ref": "../../core/1/common.schema.json#/$defs/instant"
+              }
+            },
+            "unevaluatedProperties": false
+          }
         }
       },
       "unevaluatedProperties": false
@@ -258,6 +284,42 @@
         },
         "operation_ref": {
           "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "recovery_decision": {
+      "type": "object",
+      "required": [
+        "delivery_id",
+        "decision",
+        "reason",
+        "recorded_at"
+      ],
+      "properties": {
+        "delivery_id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "decision": {
+          "enum": [
+            "dispatch_resumed",
+            "ambiguous",
+            "failed_before_delivery"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "provably_not_dispatched",
+            "dispatch_may_have_begun",
+            "journal_not_intact",
+            "cancelled",
+            "authorization_lost",
+            "deadline_passed",
+            "recovery_policy"
+          ]
+        },
+        "recorded_at": {
+          "$ref": "../../core/1/common.schema.json#/$defs/instant"
         }
       },
       "unevaluatedProperties": false

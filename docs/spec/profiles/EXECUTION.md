@@ -11,10 +11,12 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 ## 1. Dependencies and negotiation
 
 - `execution/1` depends on `core/1` with features `core.events`, `core.capabilities` and `core.effects` (CORE §19, M3 draft). `core.grants` is optional; without it only authority principals operate.
-- **Feature dependencies are enforced at negotiation, not advertised.**
-  - The manifest's `depends_on` names only `core`, because Core's accepted manifest schema allows only profile names there.
-  - Selecting `execution/1` without one of those Core features is refused, or reported unselected for an optional request, as `dependency_not_selected` with the missing `feature` (CORE §4.2).
-  - *Open for the owner:* whether a later versioned manifest should advertise feature dependencies.
+- **Required Core features (owner decision, 2026-09-14).** `execution/1` requires `core.events`, `core.capabilities` and `core.effects`. This document is where that requirement is published. Negotiation enforces it:
+  - **Required request.** If a required `execution/1` request lacks one of those Core features, negotiation is refused with `unsupported_profile`. `details.unsatisfied` lists one actionable item per missing feature: `{ "profile": "execution", "feature", "reason": "dependency_not_selected" }`.
+  - **Optional request.** An optional `execution/1` request without them is not selected. The same items appear in `unselected`, and execution operations are then `profile_not_negotiated`.
+  - **Manifest unchanged.** `core.describe` keeps its accepted shape: `depends_on` names only `core`.
+  - **Deferred.** Machine-readable advertising of feature dependencies is an explicit M6 compatibility decision (matrix CMP-5). No incompatible manifest field is added before then.
+  - **Older participants.** A caller that does not request `execution/1` gets unchanged results. A provider without `execution/1` reports an optional request as `unknown_profile` in `unselected`, and refuses a required one as `unsupported_profile` (CMP-7).
 - A provider advertises `execution/1` and the optional features it implements (§12). A caller lists the features it requires; an unsupported required feature is refused at negotiation (CORE §4).
 - Every execution operation follows the Core command path (CORE §10): deduplication before authorization, authorization before capabilities, authority epoch and preconditions, then one owner transaction that commits the state change, its events and its effect records.
 
@@ -24,7 +26,7 @@ Identities are distinct and never reused for one another (PIO-I §2, SPEC §3).
 
 | Identity | Scope and meaning | Must not be used as |
 |---|---|---|
-| `execution` subject `{ "kind": "execution.execution", "id" }` | One admitted unit of work. The caller chooses the ID and creates it with precondition revision 0. | A retry counter |
+| `execution` subject `{ "kind": "execution.execution", "id" }` | One admitted unit of work. The caller chooses the ID and creates it with precondition revision 0. The kind `execution.execution` follows Core's `<profile>.<kind>` grammar and is used consistently in schemas, events, `kinds` filters, grant resources and fixtures; human-facing labels say "Execution" (owner decision, 2026-09-14). | A retry counter |
 | `predecessor` | The execution this one retries or continues. A retry is always a new execution (EXE-1). | Permission to reuse the predecessor's identity, receipts or effects |
 | `command_id` | Core command identity. Retransmission reads or completes the prior operation; it never runs work again. | A new attempt |
 | `invocation_id` | One executor-visible external invocation inside an execution. Opaque harness-internal calls are outside it and declared as a coverage limit. | Whichever result was selected |
@@ -41,7 +43,7 @@ Execution state is six independent axes. Each axis changes only through an execu
 | Axis | Values | Establishes |
 |---|---|---|
 | `admission` | `queued` (with `queue_reason`), `admitted`, `refused` (with `reason` and optional `alternative`) | The executor's capacity and policy decision (EXE-2) |
-| `delivery` | `pending`, `acknowledged`, `failed_before_delivery`, `ambiguous`; each observation names a proof class | Whether the brief is known to have reached the harness |
+| `delivery` | `pending`, `acknowledged`, `delivered`, `not_delivered`, `failed_before_delivery`, `ambiguous` (§3.1) | The current determination of whether the brief reached the harness, with its evidence |
 | `runtime` | `preparing`, `active`, `requires_action` (with `action_id` and `owner`), `quiescent`, `exited`, `unknown` | Current observed state (EXE-4) |
 | `result` | `absent`, `partial`, `returned` | Output availability |
 | `exit` | `{ "code" }`, `{ "signal" }`, `forced_termination`, `unavailable` | Process outcome, where meaningful |
@@ -56,17 +58,31 @@ Execution state is six independent axes. Each axis changes only through an execu
 | `transport_only` | The transport accepted the bytes; the harness said nothing |
 | `bytes_written` | Bytes were written to a terminal or stream. Never reported as `acknowledged` |
 
-An `ambiguous` delivery is an immutable observation about one episode. A later reconciliation appends `delivered`, `not_delivered` or `unknown` evidence for the same `delivery_id`. Both observations are retained: the delivery axis stays `ambiguous`, and the delivery record gains `reconciliation`.
+### 3.1 Delivery determinations
 
-**Implementation clarifications (M3 step 3–4, candidates for owner review):**
-- **Which proof classes acknowledge.**
-  - `provider_ack_id` sets delivery to `acknowledged`.
-  - `echo` does so only if the adapter declares that an echo proves delivery.
-  - `transport_only` and `bytes_written` leave delivery `pending`, with the proof class recorded and the effect status `unknown`.
-- **Recovery after a restart.** A delivery that is still `pending` becomes:
-  - `failed_before_delivery` if dispatch had not durably begun, and is never dispatched afterwards (a later attempt is a new execution);
-  - `ambiguous` if dispatch had begun without an observation.
-  - Dispatch start is recorded durably before any harness write, which is what makes the distinction sound.
+Owner decision, 2026-09-14. Each delivery has a **current determination** and a **history**. The execution's `delivery` axis is the current determination of its delivery.
+
+| Determination | Meaning | Terminal |
+|---|---|---|
+| `pending` | Still awaiting evidence. Dispatch may not have begun, or it began and no establishing evidence has arrived. | no |
+| `acknowledged` | A correlated harness acknowledgment for this delivery (`provider_ack_id`), or an `echo` whose meaning the adapter's evidenced capability contract establishes | yes |
+| `delivered` | Later evidence, such as reconciliation, established that the brief reached the harness, without an acknowledgment | yes |
+| `not_delivered` | Later evidence established that a dispatched brief did not reach the harness | yes |
+| `failed_before_delivery` | Dispatch provably never began and the executor declared the delivery finished. It is never reopened; a later attempt is a new execution. | yes |
+| `ambiguous` | Dispatch may have begun and the outcome is unknown, for example after a crash with the dispatch marker written, or when the evidence wait ends | no |
+
+**Rules:**
+- **Transport acceptance and terminal writes** (`transport_only`, `bytes_written`) alone establish nothing. They are recorded as evidence while the determination stays `pending`.
+- **Waits end.** When the delivery wait ends without establishing evidence, `pending` becomes:
+  - `ambiguous` if dispatch began;
+  - `failed_before_delivery` if it provably did not.
+
+  A delivery never stays `pending` after its wait ends (§8).
+- **Resolution replaces the current view.** When later evidence resolves a delivery, the current determination changes to the resolved value with that evidence, for example `ambiguous` → `delivered`. The previous determination, with its evidence, is appended to `history`, which is never rewritten. The original `delivery.observed` event stays in the event stream. The axis does not stay `ambiguous` merely to preserve history.
+- **Resolution never submits.** Reconciliation reads evidence; it never causes another submission.
+- **What delivery does not establish.** `acknowledged` and `delivered` are distinct facts, and neither establishes comprehension, compliance or task success.
+- **Public record.** `execution.inspect` shows each delivery as `{ delivery_id, delivery, evidence, proof_class?, determined_at, history: [ { delivery, evidence?, recorded_at } ] }`.
+- **Effect status.** The delivery effect's status (CORE §19) follows the determination: `acknowledged` and `delivered` give `succeeded`; `not_delivered` and `failed_before_delivery` give `failed`; `ambiguous` gives `unknown`; `pending` gives `pending`.
 - **Refused admission** records the execution with no delivery and no effect.
 
 `requires_action` is a runtime condition, not a progress level. `cancel_requested` is not `cancelled` (§7).
@@ -82,7 +98,7 @@ A minimal executor implements these. *Candidate* names.
 | `execution.cancel` | command | Records a cancellation request and returns a **request receipt** (`cancel_requested`). The outcome is observed later as `cancelled`, `refused`, `not_supported` or `unknown` (EXE-8). |
 | `execution.reconcile` | query | Given a `command_id` or `delivery_id`, returns the scoped observations the executor holds and any open obligations. It MUST NOT submit, resubmit or restart anything (EXE-10). |
 
-**Subject kind.** Executions use subject kind `execution.execution`, following Core's `<profile>.<kind>` grammar; the earlier draft's bare `execution` was invalid. **Watching** uses Core subscriptions with `kinds: ["execution.execution"]` (CORE §16). Executor observations appear no later than the provider's next request or idle re-check. Execution events are ordinary Core events; Core cursors, gaps, epochs, filtering and idle-lapse rules apply unchanged (EXE-7).
+**Watching** uses Core subscriptions with `kinds: ["execution.execution"]` (CORE §16). Executor observations appear no later than the provider's next request or idle re-check. Execution events are ordinary Core events; Core cursors, gaps, epochs, filtering and idle-lapse rules apply unchanged (EXE-7).
 
 **Detaching is not cancellation** (EXE-22). Closing a session, disconnecting or restarting a client leaves executions running. A reconnecting caller queries or reconciles; it does not replay a remembered submit as new work.
 
@@ -113,6 +129,29 @@ A minimal executor implements these. *Candidate* names.
 - Cancellation, a stopped process and reconciled external effects are separate observations. Outstanding external effects survive cancellation, timeout and abandonment as open obligations (CORE §19).
 - Fences stop stale mediated commands and results from cooperating hosts. They cannot retract an effect already sent by an unrestricted process; that limitation is part of the contract.
 
+### 7.1 Restart recovery
+
+Owner decision, 2026-09-14. After a restart, an accepted execution whose delivery is still `pending` MAY be recovered and dispatched under the **same execution and delivery identity**, but only when the executor can establish that dispatch never began. That requires all of the following:
+
+1. **Write-ahead dispatch marker.** Before any harness write, the executor durably records a dispatch marker for the delivery, bound to the host generation that will send. This is mandatory for every executor.
+2. **Intact durable history.** The absence of a marker is proof only if the journal is intact. If the executor cannot vouch for journal continuity, for example after a restore or a new stream epoch (CORE §16.1), a missing marker is not proof: the delivery becomes `ambiguous`.
+3. **Fencing.** Recovery advances the host generation. A dispatcher from an older generation MUST NOT send afterwards, and its attempt is recorded (`execution.dispatch.fenced`).
+4. **Revalidation before dispatch.** The executor revalidates at the recovery point, and dispatches only if all of these still hold:
+   - no cancellation has been requested;
+   - the submitter is still authorized (an authority, or an active, unexpired grant bound to a current epoch);
+   - no delivery or execution deadline has passed;
+   - applicable execution constraints still hold.
+5. **Recorded decision.** Every recovery records `execution.recovery.decided` and an entry in the execution's `recovery` list:
+   - `{ delivery_id, decision, reason, recorded_at }`;
+   - `decision` is `dispatch_resumed`, `ambiguous` or `failed_before_delivery`;
+   - `reason` is one of `provably_not_dispatched`, `dispatch_may_have_begun`, `journal_not_intact`, `cancelled`, `authorization_lost`, `deadline_passed` or `recovery_policy`.
+
+**Outcomes:**
+- **Marker present.** If dispatch might have begun, the delivery becomes `ambiguous` and is reconciled. It is never resent blindly.
+- **Terminal.** A delivery already durably declared `failed_before_delivery` is never reopened.
+- **Termination policy.** An executor may terminate provably undispatched work as a declared recovery policy (`recovery_policy`). That policy is allowed, not required by the Protocol.
+
+
 ## 8. Timeouts
 
 Five distinct timeouts, each with its own event when it passes (EXE-19):
@@ -125,7 +164,7 @@ Five distinct timeouts, each with its own event when it passes (EXE-19):
 | `inactivity` | Waiting for any runtime observation |
 | `reconciliation` | Waiting for an open obligation to be resolved |
 
-A timeout closes a permitted wait or triggers a control action. It never proves that remote work ended, never refunds unresolved liability (§12), and never marks an effect as not having happened (CORE §19).
+When the `delivery` timeout passes, the evidence wait ends: a `pending` delivery becomes `ambiguous` if dispatch began, or `failed_before_delivery` if it provably did not (§3.1). A timeout closes a permitted wait or triggers a control action. It never proves that remote work ended, never refunds unresolved liability (§12), and never marks an effect as not having happened (CORE §19).
 
 Timeouts are evaluated against the provider clock. Conformance controls that clock from the environment (§15).
 
@@ -137,7 +176,9 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 |---|---|
 | `execution.admission.changed` | `{ "admission", "reason"?, "alternative"? }` |
 | `execution.delivery.observed` | `{ "delivery_id", "delivery", "proof_class", "evidence" }` |
-| `execution.delivery.reconciled` | `{ "delivery_id", "outcome": "delivered" \| "not_delivered" \| "unknown", "evidence" }` |
+| `execution.delivery.reconciled` | `{ "delivery_id", "outcome": "delivered" \| "not_delivered" \| "unknown", "delivery", "evidence" }`; `delivery` is the resulting current determination |
+| `execution.recovery.decided` | `{ "delivery_id", "decision", "reason", "host" }` (§7.1) |
+| `execution.dispatch.fenced` | `{ "delivery_id", "generation", "current_generation" }`: an older dispatcher was refused (§7.1) |
 | `execution.runtime.changed` | `{ "runtime", "action_id"?, "owner"? }` |
 | `execution.result.changed` | `{ "result" }` |
 | `execution.exit.observed` | `{ "exit" }` |
@@ -161,6 +202,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 |---|---|---|
 | `execution.steering` | `execution.steer` returns a request receipt. Recorded request, native delivery acknowledgment and later observed behavior are three separate facts. Without live steering, the refusal is explicit: `not_supported` with a supported alternative. Delivery never proves comprehension. | EXE-9 |
 | `execution.actions` | `execution.respond_action` answers a native action request. `action_id` belongs to one execution; answering it in another is `not_found` and authorizes nothing. | EXE-14 |
+| *(base rights)* | Under a grant, `execution.submit` and `execution.cancel` cover the execution subject; `execution.read` covers `execution.inspect`, `execution.reconcile`, execution events and the execution's effects through `core.effects.get`. | CORE-11, CMP-6 |
 | `execution.controller` | `execution.controller.claim` takes the single mutating controller lease for a host. It advances the Core authority epoch of scope `execution.controller:<host id>`, and mutating execution commands carry that epoch. A stale controller is refused with `stale_authority_epoch`. Read-only observers are unaffected. | EXE-13 |
 | `execution.workspaces` | Workspace lease descriptor: repository, base, writer identity, lease epoch, permitted paths and effects, cleanup policy. `execution.workspace.checkpoint` records coverage the executor probed itself, including dirty and untracked state. Agent-reported commit IDs are annotations, not receipts. | EXE-15 |
 | `execution.usage` | Usage observations with a basis of `observed`, `estimated`, `unknown` or `enforced_bound`. Liability for an unknown outcome is unresolved and is not refunded by a timeout. A hard ceiling the adapter cannot enforce is refused at admission. | EXE-16 |

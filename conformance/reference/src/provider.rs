@@ -558,7 +558,11 @@ impl Provider {
                             .append_standalone_event(record, false)
                             .map_err(storage)?;
                     }
-                    return replay(&stored.response);
+                    let mut replayed = replay(&stored.response)?;
+                    if self.mutants.on("replay-effect-refs-differ") {
+                        replayed["acknowledgment"]["effect_refs"] = json!([]);
+                    }
+                    return Ok(replayed);
                 }
                 return Err(reject(
                     "idempotency_conflict",
@@ -675,7 +679,12 @@ impl Provider {
                             &principal,
                             &revoke_ids,
                         )?;
-                        (revision, outcome, events, Vec::new())
+                        let refs = if mutants.on("effect-refs-on-core-operations") {
+                            vec![format!("{subject_id}.effect-1")]
+                        } else {
+                            Vec::new()
+                        };
+                        (revision, outcome, events, refs)
                     }
                 };
                 if record_events {
@@ -828,6 +837,9 @@ impl Provider {
         params: &Value,
     ) -> Result<Option<Vec<(String, Value)>>, Reject> {
         let execution = match operation {
+            "core.effects.get" if self.mutants.on("effect-visible-across-principals") => {
+                return Ok(None);
+            }
             "core.effects.get" => {
                 self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
             }
@@ -1792,6 +1804,9 @@ impl Provider {
                 "unsupported_required_feature"
             };
             return Err(reject(code, json!({"unsatisfied": unsatisfied})));
+        }
+        if self.mutants.on("execution-selected-implicitly") && !selected.contains_key("execution") {
+            selected.insert("execution".to_string(), (1, Vec::new(), false));
         }
         let selected_json: Vec<Value> = selected.iter().map(|(name, (major, features, _))| json!({"name": name, "major": major, "features": features})).collect();
         self.selected = Some(

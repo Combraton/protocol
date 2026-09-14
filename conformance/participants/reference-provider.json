@@ -196,7 +196,7 @@
       "predecessor-dropped",
       "effect-recorded-after-dispatch",
       "cancel-reports-cancelled",
-      "restart-redispatches",
+      "ambiguous-dispatch-resent",
       "ambiguity-overwritten",
       "echo-always-acknowledged",
       "bytes-written-acknowledged",
@@ -206,7 +206,20 @@
       "timeouts-collapsed",
       "deadline-marks-effect-failed",
       "reconcile-resubmits",
-      "unknown-effect-not-found"
+      "unknown-effect-not-found",
+      "recovery-ignores-cancellation",
+      "recovery-ignores-revocation",
+      "recovery-ignores-deadline",
+      "recovery-trusts-damaged-journal",
+      "stale-dispatcher-sends",
+      "failed-before-delivery-reopened",
+      "reconciliation-keeps-ambiguous",
+      "reconciliation-erases-ambiguity",
+      "pending-forever",
+      "execution-selected-implicitly",
+      "effect-refs-on-core-operations",
+      "replay-effect-refs-differ",
+      "effect-visible-across-principals"
     ]
   }
 }

@@ -5,6 +5,10 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "recovery-host-change-silent",
+        "advances the host generation during recovery without an execution.host.changed event",
+    ),
+    (
         "unavailable-after-binding",
         "answers unavailable for a submit it had already committed and bound",
     ),

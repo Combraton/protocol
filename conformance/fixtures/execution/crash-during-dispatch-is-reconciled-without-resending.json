@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.crash-during-dispatch-is-reconciled-without-resending",
-  "version": 1,
+  "version": 2,
   "title": "After a crash with the dispatch marker written, recovery keeps delivery ambiguous and never resends; reconciliation then resolves the current view while history keeps the uncertainty",
   "requirements": [
     "EXE-3",
@@ -321,6 +321,16 @@
                 "type": "execution.delivery.observed",
                 "payload": {
                   "delivery": "ambiguous"
+                }
+              }
+            },
+            {
+              "event": {
+                "type": "execution.host.changed",
+                "payload": {
+                  "host": {
+                    "generation": 2
+                  }
                 }
               }
             },

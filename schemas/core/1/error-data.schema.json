@@ -29,6 +29,7 @@
         "digest_mismatch",
         "idempotency_conflict",
         "dedupe_history_unavailable",
+        "effect_history_unavailable",
         "stale_authority_epoch",
         "unknown_authority_epoch",
         "precondition_failed",

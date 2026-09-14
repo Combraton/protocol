@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.watch-execution-facts-with-subscriptions",
-  "version": 1,
+  "version": 2,
   "title": "Execution facts are ordinary Core events: a subscription filtered to execution subjects receives them in order, and an inspect cursor reads only what happened later",
   "requirements": [
     "EXE-7",
@@ -48,7 +48,7 @@
         "executor": {
           "default_script": [
             {
-              "deliver": "provider_ack_id"
+              "stall": true
             }
           ]
         }
@@ -186,19 +186,6 @@
                 "origin": "command",
                 "command_id": "submit-e-1"
               }
-            },
-            {
-              "event": {
-                "type": "execution.delivery.observed",
-                "subject": {
-                  "kind": "execution.execution",
-                  "id": "e-1"
-                },
-                "origin": "provider",
-                "payload": {
-                  "delivery": "acknowledged"
-                }
-              }
             }
           ]
         }
@@ -212,7 +199,7 @@
       },
       "expect": {
         "ok": {
-          "delivery": "acknowledged"
+          "delivery": "pending"
         }
       },
       "capture": {

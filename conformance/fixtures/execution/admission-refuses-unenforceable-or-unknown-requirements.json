@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.admission-refuses-unenforceable-or-unknown-requirements",
-  "version": 1,
+  "version": 2,
   "title": "A required restriction above the adapter's enforcement, or an unknown required predicate, is refused with a reason and an alternative",
   "requirements": [
     "EXE-2",
@@ -227,6 +227,7 @@
       "expect": {
         "ok": {
           "admission": "refused",
+          "delivery": "failed_before_delivery",
           "deliveries": [],
           "effects": []
         }

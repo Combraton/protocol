@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.stale-dispatcher-is-fenced-after-recovery",
-  "version": 1,
+  "version": 2,
   "title": "After recovery advances the host generation, a dispatcher from the older generation cannot send; the recovered generation delivers once",
   "requirements": [
     "EXE-24",
@@ -27,12 +27,17 @@
   ],
   "polarity": "negative",
   "kills": [
-    "stale-dispatcher-sends"
+    "stale-dispatcher-sends",
+    "recovery-host-change-silent"
   ],
   "kill_expectations": {
     "stale-dispatcher-sends": {
-      "step": 7,
-      "reason_contains": "result/"
+      "step": 8,
+      "reason_contains": "result/items"
+    },
+    "recovery-host-change-silent": {
+      "step": 8,
+      "reason_contains": "result/items"
     }
   },
   "steps": [
@@ -206,14 +211,7 @@
           "delivery": "acknowledged",
           "host": {
             "generation": 2
-          },
-          "deliveries": [
-            {
-              "evidence": {
-                "source": "scripted harness"
-              }
-            }
-          ]
+          }
         }
       }
     },
@@ -240,6 +238,17 @@
                 "type": "execution.recovery.decided",
                 "payload": {
                   "decision": "dispatch_resumed"
+                }
+              }
+            },
+            {
+              "event": {
+                "type": "execution.host.changed",
+                "origin": "provider",
+                "payload": {
+                  "host": {
+                    "generation": 2
+                  }
                 }
               }
             },

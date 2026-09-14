@@ -83,7 +83,7 @@ Owner decision, 2026-09-14. Each delivery has a **current determination** and a 
 - **What delivery does not establish.** `acknowledged` and `delivered` are distinct facts, and neither establishes comprehension, compliance or task success.
 - **Public record.** `execution.inspect` shows each delivery as `{ delivery_id, delivery, evidence, proof_class?, determined_at, history: [ { delivery, evidence?, recorded_at } ] }`.
 - **Effect status.** The delivery effect's status (CORE §19) follows the determination: `acknowledged` and `delivered` give `succeeded`; `not_delivered` and `failed_before_delivery` give `failed`; `ambiguous` gives `unknown`; `pending` gives `pending`.
-- **Refused admission** records the execution with no delivery and no effect.
+- **Refused admission** records the execution with no delivery and no effect. Its `delivery` axis is `failed_before_delivery`, because nothing was or will be dispatched; the other axes keep their initial values (`runtime: preparing`, `result: absent`, `exit: unavailable`, `evaluation: not_requested`). A queued execution's `delivery` is `pending`.
 
 `requires_action` is a runtime condition, not a progress level. `cancel_requested` is not `cancelled` (§7).
 
@@ -172,6 +172,8 @@ Five distinct timeouts, each with its own `execution.timeout.passed` event when 
 
 When the `delivery` timeout passes, the evidence wait ends: a `pending` delivery becomes `ambiguous` if dispatch began, or `failed_before_delivery` if it provably did not (§3.1). A timeout closes a permitted wait or triggers a control action. It never proves that remote work ended, never refunds unresolved liability (§12), and never marks an effect as not having happened (CORE §19).
 
+Each timeout applies only while its wait is open: `queue` while queued, `delivery` while delivery is `pending`, `execution_deadline` and `inactivity` while runtime is not `exited`, and `reconciliation` while delivery is `ambiguous`. A timeout passes at the first provider-clock instant at or after its start plus its seconds.
+
 Timeouts are evaluated against the provider clock. Conformance controls that clock from the environment (§15).
 
 ## 9. Execution events
@@ -181,7 +183,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | Type | Payload |
 |---|---|
 | `execution.admission.changed` | `{ "admission", "reason"?, "queue_reason"?, "delivery_id"? }`; `delivery_id` when a queued execution is admitted |
-| `execution.delivery.observed` | `{ "delivery_id", "delivery", "proof_class", "evidence" }` |
+| `execution.delivery.observed` | `{ "delivery_id", "delivery", "proof_class"?, "evidence" }`; `proof_class` only when the evidence is a proof class (§3) |
 | `execution.delivery.reconciled` | `{ "delivery_id", "outcome": "delivered" \| "not_delivered" \| "unknown", "delivery", "evidence" }`; `delivery` is the resulting current determination |
 | `execution.recovery.decided` | `{ "delivery_id", "decision", "reason", "host" }` (§7.1) |
 | `execution.dispatch.fenced` | `{ "delivery_id", "generation", "current_generation" }`: an older dispatcher was refused (§7.1) |
@@ -191,7 +193,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.completion.recorded` | `{ "completion_id", "digest", "invocation_id", "host", "status": "recorded" \| "duplicate" \| "conflict" \| "superseded_attempt" }` |
 | `execution.cancel.requested` / `execution.cancel.observed` | `{ "receipt" }` / `{ "outcome" }` |
 | `execution.timeout.passed` | `{ "timeout" }` |
-| `execution.host.changed` | `{ "host" }`, when the host generation changes |
+| `execution.host.changed` | `{ "host" }`, whenever the host generation changes, including when recovery advances it (§7.1) |
 | `core.effect.obligation.overdue` | `{ "effect", "obligation" }`, on the execution subject whose effect it is |
 | `execution.steer.requested` | `{ "steer_id", "request": "recorded" \| "not_supported" }` (§11.1) |
 | `execution.steer.delivery.observed` | `{ "steer_id", "delivery_id", "delivery", "evidence" }` |
@@ -349,6 +351,40 @@ Execution fixtures need harness behavior, faults and time that ordinary operatio
   - Fixtures that use barriers apply only to participants declaring those names. Others report `unsupported`, recorded as a coverage limit and never as a pass.
 
 No execution operation, method name, event type or error is reserved for testing. A provider launched without a conformance launch configuration exposes none of these controls.
+
+### 15.1 Conformance executor conventions
+
+Normative only for an executor running under the conformance launch configuration (owner decision Q4). They fix names and orderings the contract leaves to executors, so fixtures can observe them. A production executor may choose differently, and callers must not depend on these values.
+
+- **Identifiers.**
+  - Prompt delivery effect: `<execution>.delivery-1`, with obligation `<effect>.evidence`.
+  - Steering: request `<execution>.steer-<n>`, delivery effect `<steer id>.delivery`, obligation `<effect>.evidence`.
+  - Cancel forwarding: `<execution>.cancel-<n>`, obligation `<effect>.outcome`. Action response: `<execution>.response-<n>`, obligation `<effect>.evidence`. Status probe: `<execution>.probe-<n>`, obligation `<effect>.result`.
+  - Checkpoint `<execution>.checkpoint-<n>`; workspace lease `<execution>.workspace`.
+- **Effect kinds:** `execution.prompt_submission`, `execution.steering_delivery`, `execution.cancel_forwarding`, `execution.action_response`, `execution.status_probe`.
+- **Evidence classes.** Sources are free text.
+
+  | Observation | Class |
+  |---|---|
+  | Effect recorded in its owner transaction (`pending`) | `recorded_before_dispatch` |
+  | Write-ahead dispatch marker written (`pending`, appended to the effect) | `dispatch_intent` |
+  | Harness report for a dispatch | the proof class |
+  | Attempt whose outcome is unknown | `transport_error` |
+  | Recovery decision, on the delivery record | `recovery` |
+  | Recovery decision, on the effect | `dispatch_uncertain` (ambiguous) or `never_dispatched` (failed before delivery) |
+  | Delivery wait ended | `delivery_timeout` if dispatched, otherwise `delivery_timeout_before_dispatch` |
+  | Reconciliation finding | `reconciliation` |
+  | Cancellation answered by the harness | `harness_response` |
+  | Status probe answered | `harness_status` |
+  | Behavior attributable to a steering message | `harness_observation` |
+- **Script steps.**
+  - Dispatch happens only at `deliver`, at `crash: after_write`, and at a `stale_dispatch` that is not fenced. `deliver` is one dispatch attempt. Once delivery is no longer `pending`, `deliver` and `crash` steps have no effect: a delivery is never dispatched twice, and later evidence for an ambiguous delivery is scripted with `reconcile_finds`.
+  - `stall` stops the script without dispatching. `exit` also sets runtime `exited`.
+  - When every requested action is answered, `wait_for: action` sets runtime `active` and sends each response, which the harness acknowledges (`provider_ack_id`; the response effect `succeeded`, its obligation satisfied).
+  - `transport_errors` makes the next attempts end unknown. Retryable classes (`read`, `idempotent_key`) get at most three attempts; `non_repeatable` gets one.
+  - Capacity is released when runtime is `exited`.
+- **Inspect members.** `steering` and `actions` appear only once they have an entry.
+- **Event order.** At a delivery timeout: `execution.timeout.passed`, then `core.effect.obligation.overdue` for each open obligation, then `execution.delivery.observed`. At recovery: `execution.recovery.decided`, the delivery observation if any, then `execution.host.changed`.
 
 ## 16. What execution does not establish
 

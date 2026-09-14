@@ -261,6 +261,7 @@ pub fn retry_class(code: &str) -> &'static str {
     match code {
         "negotiation_required" | "profile_not_negotiated" => "after_renegotiate",
         "dedupe_history_unavailable"
+        | "effect_history_unavailable"
         | "stale_authority_epoch"
         | "precondition_failed"
         | "internal_error" => "after_reconcile",

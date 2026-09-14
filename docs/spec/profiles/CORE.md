@@ -196,7 +196,7 @@ Some operations act under an authority that can be taken over, such as a control
 
 | Condition | Result |
 |---|---|
-| Epoch absent where the operation requires one | `invalid_envelope` |
+| Epoch absent where the operation requires one | `invalid_envelope`, unless the profile states otherwise. A profile whose epoch exists only once claimed may treat an absent epoch as epoch 0, so it is `stale_authority_epoch` once any epoch exists (EXECUTION §11.3). |
 | Epoch lower than the current epoch | `stale_authority_epoch`. The error includes `current_epoch` only if the principal may read the scope's authority subject (§7 rules), such as `core-test.authority` for scope `core-test`. |
 | Epoch higher than any the provider issued | `unknown_authority_epoch` |
 
@@ -298,6 +298,7 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `digest_mismatch` | `no` | `command_digest` differs from the recomputed digest | `expected` |
 | `idempotency_conflict` | `no` | Command identity bound to a different intent | `command_id` |
 | `dedupe_history_unavailable` | `after_reconcile` | Command identity may have been used but its record was discarded | `oldest_retained` |
+| `effect_history_unavailable` | `after_reconcile` | The effect may have been recorded but its record is no longer retained (§19.2) | — |
 | `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
@@ -543,7 +544,6 @@ Rules:
 - **Expiry while idle.** Expiry needs no command. A grant stops authorizing at `expires_at` on the provider clock (§15.3), and no item committed at or after that instant is delivered under it.
   - On a shared transport the provider re-checks idle subscriptions at the same latency as other lapses, so the final notification follows without a request.
   - On stdio, only the session itself commits commands, so nothing can become deliverable while it is idle. There the provider may report the end after the next request.
-  - The conformance launch clock is fixed for a process's lifetime, so no portable fixture observes expiry during a session.
 - **Consumers.** Semantic events are never dropped silently. Consumers deduplicate by position and resume from the last cursor they durably processed. A reconnect may therefore replay items.
 
 ### 16.6 Authorization

@@ -271,13 +271,6 @@ pub(crate) fn status_for(delivery: &str) -> &'static str {
     }
 }
 
-fn is_terminal(delivery: &str) -> bool {
-    matches!(
-        delivery,
-        "acknowledged" | "delivered" | "not_delivered" | "failed_before_delivery"
-    )
-}
-
 /// Replace the current delivery determination, keeping the previous one in history.
 pub(crate) fn determine(
     record: &mut Value,
@@ -579,6 +572,10 @@ pub fn submit(
         (None, None) => "admitted",
     };
     record["admission"] = json!(admission);
+    if admission == "refused" {
+        // Never dispatched and never will be: the axis does not stay pending (EXECUTION 3.1).
+        record["delivery"] = json!("failed_before_delivery");
+    }
     let mut outcome = json!({"execution": subject(execution_id), "admission": admission});
     let mut event = json!({"admission": admission});
     let mut effect_refs = Vec::new();
@@ -934,6 +931,14 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
             }
         }
         drafts[0].3["host"] = record["host"].clone();
+        if decision != "failed_before_delivery" && !mutants.on("recovery-host-change-silent") {
+            drafts.push((
+                "execution.host.changed",
+                subject(&id),
+                revision,
+                json!({"host": record["host"]}),
+            ));
+        }
         if let Some(list) = record["recovery"].as_array_mut() {
             list.push(json!({"delivery_id": delivery_id, "decision": decision, "reason": reason, "recorded_at": now}));
         }
@@ -1915,6 +1920,7 @@ fn timeouts(
         let revision = revision + 1;
         push(&mut record, "timeouts_passed", json!("queue"));
         record["admission"] = json!("refused");
+        record["delivery"] = json!("failed_before_delivery");
         record["reason"] = json!("queue_timeout");
         record["alternative"] = json!("submit again when the executor can admit it");
         if let Some(map) = record.as_object_mut() {
@@ -1952,9 +1958,7 @@ fn timeouts(
     }
     let started = started_at(&record);
     let mut due = Vec::new();
-    if !is_terminal(record["delivery"].as_str().unwrap_or_default())
-        && due_at(Some(&started), "delivery")
-    {
+    if record["delivery"] == "pending" && due_at(Some(&started), "delivery") {
         due.push("delivery");
     }
     if record["runtime"] != "exited" && due_at(Some(&started), "execution_deadline") {

@@ -271,7 +271,8 @@
       "semantic-events-dropped-under-pressure",
       "unavailable-after-binding",
       "internal-error-state-without-binding",
-      "correlation-dropped"
+      "correlation-dropped",
+      "recovery-host-change-silent"
     ]
   }
 }

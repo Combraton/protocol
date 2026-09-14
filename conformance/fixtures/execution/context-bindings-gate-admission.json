@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.context-bindings-gate-admission",
-  "version": 1,
+  "version": 2,
   "title": "An unsatisfied required-before-start binding, including a held packet with another digest, is queued rather than admitted as ready; an advisory gap stays visible; the queue timeout ends the wait",
   "requirements": [
     "EXE-17",
@@ -349,7 +349,8 @@
           "reason": "queue_timeout",
           "queue_reason": {
             "$absent": true
-          }
+          },
+          "delivery": "failed_before_delivery"
         }
       }
     },

@@ -22,7 +22,7 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - every declared mutant killed;
   - peer-user check `pass`, and its mutant check `pass`.
 
-  The docs-only head that follows is confirmed in the handoff.
+  CI for the later records-only commits is shown in PR #3's checks. `0f84d6c` passed Conformance run 34827777661 and Documentation.
 - **Owner decisions recorded:**
   - scope accepted;
   - macOS and Linux only;

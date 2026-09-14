@@ -6,104 +6,83 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-14, after the owner-requested M2 close-out pass.
-- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 is complete on branch `release-0.1/m2`, including the close-out pass ([M2 task](M2.md)). It awaits owner acceptance in PR #3. Both implementations pass the suite.
+- **Checkpoint:** 2026-09-14, M3 step 1.
+- **Status:** M0, M1 and M2 merged. M3 in progress on `release-0.1/m3` ([M3 task](M3.md)).
 
 ## Goal, decisions and constraints
 
 - **Plan:** [PLAN](PLAN.md), [MATRIX](MATRIX.md).
-- **Owner decisions (2026-09-13):**
-  - Scope accepted.
-  - macOS and Linux only (U4).
-  - MIT license (U6).
-  - Decision records 001–005 accepted.
-  - Rust tooling, because PIO, CBR and the control plane are Rust.
-  - U12: credential file plus `core.authenticate` ([decision 006](../../decisions/006-unix-socket-principal-credential.md)).
-- **Constraints:** Protocol owns contracts and fixtures only. Nothing is released. Commit and push as work progresses (owner request). Do not merge without owner authorization.
+- **Owner decisions:**
+  - Scope accepted; macOS and Linux only (U4); MIT (U6); Rust tooling.
+  - Decision records 001–006 accepted; 001 amended for distinct outcomes.
+  - U12: credential file plus `core.authenticate`.
+  - **M2 accepted on 2026-09-14** with its documented limitations.
+  - M3 is a separate PR. Its acceptance keeps:
+    - effects/reconciliation;
+    - telemetry gaps and backpressure;
+    - fault injection;
+    - a controllable test clock;
+    - idle-expiry coverage;
+    - a deterministic concurrency regression where feasible;
+    - test controls outside the production protocol;
+    - a scripted executor, with real harness adapters remaining PIO work;
+    - independent checks and uploaded CI evidence.
+- **Constraints:**
+  - Protocol owns contracts and fixtures only. Nothing is released.
+  - Commit and push as work progresses. Do not merge without authorization.
+  - Substantive code changes found necessary before a merge are presented for review first.
+  - Never create a records-only commit merely to note that the previous commit passed CI; link PR checks.
 
 ## Git state
 
-- **Branches.** `main` at `f42d21a`. `release-0.1/m2` is pushed; its head is in `git log`.
-- **M2 PR:** [#3](https://github.com/Combraton/protocol/pull/3), open for owner review.
-- **Latest M2 commits (oldest first):**
+- **Merges.**
+  - `main` at `7bd5cb9`, the merge of PR #3.
+  - PR #3's final head `e7937ef` passed all checks: see [PR #3 checks](https://github.com/Combraton/protocol/pull/3/checks).
+- **Branch.** `release-0.1/m3` from `7bd5cb9`. The M3 PR link is in the issue #1 comment for this checkpoint and in `gh pr list`.
+- **Worktrees.** None active.
 
-| Commit | Change |
-|---|---|
-| `26f8d5b` | Unix-socket binding with principal credentials (decision 006) |
-| `668928e` | Positive fixtures for M2 rows that had only negative coverage |
-| `6ea7c67` | Draft M3 Execution task packet |
-| `561939a`, `341b363` | Independent Python provider extended to grants, events and capabilities; merged |
-| `6c64ae4` | Section E resolutions: spec, schema, reference, runner, 22 new and 4 revised fixtures |
-| `572cd65` | Merge of the independent third pass (section F of its divergence log) |
-| `eabfd8e` | Section F resolutions: spec, reference, 9 new and 2 revised fixtures, 20 mutants |
-| `9571ed9` | PR #3 recorded |
-| `8530c26` | Close-out pass: idle revocation race fix, capability revision fix, issue check order, reference-only cursor test, peer-user check, distinct outcomes, CI artifacts |
-| next commit | Close-out records: M2 close-out table, M3 acceptance criteria, state, handoff |
+## What exists
 
-## What exists on `release-0.1/m2`
-
-- **Core draft:**
-  - §15 grants: denial order, delegation bounds, issue validation at step 6, binding scopes, revocation rules, which operations are protected.
-  - §16 events: visibility equal to direct read authority, exact `filtered`, snapshot contents, old-epoch cursors, size limits, `ended` notifications.
-  - §17 capabilities.
-  - §18 credentials.
-- **STREAM:** stdio and Unix-socket forms.
-- **Suite:**
-  - 155 fixtures; 147 reference mutants.
-  - The runner enforces the caller's receive limit on every received frame and notification-after-response ordering.
-  - It supports `any_of`, fresh data directories and `$repeat` values.
-  - New launch key: `events.unvouched_last`.
+- **Merged on `main`:**
+  - Core §1–§18;
+  - STREAM with stdio and Unix socket;
+  - ENCODING;
+  - 155 fixtures and 147 reference mutants;
+  - the independent Python Core provider;
+  - the peer-user check;
+  - CI with distinct outcomes and uploaded result artifacts.
+- **On `release-0.1/m3` (step 1, documentation):**
+  - `docs/spec/profiles/EXECUTION.md` (proposed draft);
+  - CORE §19 effects and obligations (proposed draft);
+  - `docs/decisions/007-execution-test-controls.md` (proposed);
+  - refined MATRIX rows for M3, with new rows REL-12, REL-13, OBS-9 and SCN-12 to SCN-15;
+  - the M3 task packet with work plan and open questions Q1–Q4.
 
 ## Evidence
 
-**CI, Conformance run 34821316336 at `8530c26`.** Success on Ubuntu and macOS, plus the cross-check job. Its artifacts `conformance-results-ubuntu-latest` and `conformance-results-macos-latest` were downloaded and inspected. On both OSes:
-
-| Result | Outcome |
-|---|---|
-| Reference, stdio | 148 pass, 7 skipped (socket fixtures) |
-| Reference, Unix socket | 155 pass |
-| Independent Python, stdio | 148 pass, 7 skipped |
-| `check-mutants`, stdio and socket | all declared mutants killed (`mutants.json`) |
-| Peer-user check | `pass`: root client (uid 0) closed with 0 bytes; same-user control answered |
-| Peer-user check with `skip-peer-check` | `pass`: root client answered, so the check detects the missing rule |
-
-**Local (macOS arm64), all exit 0 except as noted:**
-- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build --workspace --locked`, `cargo test --workspace --locked`: the latter includes the capability-revision unit test, which fails against the old digest, and the reference cursor test;
-- `self-test`, `check-fixtures` (155);
-- `run` and `check-mutants` for both reference participants, and `run` for the independent participant;
-- `python3 scripts/check_docs.py`;
-- `peer_user_check.py`: exit 77 `unsupported`, because this host has no passwordless `sudo`.
-
-**Independence notes:**
-- The second pass found a disclosure bug and a receive-limit bug.
-- The third found 21 unguarded requirements, all now guarded.
-- The close-out pass found two real reference bugs, both fixed: the idle re-check race and the capability digest.
+- **M2:** the close-out table in [M2](M2.md) and the [PR #3 checks](https://github.com/Combraton/protocol/pull/3/checks), whose uploaded artifacts hold every manifest.
+- **M3 step 1:** documentation only. `python3 scripts/check_docs.py` reports 0 errors, and `check-fixtures` reports 155 fixtures and 134 matrix IDs ok, locally. CI evidence is the M3 PR's checks.
 
 ## What remains uncertain
 
-- **Concurrency.** Ordering under concurrent revocation rests on the processing lock and code review. The race cannot be forced deterministically.
-- **Idle grant expiry during a session.** No portable fixture observes it, because the launch clock is fixed. A controllable test clock is an M3 acceptance criterion.
-- **Peer-user check.** It exercises only root as the other user, and hosts without passwordless `sudo` report `unsupported`.
-- **Reference-only evidence.** Capability revision on an evidence-source change, and cursors past the head, are tested only by reference tests. Portable fixtures cannot force them.
-- **Single implementation:** the Unix-socket binding and credentials.
-- **Deferred to M3 acceptance:**
-  - effects and reconciliation;
-  - telemetry lost ranges;
-  - backpressure;
-  - fault injection;
-  - pipelined requests.
-
-  Highest-common-major selection is deferred to M6.
+- **Q1–Q4 and decision 007** await owner review:
+  - completion submission internal or public;
+  - discovery scope;
+  - the `consumer_too_slow` ended reason;
+  - the scripted vocabulary status.
+- **Draft names.** Execution operation and event names are candidates until schemas and fixtures land.
+- **Race evidence.** The deterministic race regression depends on the barrier design in decision 007; until step 2 lands, the M2 lock fix rests on code review.
+- **M2 limits carried forward:** root is the only other OS user tested; capability evidence-source and cursor-past-head evidence is reference-only.
 
 ## Active resources
 
-None. Conformance runs spawn short-lived providers in temporary directories.
+None.
 
 ## State and prompt disposition
 
-[STATE](../STATE.md) is updated. The workspace continuation prompt points here.
+[STATE](../STATE.md) is updated. The workspace M2 continuation prompt is retired; STATE and this handoff are the entry points.
 
 ## Next action
 
-1. Owner acceptance of [PR #3](https://github.com/Combraton/protocol/pull/3). Do not merge without authorization.
-2. After acceptance, start M3 in a separate PR per [M3](M3.md), with its explicit acceptance criteria.
+1. M3 step 2: test controls (clock file, `set_clock`, `kill`, `send`/`expect_response`, `pause_reading`, barriers) in the runner and reference; the idle-expiry fixture; the barrier regression with mutant `recheck-outside-lock`.
+2. Bring Q1–Q4 and decision 007 to the owner at the next checkpoint.

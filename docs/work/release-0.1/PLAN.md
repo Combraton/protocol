@@ -130,7 +130,7 @@ Effects, telemetry lost ranges and backpressure moved to M3 on 2026-09-13, becau
 
 ### M3 — Execution profile
 
-All EXE rows with a deterministic reference executor (fake host), mutants and scenarios for lost acknowledgment, crash between journal and dispatch, delayed old-attempt result, two controllers and cancellation acknowledgment loss. Also the Core effect contract (EFF-1 to EFF-4), telemetry lost ranges (OBS-7) and backpressure (TRN-4), exercised through execution delivery, cancellation and output spooling.
+All EXE rows with a deterministic reference executor (fake host), mutants and scenarios for lost acknowledgment, crash between journal and dispatch, delayed old-attempt result, two controllers and cancellation acknowledgment loss. Also the Core effect contract (EFF-1 to EFF-4), telemetry lost ranges (OBS-7) and backpressure (TRN-4), exercised through execution delivery, cancellation and output spooling. Detailed in the [M3 task](M3.md), whose explicit acceptance criteria also include a controllable test clock, idle-expiry coverage (OBS-9), deterministic concurrency regressions (REL-13) and test controls outside the protocol (REL-12, [decision 007](../../decisions/007-execution-test-controls.md)).
 
 ### M4 — Evidence and Context profiles
 

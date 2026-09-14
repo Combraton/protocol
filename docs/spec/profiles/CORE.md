@@ -1,8 +1,8 @@
 # Core profile `core/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are M2 drafts (§18 accepted by decision 006).** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are accepted M2 drafts (§18 by decision 006). §19 effects and obligations is a proposed M3 draft.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
-This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and effect reconciliation are Core too; they are specified in milestone M2 and marked **reserved** below.
+This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions and capability snapshots are specified in §15–§18 (milestone M2). Effect reconciliation is Core too; §19 is a proposed M3 draft.
 
 Wire encoding, digests and transport are defined separately:
 
@@ -618,3 +618,58 @@ Accepted by [decision 006](../../decisions/006-unix-socket-principal-credential.
 ### 18.3 What credentials do not establish
 
 A successful authentication proves that the caller possessed the credential. It does not prove which program the caller is. On a machine where coding agents run as the same user without file-access enforcement, an agent that can read the credential file can act as that principal. Execution providers must report the enforcement level protecting credential files (`enforced`, `mediated` or `cooperative`) in their capabilities. Revoking a credential stops future authentications. It does not end sessions already authenticated with it; the provider's administration may close those explicitly.
+
+## 19. Effects and obligations (proposed M3 draft)
+
+> Proposed for milestone M3 with the [Execution profile](EXECUTION.md). Not normative until M3 is accepted with schemas and fixtures. This section is negotiated as the Core feature `core.effects`. Matrix rows: EFF-1 to EFF-4.
+
+An **effect** is an action a provider takes, or attempts, outside its own store: submitting a prompt, forwarding a cancellation, delivering a steering message or a context packet. Its outcome can be uncertain even when the provider's own records are durable (SPEC §6).
+
+### 19.1 Effect descriptors
+
+An effect is recorded in the same owner transaction as the command that authorizes it (§10 step 8), before any external I/O. Its descriptor is immutable:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable effect ID. A network retry of the same effect keeps it. |
+| `kind` | Profile-defined, such as `execution.prompt_submission` |
+| `target` | What the effect acts on, such as an execution and its native session |
+| `payload_digest` | Digest of the payload sent or to be sent (ENCODING) |
+| `authorization` | The grant, or the authority principal, and the authority epoch it was authorized under |
+| `retry_class` | One of the classes in §19.3 |
+| `operation_ref` | The accepted command that recorded it |
+
+Its **status** is observed separately and appended as evidence: `pending`, `succeeded`, `failed`, `unknown`. Every observation names its evidence class and source (EFF-1).
+
+### 19.2 Querying after response loss
+
+`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns the descriptor, every status observation and any open obligation.
+
+- After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
+- A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.
+- An effect ID the provider never recorded is `not_found`. An effect record the provider no longer retains is `effect_history_unavailable`, never `not_found`.
+
+### 19.3 Retry classes
+
+| Class | A retry is permitted |
+|---|---|
+| `pure` | Always; no external state changes |
+| `read` | Under the caller's cost and privacy policy |
+| `idempotent_key` | Only within the target's promised key semantics, and with the same key |
+| `compensatable` | Only after the compensating action's outcome is known |
+| `non_repeatable` | Never automatically; reconciliation or a new explicit decision is required |
+
+A provider MUST NOT retry an effect outside its class. Blind retry of a `non_repeatable` effect after an `unknown` outcome is a conformance failure (EFF-3).
+
+### 19.4 Obligations
+
+An obligation records an expected observation: an effect outcome, a lifecycle transition, or required terminal output coverage. Each has a deadline on the provider clock.
+
+- **States:** `open`, `satisfied`, `overdue`, `aborted`.
+- **Deadline:** when the deadline passes with no observation, a provider-origin event marks the obligation `overdue`, even if no other event arrives.
+- **Aborting:** closes the wait. It MUST NOT change the effect's status: an aborted wait for an `unknown` effect leaves the effect `unknown` (EFF-4).
+- **Survival:** obligations survive cancellation, timeouts and restarts until satisfied or explicitly aborted.
+
+### 19.5 What effects do not establish
+
+A `succeeded` status is the provider's observation under its stated evidence class. It is not proof of the target's internal state, and a closed obligation is not proof that an effect did not happen.

@@ -45,6 +45,10 @@ impl Store {
              CREATE TABLE IF NOT EXISTS epoch_changes (
                to_epoch INTEGER PRIMARY KEY, from_epoch INTEGER NOT NULL, vouched_through INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS meta_text (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS effects (
+               id TEXT PRIMARY KEY, execution TEXT NOT NULL, record TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS outputs (
+               execution TEXT PRIMARY KEY, record TEXT NOT NULL);
              INSERT OR IGNORE INTO meta VALUES ('stream_epoch', 1), ('discarded_epoch', 0), ('discarded_sequence', 0), ('capability_revision', 0);
              INSERT OR IGNORE INTO meta VALUES ('dedupe_oldest', 1), ('dedupe_current', 1), ('operation_seq', 0);",
         )?;
@@ -153,9 +157,27 @@ impl Store {
         if kind == "core.grant" {
             return Ok(self.grant(id)?.map_or(0, |(revision, _)| revision));
         }
+        if kind == "core.effect" {
+            return Ok(self
+                .effect_record(id)?
+                .and_then(|record| record["revision"].as_i64())
+                .unwrap_or(0));
+        }
         Ok(self
             .subject(kind, id)?
             .map_or(0, |(revision, _, _)| revision))
+    }
+
+    /// Remove a command record (only for mutant `internal-error-state-without-binding`).
+    pub fn forget_command(&mut self, scope: &str, command_id: &str) -> rusqlite::Result<()> {
+        if let Some(map) = &mut self.volatile_commands {
+            map.remove(&(scope.to_string(), command_id.to_string()));
+        }
+        self.connection.execute(
+            "DELETE FROM commands WHERE scope=?1 AND command_id=?2",
+            params![scope, command_id],
+        )?;
+        Ok(())
     }
 
     /// Record a rejected command identity (only for mutant `bind-on-rejection`).
@@ -409,6 +431,35 @@ impl Store {
         let tx = self.connection.transaction()?;
         append_event(&tx, record, gap)?;
         tx.commit()
+    }
+
+    pub fn effect_execution(&self, effect: &str) -> rusqlite::Result<Option<String>> {
+        self.connection
+            .query_row("SELECT execution FROM effects WHERE id=?1", [effect], |r| {
+                r.get(0)
+            })
+            .optional()
+    }
+
+    /// An owner transaction for execution changes made outside a command (scripted executor ticks).
+    pub fn transaction(&mut self) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+        self.connection.transaction()
+    }
+
+    /// A read-only view for checks made before a command commits (rolled back when dropped).
+    pub fn reader(&self) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+        self.connection.unchecked_transaction()
+    }
+
+    /// An effect record (CORE section 19), including its revision.
+    pub fn effect_record(&self, effect: &str) -> rusqlite::Result<Option<serde_json::Value>> {
+        let record: Option<String> = self
+            .connection
+            .query_row("SELECT record FROM effects WHERE id=?1", [effect], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(record.and_then(|r| serde_json::from_str(&r).ok()))
     }
 
     pub fn capability_revision(&self) -> rusqlite::Result<i64> {

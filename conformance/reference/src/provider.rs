@@ -21,6 +21,9 @@ pub struct Limits {
     pub max_string_bytes: i64,
     pub max_array_items: i64,
     pub max_depth: i64,
+    /// Declared only to sessions that negotiate `core.events.backpressure` (CORE section 16.5).
+    pub max_pending_notification_bytes: i64,
+    pub backpressure_notice_ms: i64,
 }
 
 impl Limits {
@@ -93,6 +96,66 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.effects.get",
+        profile: "core",
+        command: false,
+    },
+    Operation {
+        name: "execution.submit",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.inspect",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
+        name: "execution.cancel",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.reconcile",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
+        name: "execution.steer",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.respond_action",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.controller.claim",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.workspace.checkpoint",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.discovery.list",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
+        name: "execution.output.read",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
+        name: "core.effects.abort_obligation",
+        profile: "core",
+        command: true,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -119,22 +182,70 @@ struct SupportedProfile {
     majors: &'static [i64],
     features: &'static [&'static str],
     depends_on: &'static [&'static str],
+    /// Core features the profile needs selected. Stated by the profile document and enforced at
+    /// negotiation; not advertised in the manifest (EXECUTION section 1).
+    requires_core_features: &'static [&'static str],
 }
 
 const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "core",
         majors: &[1],
-        features: &["core.grants", "core.events", "core.capabilities"],
+        features: &[
+            "core.grants",
+            "core.events",
+            "core.capabilities",
+            "core.effects",
+            "core.events.backpressure",
+        ],
         depends_on: &[],
+        requires_core_features: &[],
+    },
+    SupportedProfile {
+        name: "execution",
+        majors: &[1],
+        features: &EXECUTION_FEATURES,
+        depends_on: &["core"],
+        requires_core_features: &["core.events", "core.capabilities", "core.effects"],
     },
     SupportedProfile {
         name: "core-test",
         majors: &[1],
         features: &[],
         depends_on: &["core"],
+        requires_core_features: &[],
     },
 ];
+/// Optional `execution/1` features (EXECUTION section 11).
+const EXECUTION_FEATURES: [&str; 9] = [
+    "execution.steering",
+    "execution.actions",
+    "execution.controller",
+    "execution.workspaces",
+    "execution.usage",
+    "execution.context",
+    "execution.discovery",
+    "execution.continuation",
+    "execution.output",
+];
+
+/// Submit payload members whose meaning belongs to an optional feature.
+const FEATURE_FIELDS: [(&str, &str); 4] = [
+    ("workspace", "execution.workspaces"),
+    ("budget", "execution.usage"),
+    ("context_bindings", "execution.context"),
+    ("continuation", "execution.continuation"),
+];
+
+/// Execution commands that change what an execution does; they carry the controller epoch.
+const CONTROLLED_COMMANDS: [&str; 5] = [
+    "execution.submit",
+    "execution.cancel",
+    "execution.steer",
+    "execution.respond_action",
+    "execution.workspace.checkpoint",
+];
+
 const DECLARED_UNSUPPORTED: &[&str] = &["coordination", "remote-trust"];
 
 pub struct Reject {
@@ -150,6 +261,7 @@ pub fn retry_class(code: &str) -> &'static str {
     match code {
         "negotiation_required" | "profile_not_negotiated" => "after_renegotiate",
         "dedupe_history_unavailable"
+        | "effect_history_unavailable"
         | "stale_authority_epoch"
         | "precondition_failed"
         | "internal_error" => "after_reconcile",
@@ -200,7 +312,11 @@ pub struct Identity {
     pub principal: String,
     pub provider_id: String,
     pub authorities: Vec<String>,
-    pub fixed_clock: Option<String>,
+    pub clock: std::sync::Arc<crate::clock::Clock>,
+    /// Scripted executor configuration (test environment; decision 007).
+    pub executor: std::sync::Arc<Value>,
+    /// Injected store faults remaining in this process (test environment; decision 007).
+    pub faults: std::sync::Arc<std::sync::Mutex<Value>>,
 }
 
 pub struct Provider {
@@ -275,11 +391,47 @@ impl Provider {
         self.selected.is_some()
     }
 
+    /// Bytes of produced but unwritten output a connection may hold (CORE section 16.5).
+    pub fn pending_output_bound(&self) -> usize {
+        self.limits.max_pending_notification_bytes.max(1) as usize
+    }
+
+    pub fn backpressure_notice_ms(&self) -> u64 {
+        self.limits.backpressure_notice_ms.max(0) as u64
+    }
+
+    pub fn backpressure_negotiated(&self) -> bool {
+        self.feature_negotiated("core.events.backpressure")
+    }
+
+    /// End every subscription of this session with `reason`; returns the final notifications.
+    pub fn end_subscriptions(&mut self, reason: &str) -> Vec<Value> {
+        let subscriptions = std::mem::take(&mut self.subscriptions);
+        subscriptions
+            .iter()
+            .map(|subscription| {
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "core.events.notify",
+                    "params": {"subscription": subscription.id, "items": [], "next_cursor": self.cursor(subscription.position, false).unwrap_or_default(), "ended": {"reason": reason}},
+                })
+            })
+            .collect()
+    }
+
     /// Handle one request. `id` is the validated JSON-RPC id.
     pub fn handle(&mut self, id: Value, method: &str, params: Value) -> Value {
-        let _guard = PROCESSING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = match PROCESSING.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // Test signal (decision 007): this request found the lock held and will wait.
+                crate::barriers::signal(crate::barriers::LOCK_CONTENDED);
+                PROCESSING
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            }
+        };
         let response = match self.process(&id, method, params) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
             Err(Reject { code, details }) => error_response(id.clone(), code, details),
@@ -297,7 +449,18 @@ impl Provider {
             || crate::json::encode_frame(value).len() - 1 + overhead <= self.caller_frame_limit
     }
 
+    /// Advance the scripted executor against the provider clock (EXECUTION section 15).
+    fn tick(&mut self) {
+        let now = self.identity.clock.now();
+        let executor = self.identity.executor.clone();
+        if let Err(error) = crate::execution::tick(&mut self.store, &now, &executor, &self.mutants)
+        {
+            eprintln!("executor tick: {error}");
+        }
+    }
+
     fn process(&mut self, id: &Value, method: &str, params: Value) -> Result<Value, Reject> {
+        self.tick();
         let route = if self.mutants.on("route-by-operation") {
             params
                 .get("operation")
@@ -367,27 +530,27 @@ impl Provider {
             if operation.command || !self.mutants.on("requires-commands-only") {
                 self.check_requires(&params)?;
             }
-            let feature = if operation.name.starts_with("core.grant.") {
-                Some("core.grants")
-            } else if operation.name.starts_with("core.events.") {
-                Some("core.events")
-            } else if operation.name == "core.capabilities" {
-                Some("core.capabilities")
-            } else {
-                None
+            let feature = match operation.name {
+                name if name.starts_with("core.grant.") => Some("core.grants"),
+                name if name.starts_with("core.events.") => Some("core.events"),
+                "core.capabilities" => Some("core.capabilities"),
+                name if name.starts_with("core.effects.") => Some("core.effects"),
+                _ if self.mutants.on("feature-operations-ungated") => None,
+                "execution.steer" => Some("execution.steering"),
+                "execution.respond_action" => Some("execution.actions"),
+                "execution.controller.claim" => Some("execution.controller"),
+                "execution.workspace.checkpoint" => Some("execution.workspaces"),
+                "execution.discovery.list" => Some("execution.discovery"),
+                "execution.output.read" => Some("execution.output"),
+                _ => None,
             };
-            if let Some(feature) = feature {
-                let negotiated = self
-                    .selected
-                    .as_ref()
-                    .and_then(|selected| selected.get("core"))
-                    .is_some_and(|features| features.iter().any(|f| f == feature));
-                if !negotiated {
-                    return Err(reject(
-                        "unsupported_required_feature",
-                        json!({"features": [feature]}),
-                    ));
-                }
+            if let Some(feature) = feature
+                && !self.feature_negotiated(feature)
+            {
+                return Err(reject(
+                    "unsupported_required_feature",
+                    json!({"features": [feature]}),
+                ));
             }
         }
 
@@ -486,14 +649,18 @@ impl Provider {
                             "operation_ref": ack["operation_ref"],
                             "command_id": ack["command_id"],
                             "caused_by": [],
-                            "recorded_at": grants::now(self.identity.fixed_clock.as_deref()),
+                            "recorded_at": self.identity.clock.now(),
                             "payload": stored_value["outcome"],
                         });
                         self.store
                             .append_standalone_event(record, false)
                             .map_err(storage)?;
                     }
-                    return replay(&stored.response);
+                    let mut replayed = replay(&stored.response)?;
+                    if self.mutants.on("replay-effect-refs-differ") {
+                        replayed["acknowledgment"]["effect_refs"] = json!([]);
+                    }
+                    return Ok(replayed);
                 }
                 return Err(reject(
                     "idempotency_conflict",
@@ -565,7 +732,7 @@ impl Provider {
         let operation_name = operation.name;
         let payload = params["payload"].clone();
         let stream = self.store.stream_id().map_err(storage)?;
-        let recorded_at = grants::now(self.identity.fixed_clock.as_deref());
+        let recorded_at = self.identity.clock.now();
         let caused_by = if self.mutants.on("drop-caused-by") {
             json!([])
         } else {
@@ -578,17 +745,68 @@ impl Provider {
         let sequence_gap = self.mutants.on("event-sequence-gap");
         let no_issued_events = self.mutants.on("no-grant-issued-events");
         let revoke_target_only = self.mutants.on("revoke-event-target-only");
+        let executor = self.identity.executor.clone();
+        let grant_id = params
+            .get("grant")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let fault = self.take_fault(operation_name);
+        let fail_commit =
+            fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
+        let mutants = &self.mutants;
         let response = self
             .store
             .commit_with(&scope, &key, generation, &digest, |tx, sequence| {
-                let (revision, outcome, events) = apply_change(
-                    tx,
-                    operation_name,
-                    &subject,
-                    &payload,
-                    &principal,
-                    &revoke_ids,
-                )?;
+                let context = crate::execution::Context {
+                    now: recorded_at.clone(),
+                    executor: &executor,
+                    mutants,
+                    principal: &principal,
+                    grant: grant_id.as_deref(),
+                };
+                let (revision, outcome, events, effect_refs) = match operation_name {
+                    "execution.submit" => {
+                        crate::execution::submit(tx, &subject_id, &payload, sequence, &context)?
+                    }
+                    "execution.cancel" => {
+                        crate::execution::cancel(tx, &subject_id, sequence, &context)?
+                    }
+                    "execution.steer" => {
+                        crate::features::steer(tx, &subject_id, &payload, sequence, &context)?
+                    }
+                    "execution.respond_action" => crate::features::respond_action(
+                        tx,
+                        &subject_id,
+                        &payload,
+                        sequence,
+                        &context,
+                    )?,
+                    "execution.controller.claim" => {
+                        crate::features::claim_controller(tx, &subject_id, &principal)?
+                    }
+                    "execution.workspace.checkpoint" => {
+                        crate::features::checkpoint(tx, &subject_id, &context)?
+                    }
+                    "core.effects.abort_obligation" => {
+                        crate::features::abort_obligation(tx, &subject_id, &payload, &context)?
+                    }
+                    _ => {
+                        let (revision, outcome, events) = apply_change(
+                            tx,
+                            operation_name,
+                            &subject,
+                            &payload,
+                            &principal,
+                            &revoke_ids,
+                        )?;
+                        let refs = if mutants.on("effect-refs-on-core-operations") {
+                            vec![format!("{subject_id}.effect-1")]
+                        } else {
+                            Vec::new()
+                        };
+                        (revision, outcome, events, refs)
+                    }
+                };
                 if record_events {
                     for (event_type, event_subject, event_revision, event_payload) in events {
                         if (event_type == "core.grant.issued" && no_issued_events)
@@ -613,6 +831,10 @@ impl Provider {
                         crate::store::append_event(tx, record, sequence_gap)?;
                     }
                 }
+                if fail_commit {
+                    // Injected: the owner transaction cannot commit, so it rolls back.
+                    return Err(rusqlite::Error::InvalidQuery);
+                }
                 Ok(json!({
                     "acknowledgment": {
                         "command_id": command_id,
@@ -620,17 +842,46 @@ impl Provider {
                         "operation_ref": format!("op-{sequence}"),
                         "subject": subject,
                         "revision": revision,
-                        "effect_refs": [],
+                        "effect_refs": effect_refs,
                     },
                     "outcome": outcome,
                 })
                 .to_string())
             })
             .map_err(storage)?;
+        match fault {
+            Some("commit_unavailable") => return Err(reject("unavailable", json!({}))),
+            Some("response_internal_error") => {
+                if self.mutants.on("internal-error-state-without-binding") {
+                    self.store.forget_command(&scope, &key).map_err(storage)?;
+                }
+                return Err(reject("internal_error", json!({})));
+            }
+            _ => {}
+        }
         let mut result: Value =
             serde_json::from_str(&response).map_err(|_| reject("internal_error", json!({})))?;
         result["replay"] = json!(false);
         Ok(result)
+    }
+
+    /// Consume one injected fault for this operation, if launch configuration scheduled one.
+    fn take_fault(&self, operation: &str) -> Option<&'static str> {
+        let mut faults = self
+            .identity
+            .faults
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for kind in ["commit_unavailable", "response_internal_error"] {
+            for entry in faults[kind].as_array_mut().into_iter().flatten() {
+                let times = entry["times"].as_i64().unwrap_or(0);
+                if entry["operation"] == operation && times > 0 {
+                    entry["times"] = json!(times - 1);
+                    return Some(kind);
+                }
+            }
+        }
+        None
     }
 
     /// The target grant plus, unless mutated, every grant delegated from it.
@@ -731,6 +982,68 @@ impl Provider {
         }
     }
 
+    /// Rights whose subject is known only after a lookup: an effect's target, or the execution a
+    /// principal's own command created. Unresolvable targets use an ID no grant covers.
+    fn resolved_rights(
+        &self,
+        operation: &str,
+        params: &Value,
+    ) -> Result<Option<Vec<(String, Value)>>, Reject> {
+        let execution = match operation {
+            "core.effects.get" if self.mutants.on("effect-visible-across-principals") => {
+                return Ok(None);
+            }
+            "core.effects.get" => {
+                self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
+            }
+            "core.effects.abort_obligation" => {
+                let execution =
+                    self.effect_execution(params["subject"]["id"].as_str().unwrap_or_default())?;
+                let id = execution.unwrap_or_else(|| "-unresolved".to_string());
+                return Ok(Some(vec![(
+                    "core.effects.abort_obligation".to_string(),
+                    json!({"kind": crate::execution::KIND, "id": id}),
+                )]));
+            }
+            "execution.reconcile" => match params["payload"]["delivery_id"].as_str() {
+                Some(delivery) => self.effect_execution(delivery)?,
+                None => self
+                    .store
+                    .find_command(
+                        &self.identity.principal,
+                        params["payload"]["command_id"].as_str().unwrap_or_default(),
+                    )
+                    .map_err(storage)?
+                    .and_then(|stored| serde_json::from_str::<Value>(&stored.response).ok())
+                    .and_then(|response| {
+                        response["acknowledgment"]["subject"]["id"]
+                            .as_str()
+                            .map(String::from)
+                    }),
+            },
+            _ => return Ok(None),
+        };
+        // Not a valid identifier, so no grant resource can name it exactly.
+        let id = execution.unwrap_or_else(|| "-unresolved".to_string());
+        Ok(Some(vec![(
+            "execution.read".to_string(),
+            json!({"kind": crate::execution::KIND, "id": id}),
+        )]))
+    }
+
+    fn effect_execution(&self, effect: &str) -> Result<Option<String>, Reject> {
+        self.store.effect_execution(effect).map_err(storage)
+    }
+
+    /// Whether a profile feature was negotiated in this session.
+    fn feature_negotiated(&self, feature: &str) -> bool {
+        let profile = feature.split('.').next().unwrap_or_default();
+        self.selected
+            .as_ref()
+            .and_then(|selected| selected.get(profile))
+            .is_some_and(|features| features.iter().any(|f| f == feature))
+    }
+
     fn grants_negotiated(&self) -> bool {
         self.selected
             .as_ref()
@@ -765,7 +1078,7 @@ impl Provider {
         if grant["state"] != "active" && !self.mutants.on("ignore-revocation") {
             return Err(denied("revoked"));
         }
-        let now = grants::now(self.identity.fixed_clock.as_deref());
+        let now = self.identity.clock.now();
         if let Some(expiry) = grant.get("expires_at").and_then(Value::as_str)
             && !self.mutants.on("ignore-expiry")
             && (expiry < now.as_str()
@@ -834,7 +1147,7 @@ impl Provider {
             binding_check()?;
         }
         if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
-            let now = grants::now(self.identity.fixed_clock.as_deref());
+            let now = self.identity.clock.now();
             let too_early = if self.mutants.on("issue-at-now-accepted") {
                 expiry < now.as_str()
             } else {
@@ -932,7 +1245,10 @@ impl Provider {
                 Ok(())
             }
             _ => {
-                let Some(mut needed) = grants::required_rights(operation, params) else {
+                let resolved = self.resolved_rights(operation, params)?;
+                let Some(mut needed) =
+                    resolved.or_else(|| grants::required_rights(operation, params))
+                else {
                     let grant_id = params.get("grant").and_then(Value::as_str);
                     if operation == "core.capabilities"
                         && self.mutants.on("capabilities-protected")
@@ -1147,6 +1463,16 @@ impl Provider {
         {
             self.validate_issue(&params["payload"])?;
         }
+        if operation.name == "execution.submit" && !self.mutants.on("feature-fields-accepted") {
+            for (field, feature) in FEATURE_FIELDS {
+                if params["payload"].get(field).is_some() && !self.feature_negotiated(feature) {
+                    return invalid(
+                        &format!("/payload/{field}"),
+                        &format!("feature {feature} was not negotiated"),
+                    );
+                }
+            }
+        }
         let extensions = params.get("extensions").and_then(Value::as_object);
         for entry in params
             .get("requires")
@@ -1277,7 +1603,82 @@ impl Provider {
                 return Err(reject("unknown_authority_epoch", json!({})));
             }
         }
-        self.check_preconditions_only(params)
+        if CONTROLLED_COMMANDS.contains(&operation) && !self.mutants.on("stale-controller-accepted")
+        {
+            self.check_controller_epoch(params)?;
+        }
+        self.check_preconditions_only(params)?;
+        self.check_targets(operation, params)
+    }
+
+    /// Controller lease (EXECUTION section 11, EXE-13): once a controller has claimed the host,
+    /// mutating execution commands must carry its current epoch. Observers are unaffected.
+    fn check_controller_epoch(&self, params: &Value) -> Result<(), Reject> {
+        let host = crate::execution::host_id(&self.identity.executor);
+        let current = self
+            .store
+            .revision(crate::execution::CONTROLLER_KIND, host)
+            .map_err(storage)?;
+        let asserted = params.get("authority_epoch").and_then(Value::as_i64);
+        if current == 0 && asserted.is_none() {
+            return Ok(());
+        }
+        let asserted = asserted.unwrap_or(0);
+        if asserted < current {
+            let controller = json!({"kind": crate::execution::CONTROLLER_KIND, "id": host});
+            let details = if self.may_read(&controller, params)? {
+                json!({"current_epoch": current})
+            } else {
+                json!({})
+            };
+            return Err(reject("stale_authority_epoch", details));
+        }
+        if asserted > current {
+            return Err(reject("unknown_authority_epoch", json!({})));
+        }
+        Ok(())
+    }
+
+    /// Targets a feature command acts on must exist (EXECUTION section 11, CORE section 19.4).
+    fn check_targets(&self, operation: &str, params: &Value) -> Result<(), Reject> {
+        let id = params["subject"]["id"].as_str().unwrap_or_default();
+        let reader = self.store.reader().map_err(storage)?;
+        let record = crate::execution::load(&reader, id)
+            .map_err(storage)?
+            .map(|(_, record)| record);
+        let found = match operation {
+            "execution.cancel" | "execution.steer" => record.is_some(),
+            "execution.workspace.checkpoint" => {
+                record.is_some_and(|record| record["workspace"].is_object())
+            }
+            "execution.respond_action" => crate::features::action_owner(
+                &reader,
+                id,
+                params["payload"]["action_id"].as_str().unwrap_or_default(),
+                self.mutants.on("global-action-namespace"),
+            )
+            .map_err(storage)?
+            .is_some(),
+            "execution.controller.claim" => {
+                id == crate::execution::host_id(&self.identity.executor)
+            }
+            "core.effects.abort_obligation" => self
+                .store
+                .effect_record(id)
+                .map_err(storage)?
+                .is_some_and(|effect| {
+                    crate::features::obligation_waiting(
+                        &effect,
+                        params["payload"]["obligation"].as_str().unwrap_or_default(),
+                    )
+                }),
+            _ => true,
+        };
+        if found {
+            Ok(())
+        } else {
+            Err(reject("not_found", json!({})))
+        }
     }
 
     /// Whether the principal may read `subject` in this command's authorization context (CORE section 7).
@@ -1392,6 +1793,62 @@ impl Provider {
                     }
                     None => Err(reject("not_found", json!({}))),
                 }
+            }
+            "execution.inspect" => {
+                let id = params["payload"]["execution"].as_str().unwrap_or_default();
+                let cursor = self.cursor(self.head()?, false)?;
+                crate::execution::inspect(&mut self.store, id, cursor)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "execution.reconcile" => {
+                let payload = &params["payload"];
+                let execution = match payload["command_id"].as_str() {
+                    Some(command_id) => self
+                        .store
+                        .find_command(&self.identity.principal, command_id)
+                        .map_err(storage)?
+                        .and_then(|stored| serde_json::from_str::<Value>(&stored.response).ok())
+                        .and_then(|response| {
+                            let subject = &response["acknowledgment"]["subject"];
+                            (subject["kind"] == crate::execution::KIND)
+                                .then(|| subject["id"].as_str().map(String::from))
+                                .flatten()
+                        }),
+                    None => None,
+                };
+                if payload.get("command_id").is_some() && execution.is_none() {
+                    return Ok(json!({"executions": [], "deliveries": [], "obligations": []}));
+                }
+                crate::execution::reconcile(
+                    &mut self.store,
+                    execution,
+                    payload["delivery_id"].as_str(),
+                    &self.mutants,
+                )
+                .map_err(storage)
+            }
+            "execution.output.read" => {
+                let payload = &params["payload"];
+                crate::execution::read_output(
+                    &mut self.store,
+                    payload["execution"].as_str().unwrap_or_default(),
+                    payload["offset"].as_u64().unwrap_or(0),
+                    payload["max_bytes"].as_u64().unwrap_or(65_536) as usize,
+                    &self.identity.executor,
+                )
+                .map_err(storage)?
+                .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "execution.discovery.list" => Ok(crate::features::discovery(
+                &self.identity.executor,
+                &self.mutants,
+            )),
+            "core.effects.get" => {
+                let id = params["payload"]["effect"].as_str().unwrap_or_default();
+                crate::execution::effect(&mut self.store, id, &self.mutants)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
             }
             "core-test.subject.applied_count" => {
                 let subject = &params["payload"]["subject"];
@@ -1558,23 +2015,43 @@ impl Provider {
             }
             selected.insert(name, (major, chosen, required));
         }
-        // Dependencies.
+        // Dependencies: profiles, then Core features a profile document requires.
         let names: Vec<String> = selected.keys().cloned().collect();
         for name in names {
-            let depends = SUPPORTED
+            let Some(profile) = SUPPORTED.iter().find(|p| p.name == name) else {
+                continue;
+            };
+            let core_features: Vec<String> = selected
+                .get("core")
+                .map(|(_, features, _)| features.clone())
+                .unwrap_or_default();
+            let missing_profile = profile
+                .depends_on
                 .iter()
-                .find(|p| p.name == name)
-                .map_or(&[][..], |p| p.depends_on);
-            if depends
-                .iter()
-                .any(|dependency| !selected.contains_key(*dependency))
-            {
+                .any(|dependency| !selected.contains_key(*dependency));
+            let missing_features: Vec<&str> = if self.mutants.on("execution-dependency-unchecked") {
+                Vec::new()
+            } else {
+                profile
+                    .requires_core_features
+                    .iter()
+                    .copied()
+                    .filter(|feature| !core_features.iter().any(|f| f == feature))
+                    .collect()
+            };
+            if missing_profile || !missing_features.is_empty() {
                 let (_, _, required) = selected.remove(&name).unwrap();
-                let item = json!({"profile": name, "reason": "dependency_not_selected"});
+                let mut items = Vec::new();
+                if missing_profile {
+                    items.push(json!({"profile": name, "reason": "dependency_not_selected"}));
+                }
+                for feature in missing_features {
+                    items.push(json!({"profile": name, "feature": feature, "reason": "dependency_not_selected"}));
+                }
                 if required {
-                    unsatisfied.push(item)
+                    unsatisfied.extend(items)
                 } else {
-                    unselected.push(item)
+                    unselected.extend(items)
                 }
             }
         }
@@ -1600,6 +2077,9 @@ impl Provider {
             };
             return Err(reject(code, json!({"unsatisfied": unsatisfied})));
         }
+        if self.mutants.on("execution-selected-implicitly") && !selected.contains_key("execution") {
+            selected.insert("execution".to_string(), (1, Vec::new(), false));
+        }
         let selected_json: Vec<Value> = selected.iter().map(|(name, (major, features, _))| json!({"name": name, "major": major, "features": features})).collect();
         self.selected = Some(
             selected
@@ -1610,10 +2090,16 @@ impl Provider {
         self.caller_frame_limit = payload["receive_limits"]["max_frame_bytes"]
             .as_u64()
             .map_or(1_048_576, |limit| limit as usize);
+        let mut limits = self.limits.to_json();
+        if self.backpressure_negotiated() {
+            limits["max_pending_notification_bytes"] =
+                json!(self.limits.max_pending_notification_bytes);
+            limits["backpressure_notice_ms"] = json!(self.limits.backpressure_notice_ms);
+        }
         Ok(json!({
             "selected": selected_json,
             "unselected": unselected,
-            "limits": self.limits.to_json(),
+            "limits": limits,
             "dedupe_window": self.window_json()?,
         }))
     }
@@ -1757,6 +2243,24 @@ impl Provider {
                             || (record["issuer"] == self.identity.principal.as_str()
                                 && !self.mutants.on("grant-events-holder-only"))
                     })
+        } else if kind == crate::execution::KIND || kind == crate::execution::CONTROLLER_KIND {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "execution.read")
+        } else if kind == "core.effect" {
+            // An effect is visible exactly when its target execution is (CORE section 19.2).
+            let id = subject["id"].as_str().unwrap_or_default();
+            match self.store.effect_execution(id).map_err(storage)? {
+                Some(execution) => self.visible(
+                    &json!({"kind": crate::execution::KIND, "id": execution}),
+                    &None,
+                    &Some(grant.clone()),
+                )?,
+                None => false,
+            }
         } else if kind == "core.capabilities" {
             (covers || self.mutants.on("capability-events-ignore-resources"))
                 && (test_read || !self.mutants.on("capability-events-need-test-read"))
@@ -1792,6 +2296,15 @@ impl Provider {
         for (kind, id, revision, value) in self.store.all_subjects().map_err(storage)? {
             let state = if kind == AUTHORITY_KIND {
                 json!({"epoch": revision})
+            } else if kind == crate::execution::CONTROLLER_KIND {
+                let record: Value = serde_json::from_str(&value).unwrap_or(Value::Null);
+                json!({"epoch": revision, "controller": record["controller"]})
+            } else if kind == crate::execution::KIND {
+                let record: Value = serde_json::from_str(&value).unwrap_or(Value::Null);
+                json!({
+                    "admission": record["admission"], "delivery": record["delivery"], "runtime": record["runtime"],
+                    "result": record["result"], "exit": record["exit"], "evaluation": record["evaluation"],
+                })
             } else {
                 json!({"value": value})
             };
@@ -2009,10 +2522,25 @@ impl Provider {
     ///
     /// The re-authorization and the event read run under the processing lock, so no command
     /// can commit between them: an item committed after a revocation is never delivered.
-    pub fn drain_notifications(&mut self, idle: bool) -> Vec<Value> {
-        let _guard = PROCESSING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    ///
+    /// `room` bounds the bytes of item-carrying notifications produced by this call: `Some((room,
+    /// whole))` stops producing once the next notification would not fit, and `whole` lets the
+    /// first notification exceed `room` when nothing else is pending. Returns the notifications
+    /// and whether one was withheld for lack of room; a withheld notification's items stay
+    /// undelivered and are produced again later (CORE section 16.5, backpressure).
+    pub fn drain_notifications(
+        &mut self,
+        idle: bool,
+        room: Option<(usize, bool)>,
+    ) -> (Vec<Value>, bool) {
+        let _guard = (!self.mutants.on("recheck-outside-lock")).then(|| {
+            PROCESSING
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
+        if !(idle && self.mutants.on("executor-ticks-only-on-requests")) {
+            self.tick();
+        }
         let mut frames = Vec::new();
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
         subscriptions.retain(|subscription| {
@@ -2026,6 +2554,8 @@ impl Provider {
                 self.usable_grant(grant_id).is_ok()
             };
             if self.mutants.on("subscription-survives-authorization-loss") || still_authorized {
+                // Test barrier (decision 007): between re-authorization and reading events.
+                crate::barriers::pause(crate::barriers::RECHECK_AFTER_AUTHORIZATION);
                 return true;
             }
             frames.push(json!({
@@ -2036,7 +2566,12 @@ impl Provider {
             false
         });
         let mut too_large = Vec::new();
+        let mut produced = 0;
+        let mut withheld = false;
         for subscription in &mut subscriptions {
+            if withheld {
+                break;
+            }
             let mut take = 100;
             while let Ok((items, position, _)) = self.collect_items(
                 subscription.position,
@@ -2070,6 +2605,14 @@ impl Provider {
                     too_large.push(subscription.id.clone());
                     break;
                 }
+                if let Some((room, whole)) = room {
+                    let size = crate::json::encode_frame(&frame).len();
+                    if produced + size > room && !(produced == 0 && whole) {
+                        withheld = true;
+                        break;
+                    }
+                    produced += size;
+                }
                 subscription.position = position;
                 frames.push(frame);
                 take = 100;
@@ -2077,7 +2620,17 @@ impl Provider {
         }
         subscriptions.retain(|subscription| !too_large.contains(&subscription.id));
         self.subscriptions = subscriptions;
-        frames
+        (frames, withheld)
+    }
+}
+
+impl Drop for Provider {
+    fn drop(&mut self) {
+        // Detaching is not cancellation (EXE-22); only the mutant cancels on disconnect.
+        if self.mutants.on("cancels-on-disconnect") || self.mutants.on("cancels-on-session-close") {
+            let now = self.identity.clock.now();
+            let _ = crate::execution::cancel_on_disconnect(&mut self.store, &now);
+        }
     }
 }
 

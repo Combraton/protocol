@@ -78,6 +78,27 @@ struct State<'a> {
     data_generation: u32,
     transcript: Vec<Value>,
     started: Instant,
+    /// Responses that arrived for requests sent with `await: false`, by session.
+    responses: Vec<(String, Value)>,
+    /// Requests sent with `await: false`, by name.
+    pending: BTreeMap<String, Pending>,
+    /// The last instant written to the controlled clock file.
+    clock_value: Option<String>,
+}
+
+struct Pending {
+    session: String,
+    id: Value,
+    method: String,
+}
+
+const CONTROL_WAIT: Duration = Duration::from_millis(10_000);
+
+/// Write a file so a reader never observes a partial write (decision 007).
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StepError> {
+    let temporary = path.with_extension("tmp-write");
+    std::fs::write(&temporary, bytes).map_err(|e| Harness(e.to_string()))?;
+    std::fs::rename(&temporary, path).map_err(|e| Harness(e.to_string()))
 }
 
 /// Deterministic per-run credential for a principal (CORE section 18.1 format).
@@ -103,8 +124,16 @@ fn base64_url_nopad(bytes: &[u8]) -> String {
     out
 }
 
-/// Whether a fixture applies to a participant (profiles, features, binding), and if not, why.
+/// Whether a fixture applies to a participant (binding, profiles, features, test controls), and if not, why.
 pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), (Outcome, String)> {
+    if let Some(binding) = fixture["binding"].as_str()
+        && binding != descriptor.binding
+    {
+        return Err((
+            Outcome::Skipped,
+            format!("fixture requires the {binding} binding"),
+        ));
+    }
     for profile in fixture["profiles"].as_array().into_iter().flatten() {
         let wanted = (
             profile["name"].as_str().unwrap_or_default().to_string(),
@@ -117,32 +146,50 @@ pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), (Outco
             ));
         }
     }
-    let claimed: Vec<&str> = descriptor.raw["claims"]["features"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    for feature in fixture["features"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-    {
-        if !claimed.contains(&feature) {
+    let claimed = |key: &str| -> Vec<String> {
+        descriptor.raw["claims"][key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect()
+    };
+    let required = |key: &str| -> Vec<String> {
+        fixture[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect()
+    };
+    let features = claimed("features");
+    for feature in required("features") {
+        if !features.contains(&feature) {
             return Err((
                 Outcome::Unsupported,
                 format!("participant does not claim feature {feature}"),
             ));
         }
     }
-    if let Some(binding) = fixture["binding"].as_str()
-        && binding != descriptor.binding
-    {
-        return Err((
-            Outcome::Skipped,
-            format!("fixture requires the {binding} binding"),
-        ));
+    let controls = claimed("test_controls");
+    for control in required("requires_controls") {
+        if !controls.contains(&control) {
+            return Err((
+                Outcome::Unsupported,
+                format!("coverage limit: participant does not declare test control {control}"),
+            ));
+        }
+    }
+    let barriers = claimed("test_barriers");
+    for barrier in required("requires_barriers") {
+        if !barriers.contains(&barrier) {
+            return Err((
+                Outcome::Unsupported,
+                format!("coverage limit: participant does not declare barrier {barrier}"),
+            ));
+        }
     }
     Ok(())
 }
@@ -181,6 +228,9 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         data_generation: 0,
         transcript: vec![],
         started: Instant::now(),
+        responses: Vec::new(),
+        pending: BTreeMap::new(),
+        clock_value: None,
     };
     let mut failure = None;
     for (index, step) in fixture["steps"]
@@ -322,6 +372,9 @@ impl State<'_> {
                     .unwrap_or_else(|| {
                         params["operation"].as_str().unwrap_or_default().to_string()
                     });
+                if step["await"] == json!(false) {
+                    return self.send_pending(&method, params, step);
+                }
                 self.call(&method, params, step).map(|_| ())
             }
             "query" => {
@@ -332,6 +385,9 @@ impl State<'_> {
                     .unwrap_or_else(|| {
                         params["operation"].as_str().unwrap_or_default().to_string()
                     });
+                if step["await"] == json!(false) {
+                    return self.send_pending(&method, params, step);
+                }
                 self.call(&method, params, step).map(|_| ())
             }
             "notify" => {
@@ -396,7 +452,405 @@ impl State<'_> {
                 self.session()?.close_input();
                 Ok(())
             }
+            "set_clock" => self.set_clock(step),
+            "kill" => self.kill(),
+            "expect_response" => self.expect_response(step),
+            "await_barrier" => self.await_barrier(step),
+            "release_barrier" => {
+                let name = step["name"].as_str().unwrap_or_default();
+                let path = self.barrier_directory().join(format!("{name}.release"));
+                write_atomic(&path, b"")?;
+                self.note("release_barrier", json!({"name": name}));
+                Ok(())
+            }
+            "await_any" => self.await_any(step),
+            "pause_reading" => {
+                self.session()?.pause_reading();
+                Ok(())
+            }
+            "resume_reading" => {
+                self.session()?.resume_reading();
+                Ok(())
+            }
+            "collect_until_close" => self.collect_until_close(step),
+            "expect_signal_gap" => self.expect_signal_gap(step),
             other => Err(Harness(format!("unknown step {other:?}"))),
+        }
+    }
+
+    fn note(&mut self, event: &str, detail: Value) {
+        self.transcript.push(json!({"t_ms": self.started.elapsed().as_millis() as u64, "event": event, "session": self.active, "detail": detail}));
+    }
+
+    fn barrier_directory(&self) -> PathBuf {
+        self.ctx.work_dir.join("test-controls").join("barriers")
+    }
+
+    fn next_request_id(&mut self, step: &Value) -> Result<Value, StepError> {
+        match step.get("id") {
+            Some(id) => self.render(id),
+            None => {
+                self.next_id += 1;
+                Ok(json!(self.next_id))
+            }
+        }
+    }
+
+    /// Send without waiting (decision 007 §5). Pipelining does not establish commit order.
+    fn send_pending(&mut self, method: &str, params: Value, step: &Value) -> Result<(), StepError> {
+        let name = step["name"]
+            .as_str()
+            .ok_or_else(|| Harness("a step with await false needs a name".into()))?
+            .to_string();
+        let id = self.next_request_id(step)?;
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        self.session()?.send(&frame_bytes(&request, true));
+        let session = self.active.clone();
+        self.pending.insert(
+            name,
+            Pending {
+                session,
+                id,
+                method: method.to_string(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Keep a response that belongs to a pending request on the active session.
+    fn buffer_if_pending(&mut self, frame: &Value) -> bool {
+        let belongs = self
+            .pending
+            .values()
+            .any(|p| p.session == self.active && frame.get("id") == Some(&p.id));
+        if belongs {
+            self.responses.push((self.active.clone(), frame.clone()));
+        }
+        belongs
+    }
+
+    fn buffered_response(&self, pending: &Pending) -> Option<usize> {
+        self.responses.iter().position(|(session, frame)| {
+            *session == pending.session && frame.get("id") == Some(&pending.id)
+        })
+    }
+
+    fn expect_response(&mut self, step: &Value) -> Result<(), StepError> {
+        let name = step["name"].as_str().unwrap_or_default().to_string();
+        let pending = self
+            .pending
+            .remove(&name)
+            .ok_or_else(|| Harness(format!("expect_response: no pending request named {name}")))?;
+        self.active = pending.session.clone();
+        let deadline = Instant::now() + duration(step, RESPONSE_TIMEOUT);
+        let frame = loop {
+            if let Some(index) = self.buffered_response(&pending) {
+                break self.responses.remove(index).1;
+            }
+            let frame = self.receive_frame(deadline.saturating_duration_since(Instant::now()))?;
+            if frame.get("id") == Some(&pending.id) {
+                break frame;
+            }
+            if !self.buffer_if_pending(&frame) {
+                return Err(Fail(format!(
+                    "unexpected response {frame} while waiting for {name}"
+                )));
+            }
+        };
+        self.check(
+            &frame,
+            step.get("expect").unwrap_or(&json!({"ok": {}})),
+            Some(&pending.method),
+        )?;
+        self.capture(&frame, step)
+    }
+
+    fn set_clock(&mut self, step: &Value) -> Result<(), StepError> {
+        let file = self.ctx.work_dir.join("test-controls").join("clock");
+        if self.clock_value.is_none() {
+            return Err(Harness(
+                "set_clock needs a start step with clock.controlled".into(),
+            ));
+        }
+        if let Some(raw) = step["raw"].as_str() {
+            write_atomic(&file, raw.as_bytes())?;
+            self.note("set_clock", json!({"raw": raw}));
+            return Ok(());
+        }
+        let instant = step["instant"]
+            .as_str()
+            .ok_or_else(|| Harness("set_clock needs instant or raw".into()))?
+            .to_string();
+        let last = self.clock_value.clone().unwrap_or_default();
+        if instant < last && step["allow_backward"] != json!(true) {
+            return Err(Harness(format!(
+                "set_clock would move the test clock backward from {last} to {instant}"
+            )));
+        }
+        write_atomic(&file, instant.as_bytes())?;
+        self.note("set_clock", json!({"instant": instant}));
+        if instant > last {
+            self.clock_value = Some(instant);
+        }
+        Ok(())
+    }
+
+    fn kill(&mut self) -> Result<(), StepError> {
+        if self.unix() {
+            let names: Vec<String> = self.sessions.keys().cloned().collect();
+            if let Some(mut process) = self.process.take() {
+                process.kill();
+            }
+            for name in names {
+                if let Some(session) = self.sessions.remove(&name) {
+                    self.transcript.extend(session.finish());
+                }
+            }
+        } else if let Some(mut session) = self.sessions.remove("main") {
+            session.kill();
+            self.transcript.extend(session.finish());
+        }
+        self.note("kill", json!({}));
+        Ok(())
+    }
+
+    fn await_barrier(&mut self, step: &Value) -> Result<(), StepError> {
+        let name = step["name"].as_str().unwrap_or_default().to_string();
+        let directory = self.barrier_directory();
+        let reached = directory.join(format!("{name}.reached"));
+        let bound = duration(step, CONTROL_WAIT);
+        let deadline = Instant::now() + bound;
+        while !reached.exists() {
+            if Instant::now() > deadline {
+                return Err(Timeout(format!(
+                    "barrier {name} was not reached within {} ms",
+                    bound.as_millis()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // Signals emitted before the pause are stale for what follows.
+        for entry in std::fs::read_dir(&directory).map_err(|e| Harness(e.to_string()))? {
+            let path = entry.map_err(|e| Harness(e.to_string()))?.path();
+            if path.extension().is_some_and(|ext| ext == "signal") {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        self.note("await_barrier", json!({"name": name}));
+        Ok(())
+    }
+
+    /// Read everything a connection still delivers until it closes (TRN-4). The named
+    /// subscription's notifications must carry contiguous event sequences, only the last may end
+    /// it, and `expect_last` is matched against that last notification's params. Captures the
+    /// last `next_cursor` (`capture_cursor`) and the sequence after the last event
+    /// (`capture_next_sequence`). Responses to pending requests are buffered; others are noted.
+    fn collect_until_close(&mut self, step: &Value) -> Result<(), StepError> {
+        let bound = duration(step, Duration::from_millis(10_000));
+        let deadline = Instant::now() + bound;
+        let subscription = self.render(&step["subscription"])?;
+        let mut notifications: Vec<Value> = self
+            .notifications
+            .entry(self.active.clone())
+            .or_default()
+            .drain(..)
+            .collect();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let received = self.session()?.receive(remaining);
+            let bytes = match received {
+                Received::Frame(bytes) => bytes,
+                Received::Closed => break,
+                Received::Timeout => {
+                    return Err(Timeout(format!(
+                        "connection was not closed within {} ms",
+                        bound.as_millis()
+                    )));
+                }
+            };
+            let frame = strict::parse(&bytes).map_err(|e| {
+                Fail(format!(
+                    "participant sent a frame outside the value domain: {e}"
+                ))
+            })?;
+            if frame.get("id").is_none() && frame.get("method").is_some() {
+                self.ctx.schemas.check_notification(&frame).map_err(Fail)?;
+                notifications.push(frame);
+            } else if !self.buffer_if_pending(&frame) {
+                self.note("collected_response", json!({"id": frame.get("id")}));
+            }
+        }
+        let name = self.active.clone();
+        if let Some(session) = self.sessions.remove(&name) {
+            self.transcript.extend(session.finish());
+        }
+        let mine: Vec<&Value> = notifications
+            .iter()
+            .filter(|frame| frame["params"]["subscription"] == subscription)
+            .collect();
+        let mut previous: Option<(i64, i64)> = None;
+        let mut events = 0;
+        for (index, frame) in mine.iter().enumerate() {
+            if frame["params"].get("ended").is_some() && index + 1 != mine.len() {
+                return Err(Fail(format!(
+                    "notification {index} ended the subscription but more followed"
+                )));
+            }
+            if let Some(ended) = frame["params"].get("ended")
+                && step["forbid_ended"] == true
+            {
+                return Err(Fail(format!(
+                    "params/ended: the subscription was ended with {ended}"
+                )));
+            }
+            for item in frame["params"]["items"].as_array().into_iter().flatten() {
+                let Some(event) = item.get("event") else {
+                    previous = None;
+                    continue;
+                };
+                let position = (
+                    event["epoch"].as_i64().unwrap_or_default(),
+                    event["sequence"].as_i64().unwrap_or_default(),
+                );
+                if let Some((epoch, sequence)) = previous
+                    && epoch == position.0
+                    && position.1 != sequence + 1
+                {
+                    return Err(Fail(format!(
+                        "subscription skipped from sequence {sequence} to {}",
+                        position.1
+                    )));
+                }
+                previous = Some(position);
+                events += 1;
+            }
+        }
+        self.note(
+            "collect_until_close",
+            json!({"notifications": mine.len(), "events": events}),
+        );
+        if let Some(pattern) = step.get("expect_last") {
+            let last = mine
+                .last()
+                .ok_or_else(|| Fail("no notification for the subscription before close".into()))?;
+            matches(pattern, last.get("params"), &self.vars, "params").map_err(Fail)?;
+        }
+        // Without a complete notification, the consumer's last durable cursor is unchanged.
+        if let (Some(name), Some(last)) = (step["capture_cursor"].as_str(), mine.last()) {
+            self.vars
+                .insert(name.to_string(), last["params"]["next_cursor"].clone());
+        }
+        if let Some(name) = step["capture_next_sequence"].as_str() {
+            let (_, sequence) =
+                previous.ok_or_else(|| Fail("no event before close to resume after".into()))?;
+            self.vars.insert(name.to_string(), json!(sequence + 1));
+        }
+        Ok(())
+    }
+
+    /// Check the time between two signals the participant emitted, from their files' modification
+    /// times (decision 007 §4): `min_ms <= to - from <= max_ms`.
+    fn expect_signal_gap(&mut self, step: &Value) -> Result<(), StepError> {
+        let directory = self.barrier_directory();
+        let modified = |name: &str| -> Result<std::time::SystemTime, StepError> {
+            std::fs::metadata(directory.join(format!("{name}.signal")))
+                .and_then(|m| m.modified())
+                .map_err(|_| Fail(format!("signal {name} was not emitted")))
+        };
+        let from = step["from"].as_str().unwrap_or_default();
+        let to = step["to"].as_str().unwrap_or_default();
+        let gap = modified(to)?
+            .duration_since(modified(from)?)
+            .map_err(|_| Fail(format!("signal {to} was emitted before {from}")))?
+            .as_millis() as u64;
+        self.note(
+            "expect_signal_gap",
+            json!({"from": from, "to": to, "gap_ms": gap}),
+        );
+        if let Some(max) = step["max_ms"].as_u64()
+            && gap > max
+        {
+            return Err(Fail(format!(
+                "signal gap {from} to {to} was {gap} ms, above the bound {max} ms"
+            )));
+        }
+        if let Some(min) = step["min_ms"].as_u64()
+            && gap < min
+        {
+            return Err(Fail(format!(
+                "signal gap {from} to {to} was {gap} ms, below {min} ms"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Wait until any named signal exists or every named response has arrived (decision 007 §4).
+    fn await_any(&mut self, step: &Value) -> Result<(), StepError> {
+        let strings = |key: &str| -> Vec<String> {
+            step[key]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(String::from)
+                .collect()
+        };
+        let signals = strings("signals");
+        let responses = strings("responses");
+        let directory = self.barrier_directory();
+        let bound = duration(step, CONTROL_WAIT);
+        let deadline = Instant::now() + bound;
+        loop {
+            if let Some(signal) = signals
+                .iter()
+                .find(|s| directory.join(format!("{s}.signal")).exists())
+            {
+                self.note(
+                    "await_any",
+                    json!({"satisfied_by": format!("signal {signal}")}),
+                );
+                return Ok(());
+            }
+            let mut waiting = Vec::new();
+            for name in &responses {
+                let pending = self.pending.get(name).ok_or_else(|| {
+                    Harness(format!("await_any: no pending request named {name}"))
+                })?;
+                if self.buffered_response(pending).is_none() {
+                    waiting.push(pending.session.clone());
+                }
+            }
+            if !responses.is_empty() && waiting.is_empty() {
+                self.note(
+                    "await_any",
+                    json!({"satisfied_by": "responses", "responses": responses}),
+                );
+                return Ok(());
+            }
+            if Instant::now() > deadline {
+                return Err(Fail(format!(
+                    "await_any: no signal {signals:?} and not every response {responses:?} within {} ms",
+                    bound.as_millis()
+                )));
+            }
+            if waiting.is_empty() {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            for session in waiting {
+                self.active = session;
+                match self.receive_frame(Duration::from_millis(5)) {
+                    Ok(frame) => {
+                        if !self.buffer_if_pending(&frame) {
+                            return Err(Fail(format!(
+                                "unexpected response {frame} during await_any"
+                            )));
+                        }
+                    }
+                    Err(Timeout(_)) => {}
+                    Err(other) => return Err(other),
+                }
+            }
         }
     }
 
@@ -447,6 +901,27 @@ impl State<'_> {
                 credentials.push(json!({"credential": credential, "revoked": revoked.contains(&principal.as_str())}));
             }
             config["credentials"] = json!(credentials);
+        }
+        let controls = self.ctx.work_dir.join("test-controls");
+        if let Some(instant) = config["clock"]["controlled"].as_str().map(String::from) {
+            std::fs::create_dir_all(&controls).map_err(|e| Harness(e.to_string()))?;
+            let file = controls.join("clock");
+            write_atomic(&file, instant.as_bytes())?;
+            self.clock_value = Some(instant);
+            config["clock"] = json!({"file": file.display().to_string()});
+        } else if let Some(raw) = config["clock"]["controlled_raw"].as_str().map(String::from) {
+            // Deliberately unusable clock content, to test refusal at start.
+            std::fs::create_dir_all(&controls).map_err(|e| Harness(e.to_string()))?;
+            let file = controls.join("clock");
+            write_atomic(&file, raw.as_bytes())?;
+            config["clock"] = json!({"file": file.display().to_string()});
+        }
+        if let Some(enabled) = step["barriers"].as_array() {
+            let directory = controls.join("barriers");
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(&directory).map_err(|e| Harness(e.to_string()))?;
+            config["test_barriers"] =
+                json!({"directory": directory.display().to_string(), "enabled": enabled});
         }
         if let Some(error) = self.ctx.schemas.launch_config.iter_errors(&config).next() {
             return Err(Harness(format!(
@@ -598,7 +1073,8 @@ impl State<'_> {
             if socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_ok() {
                 process.kill();
                 return Err(Fail(
-                    "participant listened despite the unsafe socket directory".into(),
+                    "participant listened although the fixture expects it to refuse to start"
+                        .into(),
                 ));
             }
             if Instant::now() > deadline {
@@ -872,18 +1348,18 @@ impl State<'_> {
     }
 
     fn call(&mut self, method: &str, params: Value, step: &Value) -> Result<Value, StepError> {
-        let id = match step.get("id") {
-            Some(id) => self.render(id)?,
-            None => {
-                self.next_id += 1;
-                json!(self.next_id)
-            }
-        };
+        let id = self.next_request_id(step)?;
         self.awaiting_command = params.get("command_id").cloned();
         let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let bytes = frame_bytes(&request, true);
         self.session()?.send(&bytes);
-        let received = self.receive_frame(duration(step, RESPONSE_TIMEOUT));
+        let deadline = Instant::now() + duration(step, RESPONSE_TIMEOUT);
+        let received = loop {
+            match self.receive_frame(deadline.saturating_duration_since(Instant::now())) {
+                Ok(frame) if frame.get("id") != Some(&id) && self.buffer_if_pending(&frame) => {}
+                other => break other,
+            }
+        };
         self.awaiting_command = None;
         let frame = received?;
         if frame.get("id") != Some(&id) {

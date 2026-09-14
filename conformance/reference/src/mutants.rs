@@ -5,6 +5,322 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "notice-budget-per-subscription",
+        "restarts the ending-notice budget for each subscription",
+    ),
+    (
+        "room-wait-unbounded",
+        "waits without bound for a stalled consumer to make room",
+    ),
+    (
+        "unstarted-work-reported-preparing",
+        "reports runtime preparing for queued or refused work that has not started",
+    ),
+    (
+        "refusal-records-delivery-effect",
+        "records a prompt delivery effect for an execution it refused",
+    ),
+    (
+        "recovery-host-change-silent",
+        "advances the host generation during recovery without an execution.host.changed event",
+    ),
+    (
+        "unavailable-after-binding",
+        "answers unavailable for a submit it had already committed and bound",
+    ),
+    (
+        "internal-error-state-without-binding",
+        "commits a command's state change without binding its command identity",
+    ),
+    (
+        "correlation-dropped",
+        "drops the caller's opaque correlation from the execution record",
+    ),
+    (
+        "output-dropped-silently",
+        "discards spooled output without declaring a lost range",
+    ),
+    (
+        "lost-range-without-bytes",
+        "declares a spool discard without its known byte count",
+    ),
+    (
+        "consumer-too-slow-to-older-consumers",
+        "sends consumer_too_slow to a session that did not negotiate core.events.backpressure",
+    ),
+    (
+        "notice-waits-indefinitely",
+        "waits without bound for a non-reading consumer to accept the ending notice",
+    ),
+    (
+        "unbounded-pending-output",
+        "keeps queueing output for a consumer that stopped reading",
+    ),
+    (
+        "semantic-events-dropped-under-pressure",
+        "drops notifications instead of closing a connection whose pending output is over its bound",
+    ),
+    (
+        "cancels-on-session-close",
+        "cancels running executions when one socket session closes while the provider keeps running",
+    ),
+    (
+        "executor-ticks-only-on-requests",
+        "advances the scripted executor and its timeouts only when a request arrives, never while idle",
+    ),
+    (
+        "steer-claims-delivery",
+        "reports a steering message acknowledged as soon as it is recorded, without evidence",
+    ),
+    (
+        "steer-unsupported-accepted",
+        "records steering as live when the adapter cannot steer",
+    ),
+    (
+        "steer-ack-implies-behavior",
+        "treats a steering acknowledgment as observed behavior",
+    ),
+    (
+        "global-action-namespace",
+        "answers a native action request found in any execution",
+    ),
+    (
+        "requires-action-without-identity",
+        "reports requires_action without the action ID and owner",
+    ),
+    (
+        "actions-lost-on-restart",
+        "drops pending native action requests when the provider restarts",
+    ),
+    (
+        "stale-controller-accepted",
+        "accepts mutating execution commands carrying a superseded controller epoch",
+    ),
+    (
+        "agent-commit-as-receipt",
+        "reports an agent-reported commit as the checkpoint head",
+    ),
+    (
+        "incomplete-checkpoint-complete",
+        "declares a checkpoint complete although some state was not probed",
+    ),
+    (
+        "admits-unenforceable-ceiling",
+        "admits a hard budget ceiling the adapter cannot enforce",
+    ),
+    (
+        "refunds-on-timeout",
+        "releases a budget reservation and resolves liability when the execution deadline passes",
+    ),
+    (
+        "required-binding-admitted",
+        "admits an execution whose required-before-start context binding is unsatisfied",
+    ),
+    (
+        "digest-mismatch-satisfies",
+        "treats a held packet with a different digest as satisfying a binding",
+    ),
+    (
+        "no-late-state",
+        "reports a packet delivered after its dependent boundary as delivered, not late",
+    ),
+    (
+        "detected-offered-as-usable",
+        "offers every detected installation as usable",
+    ),
+    (
+        "discovery-unknown-as-yes",
+        "reports unknown discovery facts as positive",
+    ),
+    (
+        "fresh-labeled-resumed",
+        "labels a fresh continuation as resumed",
+    ),
+    (
+        "non-repeatable-retried",
+        "retries a non-repeatable effect after an unknown attempt outcome",
+    ),
+    (
+        "idempotent-retry-new-key",
+        "retries an idempotent effect under a new idempotency key",
+    ),
+    (
+        "read-never-retried",
+        "gives up on a read effect after one unknown attempt",
+    ),
+    (
+        "abort-marks-effect-failed",
+        "marks an effect failed when a wait for it is aborted",
+    ),
+    (
+        "capacity-ignored",
+        "admits executions beyond the executor's capacity",
+    ),
+    (
+        "inactivity-marks-exited",
+        "treats a passed inactivity timeout as proof the execution exited",
+    ),
+    (
+        "reconciliation-timeout-resolves",
+        "treats a passed reconciliation timeout as proof of non-delivery",
+    ),
+    (
+        "cancels-on-disconnect",
+        "cancels running executions when a session closes",
+    ),
+    (
+        "respawn-on-restart",
+        "respawns running executions with a new prompt effect after a restart",
+    ),
+    (
+        "feature-operations-ungated",
+        "serves optional execution feature operations that were not negotiated",
+    ),
+    (
+        "feature-fields-accepted",
+        "accepts submit fields of optional features that were not negotiated",
+    ),
+    (
+        "recovery-ignores-cancellation",
+        "resumes dispatch during recovery although cancellation was requested",
+    ),
+    (
+        "recovery-ignores-revocation",
+        "resumes dispatch during recovery although the submitter's grant no longer authorizes",
+    ),
+    (
+        "recovery-ignores-deadline",
+        "resumes dispatch during recovery after the delivery or execution deadline passed",
+    ),
+    (
+        "recovery-trusts-damaged-journal",
+        "treats a missing dispatch marker as proof of non-dispatch when journal continuity is lost",
+    ),
+    (
+        "stale-dispatcher-sends",
+        "lets a dispatcher from an older host generation send after recovery",
+    ),
+    (
+        "failed-before-delivery-reopened",
+        "reopens a delivery already declared failed before delivery",
+    ),
+    (
+        "reconciliation-keeps-ambiguous",
+        "leaves the current delivery ambiguous after reconciliation resolves it",
+    ),
+    (
+        "reconciliation-erases-ambiguity",
+        "drops the earlier ambiguous determination from history when reconciliation resolves it",
+    ),
+    (
+        "pending-forever",
+        "leaves delivery pending after its evidence wait ends",
+    ),
+    (
+        "execution-selected-implicitly",
+        "selects execution/1 for a caller that did not request it",
+    ),
+    (
+        "effect-refs-on-core-operations",
+        "returns effect references for Core and core-test operations that record no effects",
+    ),
+    (
+        "replay-effect-refs-differ",
+        "returns different effect references on replay",
+    ),
+    (
+        "effect-visible-across-principals",
+        "lets any principal read an effect whose target it may not read",
+    ),
+    (
+        "execution-dependency-unchecked",
+        "selects execution/1 without the Core features it requires",
+    ),
+    (
+        "admits-weaker-enforcement",
+        "admits a restriction the adapter cannot enforce at the required level",
+    ),
+    (
+        "unknown-predicate-supported",
+        "admits a submit whose required adapter predicate is unknown or missing",
+    ),
+    (
+        "predecessor-dropped",
+        "does not record a retry's predecessor",
+    ),
+    (
+        "effect-recorded-after-dispatch",
+        "records the prompt submission effect at dispatch instead of in the submit transaction",
+    ),
+    (
+        "cancel-reports-cancelled",
+        "reports a cancellation as cancelled when it is only requested",
+    ),
+    (
+        "ambiguous-dispatch-resent",
+        "resumes dispatch after a restart although a write-ahead dispatch marker shows dispatch may have begun",
+    ),
+    (
+        "ambiguity-overwritten",
+        "skips the ambiguous delivery observation after a crash during dispatch",
+    ),
+    (
+        "echo-always-acknowledged",
+        "treats an echo as acknowledged delivery whatever the adapter says",
+    ),
+    (
+        "bytes-written-acknowledged",
+        "labels bytes written to a terminal as acknowledged delivery",
+    ),
+    (
+        "old-attempt-finalizes",
+        "lets a completion from a superseded host generation finalize the execution",
+    ),
+    (
+        "last-completion-wins",
+        "lets conflicting content under a recorded completion ID replace it",
+    ),
+    (
+        "evaluation-from-exit",
+        "derives an evaluation from exit status zero",
+    ),
+    (
+        "timeouts-collapsed",
+        "reports every timeout when any one of them passes",
+    ),
+    (
+        "deadline-marks-effect-failed",
+        "marks the delivery effect failed when the execution deadline passes",
+    ),
+    (
+        "reconcile-resubmits",
+        "creates a new delivery when asked to reconcile",
+    ),
+    (
+        "unknown-effect-not-found",
+        "answers not_found for a recorded effect whose outcome is unknown",
+    ),
+    (
+        "clock-file-start-unchecked",
+        "starts with an arbitrary instant when the clock file is malformed",
+    ),
+    (
+        "recheck-outside-lock",
+        "re-checks idle subscriptions and reads their events without holding the processing lock",
+    ),
+    (
+        "clock-file-ignored",
+        "keeps the clock file's initial instant for the whole process",
+    ),
+    (
+        "clock-follows-backward-time",
+        "lets the clock file move virtual time backward",
+    ),
+    (
+        "clock-malformed-resets",
+        "resets virtual time to the launch instant when the clock file is malformed",
+    ),
+    (
         "issue-binding-before-expiry",
         "checks an issue's binding scope before its expiry",
     ),

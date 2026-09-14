@@ -55,6 +55,12 @@ jobs:
       - name: The different-user check detects a provider without the peer check
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 conformance/scripts/peer_user_check.py --require --mutant skip-peer-check --expect accepted --out conformance/results/peer-user-mutant
+      - name: Deterministic race regression passes every run on the correct provider
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 conformance/scripts/repeat_fixture.py --participant conformance/participants/reference-provider-unix.json --fixture socket.subscription-recheck-race-regression --runs 20 --out conformance/results/race-repeat/correct
+      - name: Deterministic race regression fails every run on the recheck-outside-lock mutant for the intended reason
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 conformance/scripts/repeat_fixture.py --participant conformance/participants/reference-provider-unix.json --fixture socket.subscription-recheck-race-regression --mutant recheck-outside-lock --runs 20 --out conformance/results/race-repeat/recheck-outside-lock
       - name: Summarize outcomes
         if: ${{ !cancelled() }}
         run: |
@@ -68,8 +74,15 @@ jobs:
               print(f"| {path.parent} | " + ", ".join(f"{k}: {v}" for k, v in sorted(summary.items())) + " |")
           for path in sorted(pathlib.Path("conformance/results").glob("**/mutants.json")):
               data = json.loads(path.read_text())
-              survived = [r["mutant"] for r in data["results"] if not r["killed"]]
-              print(f"| {path} | all killed: {data['all_killed']}; not killed: {', '.join(sorted(set(survived))) or 'none'} |")
+              survived = [r["mutant"] for r in data["results"] if not r.get("as_intended", r["killed"])]
+              print(f"| {path} | all killed as intended: {data['all_killed']}; exceptions: {', '.join(sorted(set(survived))) or 'none'} |")
+          for path in sorted(pathlib.Path("conformance/results").glob("race-repeat/*/summary.json")):
+              data = json.loads(path.read_text())
+              print(f"| {path} | {data['intended_runs']}/{data['runs']} runs as intended |")
+          for path in sorted(pathlib.Path("conformance/results").glob("*/manifest.json")):
+              limits = json.loads(path.read_text()).get("coverage_limits", [])
+              if limits:
+                  print(f"| {path.parent} coverage limits | " + "; ".join(f"{l['fixture']}: {l['reason']}" for l in limits) + " |")
           for path in sorted(pathlib.Path("conformance/results").glob("peer-user*/result.json")):
               print(f"| {path} | {json.loads(path.read_text())['outcome']} |")
           PY

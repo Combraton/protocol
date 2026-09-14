@@ -44,8 +44,10 @@
             "reason": {
               "enum": [
                 "authorization_lost",
-                "item_too_large"
-              ]
+                "item_too_large",
+                "consumer_too_slow"
+              ],
+              "description": "consumer_too_slow is sent only to sessions that negotiated core.events.backpressure (CORE section 16.5)."
             }
           },
           "unevaluatedProperties": false

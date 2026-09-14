@@ -1,8 +1,8 @@
 # Core profile `core/1` — release draft
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are M2 drafts (§18 accepted by decision 006).** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are accepted M2 drafts (§18 by decision 006). §19 effects and obligations is a proposed M3 draft.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
-This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and effect reconciliation are Core too; they are specified in milestone M2 and marked **reserved** below.
+This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions and capability snapshots are specified in §15–§18 (milestone M2). Effect reconciliation is Core too; §19 is a proposed M3 draft.
 
 Wire encoding, digests and transport are defined separately:
 
@@ -196,7 +196,7 @@ Some operations act under an authority that can be taken over, such as a control
 
 | Condition | Result |
 |---|---|
-| Epoch absent where the operation requires one | `invalid_envelope` |
+| Epoch absent where the operation requires one | `invalid_envelope`, unless the profile states otherwise. A profile whose epoch exists only once claimed may treat an absent epoch as epoch 0, so it is `stale_authority_epoch` once any epoch exists (EXECUTION §11.3). |
 | Epoch lower than the current epoch | `stale_authority_epoch`. The error includes `current_epoch` only if the principal may read the scope's authority subject (§7 rules), such as `core-test.authority` for scope `core-test`. |
 | Epoch higher than any the provider issued | `unknown_authority_epoch` |
 
@@ -265,7 +265,13 @@ A successful command returns:
 }
 ```
 
-An acknowledgment means the provider durably recorded the command and its immediate state change. It does not mean any external effect happened, succeeded, was verified or was accepted by anyone. Each profile defines what its outcome establishes.
+`effect_refs` lists the IDs of effects the command durably recorded (§19, M3 draft), such as an execution's prompt submission. It does not imply that those effects occurred or succeeded.
+
+**Compatibility (owner decision, 2026-09-14):**
+- **Widening.** Earlier drafts allowed only an empty array here, so widening it is a real schema change.
+- **Gating.** Effect references appear only for operations of a negotiated profile or feature that records effects, such as `execution/1` with `core.effects`. Every M1 and M2 operation, and every effect-free command, still returns `[]`.
+- **Replay.** A replay returns the same original references.
+- **Reading effects.** References resolve only through `core.effects.get`, under read authority on the effect's target. Another principal's effect and a nonexistent effect are refused alike. An acknowledgment means the provider durably recorded the command and its immediate state change. It does not mean any external effect happened, succeeded, was verified or was accepted by anyone. Each profile defines what its outcome establishes.
 
 A replay returns an `acknowledgment` and `outcome` byte-for-byte equal under canonical encoding to the original, with `replay: true`.
 
@@ -292,6 +298,7 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `digest_mismatch` | `no` | `command_digest` differs from the recomputed digest | `expected` |
 | `idempotency_conflict` | `no` | Command identity bound to a different intent | `command_id` |
 | `dedupe_history_unavailable` | `after_reconcile` | Command identity may have been used but its record was discarded | `oldest_retained` |
+| `effect_history_unavailable` | `after_reconcile` | The effect may have been recorded but its record is no longer retained (§19.2) | — |
 | `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
@@ -328,7 +335,7 @@ Rights (§15): `core-test.claim` on the authority subject for `claim`; `core-tes
 
 Conformance runs need states that ordinary operations cannot reach in bounded time, such as a provider restart or discarded deduplication history. The suite reaches them only through the **environment** of the process under test, never through a protocol operation:
 
-- **Launch.** The runner launches the provider with a data directory and a **launch configuration** file ([conformance README](../../../conformance/README.md#launch-configuration)). The file can set the session principal and authority principals, limits, deduplication retention, event retention and epoch changes, capability status, and a fixed provider clock.
+- **Launch.** The runner launches the provider with a data directory and a **launch configuration** file ([conformance README](../../../conformance/README.md#launch-configuration)). The file can set the session principal and authority principals, limits, deduplication retention, event retention and epoch changes, capability status, a fixed provider clock, a controlled clock file, and implementation-specific barriers ([decision 007](../../decisions/007-execution-test-controls.md)). Files the runner writes in its per-case work directory, such as the clock file and barrier releases, are environment too; process kills are lifecycle, not protocol.
 - **Restart.** A restart is ending the process and launching it again over the same data directory.
 - **No domain writes.** The launch configuration MUST NOT create, modify or delete subjects, commands, epochs or grants. Those are reached only through real operations.
 
@@ -525,10 +532,19 @@ Rules:
 - **Lapses caused elsewhere.** On a shared transport, a command on another connection can end a subscription's authorization, for example by revoking its grant or claiming a new authority epoch. The provider then sends the final notification without waiting for a request on the subscriber's connection. Two rules make this observable:
   - **Ordering, normative.** No item committed after the command that ended authorization is delivered on that subscription. Authorization and the items to deliver are evaluated against the same committed state.
   - **Latency, conformance bound.** Fixtures expect the final notification within 2 seconds of the ending command's response on the other connection.
+- **Backpressure (proposed M3 draft, feature `core.events.backpressure`).** Semantic events are never skipped. A consumer that stops reading loses its connection, not events:
+  - **Bounded pending output.** A provider bounds, per connection, the memory and bytes of output produced but not yet written. When a subscription's next notification would exceed that bound, the provider stops producing items for the connection's subscriptions; the withheld items stay undelivered, never skipped.
+  - **Stall and room deadline.** A stall starts when the next notification or response would exceed the bound. The consumer must drain all pending output within `backpressure_notice_ms` of the stall's start. Partial progress does not extend that deadline. A consumer that misses it is **too slow**. A consumer that drains within each deadline is keeping up and is not closed.
+  - **Ending notices, one budget.** If the session negotiated `core.events.backpressure`, the provider attempts one final `core.events.notify` for every subscription on the connection, with `"items": []` and `"ended": { "reason": "consumer_too_slow" }`. All of the connection's notices share one budget of `backpressure_notice_ms`, starting when the consumer was declared too slow. The budget does not restart per subscription, and nothing else is waited for before closure.
+  - **Closure.** When the notice budget ends, or immediately when no notice is owed, the provider closes the connection and writes nothing more on it, whether or not the notices were written. Every subscription on it ends.
+  - **Maximum time to closure.** A too-slow connection is closed within `2 × backpressure_notice_ms` of its stall's start, plus the provider's own processing latency; without the feature, within `backpressure_notice_ms`. No further stall starts once closure has begun, so repeated waits cannot extend it.
+  - **Older consumers.** A session that did not negotiate `core.events.backpressure` never receives `consumer_too_slow`. Its connection is closed without that notice. Adding an enum value is not automatically backward-compatible: a consumer that validates `ended.reason` against the values it knows could reject or misread an unfamiliar one. The reason is therefore sent only after negotiation.
+  - **Recovery.** The consumer reconnects and reads or subscribes from its last durably processed cursor. Events after that position are delivered in order. If some were discarded under retention, the first item is an explicit `gap` with a snapshot (§16.4), never a silent skip.
+  - **Declared bounds.** Negotiating the feature adds `max_pending_notification_bytes` and `backpressure_notice_ms` to the result's `limits`. Without the feature, those members are absent. A provider that implements the feature bounds and closes every session this way, including sessions that did not negotiate it; those sessions only lack the declaration and the notice. A provider without the feature makes no backpressure guarantee.
+  - **Conformance.** Fixtures pause the runner's reading and synchronize on implementation-specific signals (decision 007): `backpressure.stall.started` at a stall's start, `backpressure.limit.reached` when the consumer is declared too slow, and `backpressure.connection.closed` after closure. `core.events.unread-ending-notice-does-not-hold-the-connection` checks the room deadline, the shared notice budget across three subscriptions, and the maximum time to closure from the signals' times, with 750 ms of slack. A participant that does not declare them reports these fixtures as `unsupported` coverage limits.
 - **Expiry while idle.** Expiry needs no command. A grant stops authorizing at `expires_at` on the provider clock (§15.3), and no item committed at or after that instant is delivered under it.
   - On a shared transport the provider re-checks idle subscriptions at the same latency as other lapses, so the final notification follows without a request.
   - On stdio, only the session itself commits commands, so nothing can become deliverable while it is idle. There the provider may report the end after the next request.
-  - The conformance launch clock is fixed for a process's lifetime, so no portable fixture observes expiry during a session.
 - **Consumers.** Semantic events are never dropped silently. Consumers deduplicate by position and resume from the last cursor they durably processed. A reconnect may therefore replay items.
 
 ### 16.6 Authorization
@@ -618,3 +634,65 @@ Accepted by [decision 006](../../decisions/006-unix-socket-principal-credential.
 ### 18.3 What credentials do not establish
 
 A successful authentication proves that the caller possessed the credential. It does not prove which program the caller is. On a machine where coding agents run as the same user without file-access enforcement, an agent that can read the credential file can act as that principal. Execution providers must report the enforcement level protecting credential files (`enforced`, `mediated` or `cooperative`) in their capabilities. Revoking a credential stops future authentications. It does not end sessions already authenticated with it; the provider's administration may close those explicitly.
+
+## 19. Effects and obligations (proposed M3 draft)
+
+> Proposed for milestone M3 with the [Execution profile](EXECUTION.md). Not normative until M3 is accepted with schemas and fixtures. This section is negotiated as the Core feature `core.effects`. Matrix rows: EFF-1 to EFF-4.
+
+An **effect** is an action a provider takes, or attempts, outside its own store: submitting a prompt, forwarding a cancellation, delivering a steering message or a context packet. Its outcome can be uncertain even when the provider's own records are durable (SPEC §6).
+
+### 19.1 Effect descriptors
+
+An effect is recorded in the same owner transaction as the command that authorizes it (§10 step 8), before any external I/O. Its descriptor is immutable:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable effect ID. A network retry of the same effect keeps it. |
+| `kind` | Profile-defined, such as `execution.prompt_submission` |
+| `target` | What the effect acts on, such as an execution and its native session |
+| `payload_digest` | Digest of the payload sent or to be sent (ENCODING) |
+| `authorization` | The grant, or the authority principal, and the authority epoch it was authorized under |
+| `retry_class` | One of the classes in §19.3 |
+| `operation_ref` | The accepted command that recorded it |
+
+Its **status** is observed separately and appended as evidence: `pending`, `succeeded`, `failed`, `unknown`. Every observation names its evidence class and source (EFF-1).
+
+### 19.2 Querying after response loss
+
+`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "revision", "status", "observations", "attempts", "obligations" }`. `revision` is the effect record's revision, used as the precondition revision of subject `{ "kind": "core.effect", "id" }` (§19.4). `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
+
+- After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
+- A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.
+- An effect ID the provider never recorded is `not_found`. An effect record the provider no longer retains is `effect_history_unavailable`, never `not_found`.
+
+### 19.3 Retry classes
+
+| Class | A retry is permitted |
+|---|---|
+| `pure` | Always; no external state changes |
+| `read` | Under the caller's cost and privacy policy |
+| `idempotent_key` | Only within the target's promised key semantics, and with the same key |
+| `compensatable` | Only after the compensating action's outcome is known |
+| `non_repeatable` | Never automatically; reconciliation or a new explicit decision is required |
+
+A provider MUST NOT retry an effect outside its class. Blind retry of a `non_repeatable` effect after an `unknown` outcome is a conformance failure (EFF-3).
+
+- **Attempts.** Each try at the external action is recorded in `attempts`: `{ attempt, idempotency_key?, outcome: "completed" | "failed" | "unknown", recorded_at }`. An attempt's outcome describes the call, not the effect: a completed call can still leave the effect `pending` or `unknown`.
+- **Keys.** An `idempotent_key` effect carries `idempotency_key` in its descriptor, and every attempt uses that same key.
+
+### 19.4 Obligations
+
+An obligation records an expected observation: an effect outcome, a lifecycle transition, or required terminal output coverage. Each has a deadline on the provider clock.
+
+- **States:** `open`, `satisfied`, `overdue`, `aborted`.
+- **Deadline:** when the deadline passes with no observation, a provider-origin event marks the obligation `overdue`, even if no other event arrives.
+- **An ended wait is not an observation.** When a deadline passes, or a profile ends a wait because it timed out, the obligation is `overdue`, not `satisfied`, even if the wait's end leads to a determination (EXECUTION §8). Only the expected observation satisfies it.
+- **Aborting:** closes the wait. It MUST NOT change the effect's status: an aborted wait for an `unknown` effect leaves the effect `unknown` (EFF-4).
+  - `core.effects.abort_obligation` (command, *candidate*) on subject `{ "kind": "core.effect", "id" }`, with precondition revision equal to the effect's revision and payload `{ "obligation" }`. It returns `{ effect, obligation: { id, state: "aborted" }, status }`, and appends `core.effect.obligation.aborted` with payload `{ effect, obligation, target }` on the effect subject.
+  - An obligation that is not `open` or `overdue` is `not_found`. The command records no effect, so `effect_refs` is `[]`.
+  - Under a grant it needs right `core.effects.abort_obligation` on the effect's target. An effect subject is visible in events exactly when its target is.
+- **Survival:** obligations survive cancellation, timeouts and restarts until satisfied or explicitly aborted.
+
+### 19.5 What effects do not establish
+
+A `succeeded` status is the provider's observation under its stated evidence class. It is not proof of the target's internal state, and a closed obligation is not proof that an effect did not happen.

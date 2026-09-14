@@ -121,12 +121,22 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
     let fixtures = load_fixtures(&options.repo, None)?;
     let known = matrix_ids(&options.repo)?;
     let mut known_mutants = BTreeSet::new();
+    let mut known_barriers = BTreeSet::new();
     for entry in std::fs::read_dir(options.repo.join("conformance/participants"))
         .map_err(|e| e.to_string())?
     {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.extension().is_some_and(|ext| ext == "json") {
-            known_mutants.extend(Descriptor::load(&path)?.mutants);
+            let descriptor = Descriptor::load(&path)?;
+            known_barriers.extend(
+                descriptor.raw["claims"]["test_barriers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(String::from),
+            );
+            known_mutants.extend(descriptor.mutants);
         }
     }
     let mut ok = true;
@@ -160,6 +170,32 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
             if !known_mutants.contains(mutant) {
                 println!("{label}: declares mutant {mutant} that no participant descriptor lists");
                 ok = false;
+            }
+        }
+        for barrier in fixture.value["requires_barriers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !known_barriers.contains(barrier) {
+                println!(
+                    "{label}: requires barrier {barrier} that no participant descriptor declares"
+                );
+                ok = false;
+            }
+        }
+        if let Some(expectations) = fixture.value["kill_expectations"].as_object() {
+            for mutant in expectations.keys() {
+                let declared = fixture.value["kills"]
+                    .as_array()
+                    .is_some_and(|k| k.iter().any(|m| m == mutant.as_str()));
+                if !declared {
+                    println!(
+                        "{label}: kill_expectations names {mutant}, which kills does not declare"
+                    );
+                    ok = false;
+                }
             }
         }
         let kills = fixture.value["kills"].as_array().map_or(0, Vec::len);
@@ -198,7 +234,7 @@ fn run_suite(
     fixtures: &[&Fixture],
     out: &Path,
     quiet: bool,
-) -> Result<Vec<(String, Outcome)>, String> {
+) -> Result<Vec<CaseSummary>, String> {
     std::fs::create_dir_all(out.join("transcripts")).map_err(|e| e.to_string())?;
     let work = tempfile::tempdir().map_err(|e| e.to_string())?;
     let mut results = Vec::new();
@@ -247,12 +283,28 @@ fn run_suite(
             "reason": result.reason,
             "transcript": format!("transcripts/{}.jsonl", fixture.id()),
         }));
-        results.push((fixture.id().to_string(), result.outcome));
+        results.push(CaseSummary {
+            fixture: fixture.id().to_string(),
+            outcome: result.outcome,
+            step: result.step,
+            reason: result.reason.clone(),
+        });
     }
     let mut summary: BTreeMap<&str, usize> = BTreeMap::new();
-    for (_, outcome) in &results {
-        *summary.entry(outcome.as_str()).or_default() += 1;
+    for case in &results {
+        *summary.entry(case.outcome.as_str()).or_default() += 1;
     }
+    let coverage_limits: Vec<Value> = results
+        .iter()
+        .filter(|case| {
+            case.outcome == Outcome::Unsupported
+                && case
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.starts_with("coverage limit"))
+        })
+        .map(|case| json!({"fixture": case.fixture, "reason": case.reason}))
+        .collect();
     let suite_digest = strict::sha256(&strict::canonical(&json!(
         fixtures
             .iter()
@@ -267,6 +319,7 @@ fn run_suite(
         "participant": {"name": descriptor.name, "version": descriptor.version, "descriptor_digest": descriptor.digest, "claimed_profiles": descriptor.raw["claims"]["profiles"], "mutant": mutant},
         "environment": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH},
         "summary": summary,
+        "coverage_limits": coverage_limits,
         "results": entries,
     });
     std::fs::write(
@@ -275,6 +328,13 @@ fn run_suite(
     )
     .map_err(|e| e.to_string())?;
     Ok(results)
+}
+
+struct CaseSummary {
+    fixture: String,
+    outcome: Outcome,
+    step: Option<usize>,
+    reason: Option<String>,
 }
 
 fn passing(outcome: Outcome) -> bool {
@@ -333,13 +393,10 @@ fn real_main() -> Result<bool, String> {
                 &out,
                 false,
             )?;
-            let failed = results
-                .iter()
-                .filter(|(_, outcome)| !passing(*outcome))
-                .count();
+            let failed = results.iter().filter(|case| !passing(case.outcome)).count();
             let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-            for (_, outcome) in &results {
-                *counts.entry(outcome.as_str()).or_default() += 1;
+            for case in &results {
+                *counts.entry(case.outcome.as_str()).or_default() += 1;
             }
             let breakdown: Vec<String> = counts
                 .iter()
@@ -387,15 +444,43 @@ fn real_main() -> Result<bool, String> {
                     &out.join("mutants").join(mutant),
                     true,
                 )?;
-                for (fixture, outcome) in &results {
-                    let killed = matches!(outcome, Outcome::Fail | Outcome::Timeout);
-                    record.push(json!({"mutant": mutant, "fixture": fixture, "outcome": outcome.as_str(), "killed": killed}));
+                for case in &results {
+                    let killed = matches!(case.outcome, Outcome::Fail | Outcome::Timeout);
+                    let expectation = targets
+                        .iter()
+                        .find(|f| f.id() == case.fixture)
+                        .map(|f| f.value["kill_expectations"][mutant.as_str()].clone())
+                        .filter(|e| !e.is_null());
+                    let as_intended = match &expectation {
+                        None => true,
+                        Some(e) => {
+                            case.step.map(|s| s as u64) == e["step"].as_u64()
+                                && case.reason.as_deref().is_some_and(|r| {
+                                    r.contains(e["reason_contains"].as_str().unwrap_or_default())
+                                })
+                        }
+                    };
+                    let label = match (killed, as_intended) {
+                        (true, true) => "killed",
+                        (true, false) => "WRONG-REASON",
+                        (false, _) => "SURVIVED",
+                    };
                     println!(
-                        "{:<10} {mutant:<28} {fixture} ({})",
-                        if killed { "killed" } else { "SURVIVED" },
-                        outcome.as_str()
+                        "{label:<10} {mutant:<28} {} ({})",
+                        case.fixture,
+                        case.outcome.as_str()
                     );
-                    ok &= killed;
+                    record.push(json!({
+                        "mutant": mutant,
+                        "fixture": case.fixture,
+                        "outcome": case.outcome.as_str(),
+                        "failed_step": case.step,
+                        "reason": case.reason,
+                        "expected": expectation,
+                        "killed": killed,
+                        "as_intended": killed && as_intended,
+                    }));
+                    ok &= killed && as_intended;
                 }
             }
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;

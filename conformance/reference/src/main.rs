@@ -3,10 +3,15 @@
 //! Not a product. It speaks the stdio form of the local stream binding and
 //! implements core/1 plus the conformance-only core-test/1 profile.
 
+mod barriers;
+mod clock;
+mod execution;
+mod features;
 mod frames;
 mod grants;
 mod json;
 mod mutants;
+mod outbox;
 mod provider;
 mod store;
 
@@ -116,6 +121,12 @@ fn config_limits(config: &Value) -> Limits {
         max_string_bytes: limit("max_string_bytes", 16_384),
         max_array_items: limit("max_array_items", 256),
         max_depth: limit("max_depth", 32),
+        max_pending_notification_bytes: config["events"]["max_pending_notification_bytes"]
+            .as_i64()
+            .unwrap_or(8_388_608),
+        backpressure_notice_ms: config["events"]["backpressure_notice_ms"]
+            .as_i64()
+            .unwrap_or(1000),
     }
 }
 
@@ -173,7 +184,8 @@ fn run(args: Args) -> Result<(), String> {
         .as_str()
         .unwrap_or("conformance-provider")
         .to_string();
-    let fixed_clock = config["clock"]["fixed"].as_str().map(String::from);
+    let clock = std::sync::Arc::new(clock::Clock::from_config(&config, &mutant_set)?);
+    barriers::init(&config);
     let writes = config["capabilities"]["core-test.writes"]
         .as_str()
         .unwrap_or("supported");
@@ -186,7 +198,7 @@ fn run(args: Args) -> Result<(), String> {
         .apply_capabilities(
             &provider_id,
             &capabilities,
-            &grants::now(fixed_clock.as_deref()),
+            &clock.now(),
             mutant_set.on("capability-revision-static"),
             (
                 mutant_set.on("capability-event-wrong-revision"),
@@ -194,6 +206,19 @@ fn run(args: Args) -> Result<(), String> {
             ),
         )
         .map_err(|e| e.to_string())?;
+    execution::recover(
+        &mut store,
+        &execution::Recovery {
+            now: clock.now(),
+            executor: &config["executor"],
+            mutants: &mutant_set,
+            authorities: &authorities,
+            journal_intact: !config["events"]["new_epoch_on_start"]
+                .as_bool()
+                .unwrap_or(false),
+        },
+    )
+    .map_err(|e| e.to_string())?;
     let credentials: Vec<provider::Credential> = config["credentials"]
         .as_array()
         .into_iter()
@@ -213,7 +238,9 @@ fn run(args: Args) -> Result<(), String> {
         mutant_names: args.mutants.clone(),
         identity: provider::Identity {
             provider_id,
-            fixed_clock,
+            clock,
+            executor: std::sync::Arc::new(config["executor"].clone()),
+            faults: std::sync::Arc::new(std::sync::Mutex::new(config["faults"].clone())),
             capabilities,
             authorities,
             principal,
@@ -235,7 +262,8 @@ fn run(args: Args) -> Result<(), String> {
             );
             serve(
                 std::io::stdin().lock(),
-                std::io::stdout().lock(),
+                std::io::stdout(),
+                None,
                 provider,
                 &shared,
                 false,
@@ -294,7 +322,7 @@ fn serve_unix(socket: &std::path::Path, shared: std::sync::Arc<Shared>) -> Resul
             else {
                 return;
             };
-            let Ok(writer) = stream.try_clone() else {
+            let (Ok(writer), Ok(closer)) = (stream.try_clone(), stream.try_clone()) else {
                 return;
             };
             let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(40)));
@@ -307,7 +335,8 @@ fn serve_unix(socket: &std::path::Path, shared: std::sync::Arc<Shared>) -> Resul
                 true,
                 shared.credentials.clone(),
             );
-            let _ = serve(stream, writer, provider, &shared, true);
+            let _ = serve(stream, writer, Some(closer), provider, &shared, true);
+            barriers::signal(barriers::SESSION_CLOSED);
         });
     }
     Ok(())
@@ -339,15 +368,75 @@ fn peer_uid(fd: std::os::unix::io::RawFd) -> Option<u32> {
     (status == 0).then_some(uid)
 }
 
-/// One session over one connection. `poll` connections wake periodically to deliver
-/// notifications for events committed by other sessions.
-fn serve<R: std::io::Read, W: Write>(
+/// How a session ended.
+enum Ended {
+    /// Input ended or the connection failed: flush what is queued.
+    Normally,
+    /// Pending output exceeded its bound (CORE section 16.5): the connection is already closed.
+    Backpressure,
+}
+
+/// One session over one connection. Output goes through a bounded outbox written by its own
+/// thread, so a consumer that stops reading loses its connection instead of stalling the provider.
+fn serve<R: std::io::Read, W: Write + Send + 'static>(
     input: R,
-    mut out: W,
-    mut provider: Provider,
+    out: W,
+    closer: Option<std::os::unix::net::UnixStream>,
+    provider: Provider,
     shared: &Shared,
     poll: bool,
 ) -> Result<(), String> {
+    let outbox = outbox::Outbox::start(out);
+    let result = serve_frames(input, &outbox, closer.as_ref(), provider, shared, poll);
+    if let Ok(Ended::Normally) = result {
+        let queued = outbox.queued();
+        outbox.wait_written(queued, Some(std::time::Duration::from_secs(30)));
+    }
+    outbox.close();
+    result.map(|_| ())
+}
+
+/// End a connection whose pending output exceeded its bound (CORE section 16.5, TRN-4).
+fn close_for_backpressure(
+    provider: &mut Provider,
+    outbox: &outbox::Outbox,
+    closer: Option<&std::os::unix::net::UnixStream>,
+    mutant_set: &mutants::Mutants,
+) {
+    barriers::signal(barriers::BACKPRESSURE_LIMIT_REACHED);
+    if provider.backpressure_negotiated() || mutant_set.on("consumer-too-slow-to-older-consumers") {
+        // One notice budget covers every subscription's ending notice (CORE section 16.5).
+        let bound = if mutant_set.on("notice-waits-indefinitely") {
+            None
+        } else {
+            Some(std::time::Duration::from_millis(
+                provider.backpressure_notice_ms(),
+            ))
+        };
+        for notice in provider.end_subscriptions("consumer_too_slow") {
+            outbox.push(json::encode_frame(&notice));
+            if mutant_set.on("notice-budget-per-subscription") {
+                outbox.wait_written(outbox.queued(), bound);
+            }
+        }
+        outbox.wait_written(outbox.queued(), bound);
+    }
+    // Closure: nothing more is written, whether or not the notice was.
+    outbox.abandon();
+    if let Some(stream) = closer {
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    }
+    barriers::signal(barriers::BACKPRESSURE_CONNECTION_CLOSED);
+}
+
+fn serve_frames<R: std::io::Read>(
+    input: R,
+    outbox: &outbox::Outbox,
+    closer: Option<&std::os::unix::net::UnixStream>,
+    mut provider: Provider,
+    shared: &Shared,
+    poll: bool,
+) -> Result<Ended, String> {
     let mutant_set = mutants::Mutants::parse(&shared.mutant_names)?;
     let lax = Laxness {
         duplicate_members: mutant_set.on("accept-duplicate-members"),
@@ -369,11 +458,78 @@ fn serve<R: std::io::Read, W: Write>(
     reader.parse_unterminated = mutant_set.on("parse-unterminated");
     reader.off_by_one = mutant_set.on("strict-off-by-one-limit");
 
-    let mut send = |value: &Value| -> bool {
-        out.write_all(&json::encode_frame(value))
-            .and_then(|()| out.flush())
-            .is_ok()
+    let bound = provider.pending_output_bound();
+    let stall = std::time::Duration::from_millis(provider.backpressure_notice_ms());
+    let unbounded = mutant_set.on("unbounded-pending-output");
+    let drop_under_pressure = mutant_set.on("semantic-events-dropped-under-pressure");
+    // A consumer that makes no room within the bound is too slow: close its connection.
+    // A stall's deadline runs from its start; partial progress does not extend it.
+    let make_room = |provider: &mut Provider| -> Result<(), Ended> {
+        barriers::signal(barriers::BACKPRESSURE_STALL_STARTED);
+        let drained = if mutant_set.on("room-wait-unbounded") {
+            outbox.wait_written(outbox.queued(), None)
+        } else {
+            outbox.wait_drained(stall)
+        };
+        if drained {
+            Ok(())
+        } else {
+            close_for_backpressure(provider, outbox, closer, &mutant_set);
+            Err(Ended::Backpressure)
+        }
     };
+    // Queue a response; `Err` means the connection must end now.
+    let respond = |provider: &mut Provider, value: &Value| -> Result<(), Ended> {
+        let frame = json::encode_frame(value);
+        let pending = outbox.pending();
+        if pending > 0 && pending + frame.len() > bound && !unbounded {
+            make_room(provider)?;
+        }
+        if outbox.push(frame) {
+            Ok(())
+        } else {
+            Err(Ended::Normally)
+        }
+    };
+    // Produce and queue owed notifications without exceeding the bound (CORE section 16.5).
+    let deliver = |provider: &mut Provider, idle: bool| -> Result<(), Ended> {
+        loop {
+            let pending = outbox.pending();
+            let room = if unbounded || drop_under_pressure {
+                None
+            } else {
+                Some((bound.saturating_sub(pending), pending == 0))
+            };
+            let (frames, withheld) = provider.drain_notifications(idle, room);
+            for frame in frames {
+                let bytes = json::encode_frame(&frame);
+                let pending = outbox.pending();
+                if drop_under_pressure && pending > 0 && pending + bytes.len() > bound {
+                    barriers::signal(barriers::BACKPRESSURE_LIMIT_REACHED);
+                    continue;
+                }
+                if !outbox.push(bytes) {
+                    return Err(Ended::Normally);
+                }
+            }
+            if !withheld {
+                return Ok(());
+            }
+            make_room(provider)?;
+        }
+    };
+    macro_rules! send {
+        ($value:expr) => {
+            respond(&mut provider, &$value).is_ok()
+        };
+    }
+    macro_rules! notify_all {
+        ($idle:expr) => {
+            if let Err(ended) = deliver(&mut provider, $idle) {
+                return Ok(ended);
+            }
+        };
+    }
 
     loop {
         if provider.negotiated() && !frame_limit_fixed {
@@ -389,11 +545,7 @@ fn serve<R: std::io::Read, W: Write>(
                     ) =>
             {
                 if cross_session {
-                    for notification in provider.drain_notifications(true) {
-                        if !send(&notification) {
-                            return Ok(());
-                        }
-                    }
+                    notify_all!(true);
                 }
                 continue;
             }
@@ -402,13 +554,15 @@ fn serve<R: std::io::Read, W: Write>(
         let frame = match next {
             Next::End => {
                 if exit_nonzero && !poll {
+                    let queued = outbox.queued();
+                    outbox.wait_written(queued, Some(std::time::Duration::from_secs(30)));
                     std::process::exit(3);
                 }
-                return Ok(());
+                return Ok(Ended::Normally);
             }
             Next::TooLarge => {
-                send(&error_response(Value::Null, "frame_too_large", json!({})));
-                return Ok(());
+                let _ = send!(error_response(Value::Null, "frame_too_large", json!({})));
+                return Ok(Ended::Normally);
             }
             Next::Frame(frame) => frame,
         };
@@ -423,20 +577,20 @@ fn serve<R: std::io::Read, W: Write>(
                 } else {
                     "parse_error"
                 };
-                if !send(&error_response(Value::Null, code, json!({}))) || !skip_invalid {
-                    return Ok(());
+                if !send!(error_response(Value::Null, code, json!({}))) || !skip_invalid {
+                    return Ok(Ended::Normally);
                 }
                 continue;
             }
         };
         let Value::Object(object) = &message else {
-            if !send(&error_response(
+            if !send!(error_response(
                 Value::Null,
                 "invalid_request",
                 json!({"reason": "frame is not a JSON-RPC object"}),
             )) || close_on_invalid_request
             {
-                return Ok(());
+                return Ok(Ended::Normally);
             }
             continue;
         };
@@ -446,10 +600,10 @@ fn serve<R: std::io::Read, W: Write>(
             let is_notification = object.get("jsonrpc") == Some(&json!("2.0"))
                 && object.get("method").is_some_and(Value::is_string);
             if !is_notification && !ignore_idless_garbage {
-                if !send(&error_response(Value::Null, "invalid_request", json!({})))
+                if !send!(error_response(Value::Null, "invalid_request", json!({})))
                     || close_on_invalid_request
                 {
-                    return Ok(());
+                    return Ok(Ended::Normally);
                 }
                 continue;
             }
@@ -483,33 +637,25 @@ fn serve<R: std::io::Read, W: Write>(
                     .all(|key| matches!(key.as_str(), "jsonrpc" | "id" | "method" | "params")));
         if !id_valid || !shape_valid {
             let reply_id = if id_valid { id } else { Value::Null };
-            if !send(&error_response(
+            if !send!(error_response(
                 reply_id,
                 "invalid_request",
                 json!({"reason": "not a valid JSON-RPC 2.0 request"}),
             )) || close_on_invalid_request
             {
-                return Ok(());
+                return Ok(Ended::Normally);
             }
             continue;
         }
         let method = object["method"].as_str().unwrap_or_default().to_string();
         let response = provider.handle(id, &method, object["params"].clone());
         if notify_first {
-            for notification in provider.drain_notifications(false) {
-                if !send(&notification) {
-                    return Ok(());
-                }
-            }
+            notify_all!(false);
         }
-        if !send(&response) {
-            return Ok(());
+        if let Err(ended) = respond(&mut provider, &response) {
+            return Ok(ended);
         }
-        for notification in provider.drain_notifications(false) {
-            if !send(&notification) {
-                return Ok(());
-            }
-        }
+        notify_all!(false);
     }
 }
 

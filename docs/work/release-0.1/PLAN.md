@@ -130,7 +130,7 @@ Effects, telemetry lost ranges and backpressure moved to M3 on 2026-09-13, becau
 
 ### M3 — Execution profile
 
-All EXE rows with a deterministic reference executor (fake host), mutants and scenarios for lost acknowledgment, crash between journal and dispatch, delayed old-attempt result, two controllers and cancellation acknowledgment loss. Also the Core effect contract (EFF-1 to EFF-4), telemetry lost ranges (OBS-7) and backpressure (TRN-4), exercised through execution delivery, cancellation and output spooling.
+All EXE rows with a deterministic reference executor (fake host), mutants and scenarios for lost acknowledgment, crash between journal and dispatch, delayed old-attempt result, two controllers and cancellation acknowledgment loss. Also the Core effect contract (EFF-1 to EFF-4), telemetry lost ranges (OBS-7) and backpressure (TRN-4), exercised through execution delivery, cancellation and output spooling. Detailed in the [M3 task](M3.md), whose explicit acceptance criteria also include a controllable test clock, idle-expiry coverage (OBS-9), deterministic concurrency regressions (REL-13) and test controls outside the protocol (REL-12, [decision 007](../../decisions/007-execution-test-controls.md)).
 
 ### M4 — Evidence and Context profiles
 
@@ -143,6 +143,8 @@ All KNW and VER rows. Adds scenarios for a provider reconnecting with a changed 
 ### M6 — Release candidate
 
 Compatibility fixtures across versions, the minimal third-party executor and evidence publisher, consumer compatibility matrix, complete operation documentation, license, release record and checksums. Owner review and acceptance. Publishing or tagging the release requires the owner's authorization.
+
+M6 also takes the explicit compatibility decision on machine-readable advertising of profile feature dependencies (matrix CMP-5; owner decision 2026-09-14). Until then Execution's required Core features are published in its profile document and enforced at negotiation.
 
 ## 6. Choices that affect scope or public semantics
 

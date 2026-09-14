@@ -19,6 +19,29 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "core-test.claim".to_string(),
             params["subject"].clone(),
         )]),
+        "execution.submit" => Some(vec![(
+            "execution.submit".to_string(),
+            params["subject"].clone(),
+        )]),
+        "execution.cancel" => Some(vec![(
+            "execution.cancel".to_string(),
+            params["subject"].clone(),
+        )]),
+        "execution.steer"
+        | "execution.respond_action"
+        | "execution.controller.claim"
+        | "execution.workspace.checkpoint" => Some(vec![(
+            params["operation"].as_str().unwrap_or_default().to_string(),
+            params["subject"].clone(),
+        )]),
+        "execution.discovery.list" => Some(vec![(
+            "execution.discovery.list".to_string(),
+            serde_json::json!({"kind": "execution.discovery", "id": "installations"}),
+        )]),
+        "execution.inspect" | "execution.output.read" => Some(vec![(
+            "execution.read".to_string(),
+            serde_json::json!({"kind": crate::execution::KIND, "id": params["payload"]["execution"]}),
+        )]),
         "core-test.subject.get" | "core-test.subject.applied_count" => Some(vec![(
             "core-test.read".to_string(),
             params["payload"]["subject"].clone(),
@@ -121,7 +144,7 @@ pub fn within_parent(parent: &Value, child: &Value) -> bool {
     rights_ok && resources_ok && expiry_ok && depth_ok && binding_ok
 }
 
-/// Current instant as `YYYY-MM-DDTHH:MM:SSZ`; a fixed test clock comes from launch configuration.
+/// Current system instant as `YYYY-MM-DDTHH:MM:SSZ` (used by `clock::Clock::System`).
 pub fn now(fixed: Option<&str>) -> String {
     if let Some(fixed) = fixed {
         return fixed.to_string();

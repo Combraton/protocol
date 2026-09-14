@@ -23,7 +23,12 @@ One database file in the data directory holds:
   kept only so that retention snapshots taken after that epoch still reflect
   subject state (conformance README ``events.unvouched_last``);
 - ``snapshot_base``: subject states as of the retention boundary, folded from
-  the discarded events, used for ``gap`` snapshots (CORE 16.4).
+  the discarded events, used for ``gap`` snapshots (CORE 16.4);
+- ``outputs``: each execution's output spool (EXECUTION 14.1): the offset of
+  the oldest retained byte, the retained bytes and the declared lost ranges.
+
+Execution, effect and controller records (M3) are ordinary ``subjects`` rows
+whose value is canonical JSON (``get_json``/``put_json``).
 
 All writes of one command, including its events, happen inside one
 ``BEGIN IMMEDIATE`` transaction (CORE 10 step 8, CORE 16.3).
@@ -88,6 +93,12 @@ CREATE TABLE IF NOT EXISTS snapshot_base (
     state    TEXT NOT NULL,
     PRIMARY KEY (kind, id)
 );
+CREATE TABLE IF NOT EXISTS outputs (
+    execution TEXT PRIMARY KEY,
+    start     INTEGER NOT NULL,
+    data      BLOB NOT NULL,
+    lost      TEXT NOT NULL
+);
 """
 
 META_DEFAULTS = {
@@ -97,12 +108,42 @@ META_DEFAULTS = {
 }
 
 
+EXECUTION_AXIS_EVENTS = {
+    "execution.admission.changed": "admission",
+    "execution.delivery.observed": "delivery",
+    "execution.delivery.reconciled": "delivery",
+    "execution.runtime.changed": "runtime",
+    "execution.result.changed": "result",
+    "execution.exit.observed": "exit",
+}
+
+
 def reduce_state(prior: dict | None, event: dict) -> dict:
     """Fold one event into a subject's snapshot state (CORE 16.2: payloads are
     "sufficient for a consumer's reducer") into the per-kind ``state`` CORE
     16.4 "Snapshot state" defines: ``{value}``, ``{epoch}``, ``{grant}``,
     ``{predicates}``. A revocation updates the stored record's ``state``."""
     kind, payload = event["type"], event["payload"]
+    subject_kind = event["subject"]["kind"]
+    if subject_kind == "execution.execution":
+        # EXECUTION defines no snapshot state; this provider folds the axes
+        # its events carry (G-EXEC-SNAPSHOT).
+        state = dict(prior or {})
+        axis = EXECUTION_AXIS_EVENTS.get(kind)
+        if axis is not None and axis in payload:
+            state[axis] = payload[axis]
+        if kind == "execution.admission.changed" and "runtime" in payload:
+            state["runtime"] = payload["runtime"]  # EXECUTION 9 (C1)
+        return state
+    if subject_kind == "execution.controller":
+        return {"epoch": payload["epoch"]}
+    if subject_kind == "core.effect":
+        state = dict(prior or {})
+        aborted = set(state.get("aborted_obligations", []))
+        if "obligation" in payload:
+            aborted.add(payload["obligation"])
+        state["aborted_obligations"] = sorted(aborted)
+        return state
     if kind == "core.grant.revoked":
         state = dict(prior or {})
         grant = dict(state.get("grant", {}))
@@ -122,8 +163,10 @@ class Store:
     def __init__(self, data_dir: str):
         os.makedirs(data_dir, exist_ok=True)
         path = os.path.join(data_dir, "independent-python-core.sqlite3")
-        # isolation_level=None: we issue BEGIN/COMMIT ourselves.
-        self.db = sqlite3.connect(path, isolation_level=None)
+        # isolation_level=None: we issue BEGIN/COMMIT ourselves. The idle
+        # re-check thread uses the connection too, always under the provider's
+        # processing lock.
+        self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.executescript(SCHEMA)
@@ -215,6 +258,34 @@ class Store:
             "applied_count = applied_count + 1",
             (kind, sid, revision, value),
         )
+
+    # -- JSON-valued subjects (execution records, effects)
+    def get_json(self, kind: str, sid: str):
+        """(revision, value) or None."""
+        row = self.subject(kind, sid)
+        if row is None:
+            return None
+        return row[0], V.loads(row[1])
+
+    def put_json(self, kind: str, sid: str, revision: int, value) -> None:
+        self.write_subject(kind, sid, revision, V.canonical_text(value))
+
+    def ids_of(self, kind: str) -> list:
+        """Subject IDs of one kind in creation order."""
+        return [r[0] for r in self.db.execute("SELECT id FROM subjects WHERE kind = ? ORDER BY rowid", (kind,))]
+
+    # -- output spools (EXECUTION 14.1)
+    def output(self, execution: str):
+        row = self.db.execute("SELECT start, data, lost FROM outputs WHERE execution = ?", (execution,)).fetchone()
+        if row is None:
+            return 0, b"", []
+        return row[0], bytes(row[1]), V.loads(row[2])
+
+    def set_output(self, execution: str, start: int, data: bytes, lost: list) -> None:
+        self.db.execute(
+            "INSERT INTO outputs (execution, start, data, lost) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (execution) DO UPDATE SET start = excluded.start, data = excluded.data, lost = excluded.lost",
+            (execution, start, data, V.canonical_text(lost)))
 
     # -- grants (subjects of kind core.grant)
     def grant(self, gid: str):

@@ -22,6 +22,8 @@ Sections:
 - **C.** Open questions where this implementation chose, and no fixture decides.
 - **D.** Requirements the documents state that no fixture checks, with evidence.
 - **E.** The M2 features (grants, events, capabilities), added in a second pass, with its own subsections E.1 to E.4 in the same four categories.
+- **F.** The third pass, against the resolved M2 documents.
+- **G.** The M3 pass: `core.effects`, `execution/1` and the decision 007 test controls.
 
 **Changes after fixture failures: none.** The first complete run passed 57 of 57 fixtures. Nothing was bent to fit a fixture.
 
@@ -971,3 +973,288 @@ Not established:
 - behavior under concurrent sessions;
 - expiry of a subscription's grant by the system clock between requests;
 - anything outside the fixtures and the probes above.
+
+---
+
+## G. M3 pass: effects, execution and test controls
+
+> Added when this implementation was extended to CORE §19 (`core.effects`), `execution/1` (EXECUTION §1–§15) and the decision 007 test controls, from the documents at base commit `d81e49b`. Read: CORE, EXECUTION, STREAM, ENCODING, decision 007, M3, M2-DIVERGENCES, MATRIX, the conformance README, VERIFICATION, `schemas/**`, the fixture and launch-configuration schemas, and this directory. Not read: `conformance/reference/**`, `conformance/runner/src/**`, `conformance/crosscheck/**`, or their history. The runner was used as a binary. Sections A–F are left as written.
+
+**Reading order.**
+
+1. The documents above in full, and the diff of `docs/spec`, `schemas` and the conformance README since the third pass.
+2. A change list written from those documents alone, implemented and committed (`188ab07`) before any `execution/`, `socket/` or M3 Core fixture was opened. The decisions it needed are section G.3.
+3. The first complete run, recorded below before anything changed.
+4. Only then the failing fixtures and their transcripts.
+
+**First complete run** (commit `188ab07`, claims as in the participant descriptor): 211 fixtures, **176 pass, 19 fail, 0 timeout, 0 harness_error, 4 unsupported, 12 skipped.**
+
+**Changes after the first complete run.** Two, each a misreading of text the documents do state:
+
+| Tag | Change | Why | Fixtures that then passed |
+|---|---|---|---|
+| G-EXIT-RUNTIME | A scripted `exit` step also records runtime `exited` (event `execution.runtime.changed`, then `execution.exit.observed`) | The step is the harness process exiting. EXECUTION §3 makes `runtime` the observed state; reporting an exit code for a process still `active` or `preparing` was an inconsistent observation, not independence of axes. | `execution.action-wait-survives-restart`, `execution.capacity-queue-admits-in-order-and-times-out`, `execution.detach-is-not-cancellation`, `execution.evaluation-is-never-derived-from-exit` |
+| G-COALESCE-ADJACENT | Spool discards coalesce with any `spool_limit` range they are adjacent to by offset | EXECUTION §14.1: "Adjacent discards are coalesced into one range". The first version coalesced only with the most recently declared lost range, so a `harness_dropped` record in between split one discarded span into two. | `execution.output-loss-is-declared-with-ranges` |
+
+Nothing else was changed in response to a fixture. **Final run:** 211 fixtures, **181 pass, 14 fail, 0 timeout, 0 harness_error, 4 unsupported, 12 skipped**, identical in three consecutive runs. Every remaining failure is listed in G.2.
+
+**How G.2 was established.** A scratch copy of the provider (never committed) applied each fixture-side expectation below. With all sixteen applied, every applicable fixture passed, so no further divergence hides behind a first failing step. Each expectation was then removed from the copy one at a time; the fixtures column of G.2 is exactly the set that failed without it.
+
+### G.1 Contradictions between documents
+
+#### G-IDLE-EXPIRY-FIXED-CLOCK — CORE §16.5 still says the launch clock is fixed
+
+- **Text:** CORE §16.5 "Expiry while idle": "The conformance launch clock is fixed for a process's lifetime, so no portable fixture observes expiry during a session." CORE §13.1, decision 007 §2 and the conformance README define `clock.file`, and M3 acceptance item 10 names such a fixture.
+- **Chosen:** the clock file. `core.events.subscription-ends-at-grant-expiry` and `core.grants.test-clock-never-moves-backward`, previously coverage limits for this participant, now run and pass.
+- **Suggested:** drop the last sub-bullet of "Expiry while idle".
+
+#### G-EFFECT-HISTORY-CODE — an error code outside the registry
+
+- **Text:** CORE §19.2: "An effect record the provider no longer retains is `effect_history_unavailable`, never `not_found`." The code is absent from the CORE §12 table and from `schemas/core/1/error-data.schema.json`, so no provider can send it and pass schema validation.
+- **Chosen:** effect records are never discarded, so the code is never needed. Unguarded by any fixture.
+
+#### G-EPOCH-ABSENT — CORE §8 and EXECUTION §11.3 disagree on a missing epoch
+
+- **Text:** CORE §8: "Epoch absent where the operation requires one: `invalid_envelope`". EXECUTION §11.3: once a host has a controller epoch, "lower than the current epoch, or absent: `stale_authority_epoch`".
+- **Chosen:** EXECUTION, the more specific rule. `execution.stale-controller-is-refused` step 4 pins the same reading (passes).
+- **Suggested:** CORE §8 could say profiles may classify an absent epoch as stale.
+
+#### G-REFUSED-AXES — "no delivery" against a required `delivery` axis
+
+- **Text:** EXECUTION §3.1 "Refused admission records the execution with no delivery and no effect". `execution.inspect.result` requires `delivery` from the six determinations, and §3.1 says a delivery never stays `pending` after its wait ends.
+- **Chosen:** a refused execution (at submit or by `queue_timeout`) shows `delivery: failed_before_delivery`, `deliveries: []`, `effects: []` and runtime `unknown`. A queued execution shows `pending`. No fixture reads `delivery` or `runtime` of a refused execution.
+
+#### G-EVENT-PROOF-CLASS — determinations without a proof class
+
+- **Text:** EXECUTION §9 lists `execution.delivery.observed` as `{ delivery_id, delivery, proof_class, evidence }`. Determinations made by the delivery timeout, by recovery or by an unknown attempt have evidence but no proof class (§3.1).
+- **Chosen:** `proof_class` is omitted from those events and from the delivery record. Fixtures match these events by subset and pass.
+
+#### G-CORRELATION-EVENTS — EXE-20 names events; EXECUTION gives them no correlation
+
+- **Text:** MATRIX EXE-20: "arbitrary correlation round-trips through submit, inspect and events". EXECUTION §9 event payloads and the submit result schema carry no correlation member.
+- **Chosen:** `correlation` round-trips through `execution.inspect` only. `execution.submit-records-effect-and-links-retries` checks inspect only.
+
+### G.2 Expectations in fixtures that the documents do not state
+
+All fourteen failing fixtures are here. None was worked around.
+
+| Tag | What the fixtures expect | What the documents say, and this implementation | Failing fixtures (first failing step) |
+|---|---|---|---|
+| G-OBLIGATION-ID | The prompt delivery's obligation ID is `<delivery_id>.evidence` | CORE §19.4 gives obligations an `id` and no format. Here: `<effect id>.obligation`. | `execution.aborting-an-obligation-leaves-the-effect-unknown` (7), `execution.timeouts-are-distinct-and-prove-nothing` (5) |
+| G-LEASE-ID | The workspace lease ID is `<execution>.workspace` | EXECUTION §11.4 names `lease_id` only. Here: `<execution>.lease-1`. | `execution.workspace-checkpoints-declare-coverage` (4) |
+| G-EVIDENCE-NAMES | Evidence classes `recorded_before_dispatch` (initial effect observation), `dispatch_intent`, `dispatch_uncertain` (recovery ambiguity on the effect), `delivery_timeout` and `delivery_timeout_before_dispatch`, `transport_error`, `harness_observation` (steering behavior); evidence source `scripted harness` | CORE §19.1 and EXECUTION §3 require evidence to name a class and source; no values are defined except proof classes. Here: `recorded`, `recovery` (on the effect too), `timeout`, `attempt_outcome_unknown`, `observed_behavior`; source `scripted-harness`. | `execution.crash-before-dispatch-recovers-under-same-identity` (9), `execution.damaged-journal-is-not-proof-of-non-dispatch` (7), `execution.delivery-wait-ends-without-evidence` (6), `execution.stale-dispatcher-is-fenced-after-recovery` (7), `execution.steering-facts-stay-separate` (9), `execution.submit-records-effect-and-links-retries` (4); also later steps of `execution.crash-during-dispatch-is-reconciled-without-resending` and `execution.retries-follow-retry-class` |
+| G-DISPATCH-INTENT | Writing the dispatch marker appends a second `pending` observation to the prompt effect | CORE §19.1 appends observations of status; EXECUTION §7.1 requires the marker, not an observation of it. Here the marker is executor state, and the effect's observations change with its status. | same three as `recorded_before_dispatch` except the damaged-journal fixture: crash-before-dispatch (9), crash-during-dispatch (8), submit-records (4) |
+| G-DELIVER-STEP | A `deliver` step is the dispatch attempt itself: after `crash: after_write` or an attempt ended by `transport_errors`, the next `deliver` step has no effect | The README lists `deliver` as "a proof class" with no sequencing rule. EXECUTION §3.1: "When later evidence resolves a delivery, the current determination changes to the resolved value", e.g. `ambiguous → delivered`. Here a correlated `provider_ack_id` arriving after an ambiguous attempt resolves the delivery to `acknowledged`, with the ambiguity kept in history, and nothing is resent. | `execution.crash-during-dispatch-is-reconciled-without-resending` (7), `execution.inactivity-and-reconciliation-timeouts-prove-nothing` (5), `execution.retries-follow-retry-class` (8) |
+| G-STALL | A script that only stalls never dispatches, so its delivery timeout gives `failed_before_delivery` | EXECUTION §15 lists "never exit" among harness behaviors; `stall` is undefined. Here a stalled harness is one that received the prompt and never reports, so the timeout gives `ambiguous`. | `execution.delivery-wait-ends-without-evidence` (7, hidden behind step 6) |
+| G-OVERDUE-ORDER | At the delivery timeout, `core.effect.obligation.overdue` comes before the `execution.delivery.observed` that makes the delivery `ambiguous` | EXECUTION §8 table: "The evidence wait ends (below); open obligations of the delivery become overdue", in that order of phrases, and no event order. Here: timeout, then determination, then overdue. | `execution.timeouts-are-distinct-and-prove-nothing` (6, hidden behind step 5) |
+| G-ACTIONS-ABSENT | `actions` is absent from inspect until an action has been requested | EXECUTION §11.2: "A harness action request sets runtime `requires_action`. `execution.inspect` then carries `runtime_detail` … and lists `actions`." Read here as: sessions with `execution.actions` see the list, empty until a request. | `execution.action-ids-belong-to-their-execution` (5) |
+| G-RESPONSE-STATUS | An action response effect is `succeeded` once its attempt completes | CORE §19.3: "a completed call can still leave the effect `pending` or `unknown`"; EXECUTION §11.2 defines no evidence for a response. Here it stays `pending`, with no obligation, since none is stated. | `execution.action-ids-belong-to-their-execution` (12, hidden behind step 5) |
+| G-RECOVERY-HOST-EVENT | Recovery that resumes dispatch appends no `execution.host.changed` (the event list is exact) | **Contradicts** EXECUTION §7.1 "Recovery advances the host generation" with §9 "`execution.host.changed` … when the host generation changes". Here the event is appended. | `execution.stale-dispatcher-is-fenced-after-recovery` (8, hidden behind step 7) |
+| G-NOTIFY-BATCH | The submit's `execution.admission.changed` and the executor's first `execution.delivery.observed` arrive in **one** notification | CORE §16.5 lets the provider split items across notifications and requires only ordering after the response. Here the command's events are notified right after its response, and the executor's later observation in a second notification. | `execution.watch-execution-facts-with-subscriptions` (6) |
+
+Unstated values the fixtures hard-code that this implementation happened to choose the same way, so the fixtures pass without guarding them:
+
+- **Effect and record IDs:** `<execution>.delivery-1` (fixtures query it after restarts without capturing it), `<execution>.steer-<n>` and `<execution>.steer-<n>.delivery`, `<execution>.checkpoint-<n>`, `<execution>.probe-<n>`. Only `cancel-<n>` and `response-<n>` are in EXECUTION.
+- **Names:** effect kind `execution.status_probe`; refusal reason `capability_unavailable` for an adapter predicate that is not `supported` (EXECUTION §5 names no reason); evidence classes `reconciliation` and `recovery` on the delivery record.
+- **Values:** runtime `preparing` before any runtime observation (`execution.timeouts-are-distinct-and-prove-nothing` step 11).
+- **G-CRASH-TIMING:** fixture notes say "the executor tick at the start of this request reaches the scripted crash". Here a crash step runs only between requests, right after the preceding response. Both satisfy `expect_close`; the README says only that steps advance "no later than the provider's next request".
+
+### G.3 Open questions decided here
+
+Decided from the documents before any M3 fixture was read. Fixtures that exercise a decision are named; "unguarded" means no fixture distinguishes it.
+
+**Clock and ticks**
+
+- **G-CLOCK-READING.** The clock file is read once per request and once per idle re-check, and that reading is used throughout, so one command never sees two times. Surrounding whitespace, including a trailing line feed, is accepted. Unguarded.
+- **G-CLOCK-RESTART.** The last good instant is not persisted: a new process accepts any well-formed instant. Decision 007 speaks of one run. Unguarded.
+- **G-IDLE-RECHECK.** A 100 ms real-time thread advances scripts and deadlines under the processing lock. It delivers notifications only when it committed something, so a grant expiry alone is reported at the next request, as CORE §16.5 allows on stdio. `core.events.subscription-ends-at-grant-expiry` passes.
+- **G-TIMEOUT-SCOPE.** A timeout passes at `now ≥ start + seconds`, like grant expiry. Scope: `queue` only while queued; `delivery` only while the delivery is `pending`; `reconciliation` only while `ambiguous`; `inactivity` while runtime is not `exited`; `execution_deadline` once after admission regardless. A queue timeout's `execution.timeout.passed` precedes its `execution.admission.changed`. Partly guarded by the timeout fixtures.
+
+**Scripted executor**
+
+- **G-DISPATCH-POINT.** Dispatch is lazy. The first script step that stands for harness interaction dispatches first; so does the end of the script. `wait_until`, `wait_for`, `transport_errors`, `on_cancel`, `crash`, `stale_dispatch`, `probe_status` and `reconcile_finds` do not dispatch. `execution.recovery-revalidates-before-dispatch` depends on `wait_until` not dispatching (passes). `stall` is G-STALL.
+- **G-CRASH-EXIT.** A crash step exits with status 1, only between requests. `before_dispatch` commits the script position first; `after_write` commits the marker and the attempt first.
+- **G-MAX-ATTEMPTS.** Retryable effects (`idempotent_key` cancel forwarding, `read` status probes) get at most three attempts; `non_repeatable` effects get one. `execution.retries-follow-retry-class` gives the probe two transport errors, which any limit of three or more satisfies; the limits are otherwise unguarded.
+- **G-CANCEL-OUTCOME.** `on_cancel` declares how the harness answers cancellation, whether it comes before or after the cancel. Without it the forwarding completes and no outcome is observed. When no forwarding attempt completes, the outcome is `unknown`. Exercised by `execution.cancel-returns-a-request-receipt`, `execution.cancel-refusal-survives-lost-acknowledgments` and the `e-key` script of `execution.retries-follow-retry-class`, which declares `on_cancel` before the cancel arrives.
+- **G-HISTORY.** A delivery record's history gains an entry only when the determination changes. Evidence recorded while it stays `pending` (e.g. `transport_only`) replaces the current evidence. Pinned by `execution.delivery-wait-ends-without-evidence` step 6, whose exact history is one `pending` entry with `bytes_written` evidence; that step fails first on G-EVIDENCE-NAMES, and with those names aligned the history matches.
+- **G-EXEC-REVISION.** An execution's revision rises by exactly one per execution event. Marker, script position and counters are stored without a revision change.
+- **G-EXIT-STEP.** Only `{code}` or `{signal}` exit objects are accepted; any other shape refuses the launch, because inspect could not report it.
+- **G-REQUIRES-ACTION-RUNTIME.** A `runtime: requires_action` step without a pending action is ignored, so `requires_action` always carries an identity (EXE-4). Unguarded.
+- **G-STALE-DISPATCH-CURRENT.** `stale_dispatch` at the current generation is not stale and records nothing. Unguarded.
+- **G-CONTEXT-OUTCOMES.** Harness report `accepted` maps to `delivered` and `lost` to `unknown`. `unavailable` for an unsupported boundary takes precedence over `late`. Passes `execution.context-delivery-reports-late-and-unavailable`.
+
+**Admission and operations**
+
+- **G-PRIMARY-PRECONDITION.** The one precondition the Execution and effect command schemas allow must name the command's own subject; otherwise `invalid_envelope`.
+- **G-SUBMIT-PRECONDITION.** A submit precondition revision other than 0 is `invalid_envelope` ("Creates the execution (precondition revision 0)"), as for `core.grant.issue`. Unguarded.
+- **G-NOT-FOUND-ORDER.** A missing target (the execution, a workspace lease, the controller host, the effect) is `not_found` after authorization and before step 7. A payload lookup (an action ID, an obligation) is `not_found` after preconditions. Unguarded for the order.
+- **G-CAPACITY.** An admitted execution holds capacity until runtime `exited`, an observed exit, a `failed_before_delivery` or `not_delivered` delivery, or a `cancelled` outcome. Passes the capacity fixture, which uses an exit.
+- **G-BUDGET.** The requested `amount` counts against the pool while `reserved` or `settled`. `settled` needs at least one usage observation. Passes `execution.usage-liability-survives-timeouts`.
+- **G-ADMISSION-EVENT.** `execution.admission.changed` carries `delivery_id` for direct admission too, not only for a queued execution admitted later. Fixtures match by subset.
+- **G-OUTPUT-OFFSET.** An `offset` beyond the end is clamped to `end_offset`. `max_bytes` defaults to 65,536 and shrinks until the response fits the caller's receive limit. Unguarded.
+- **G-NEG-EXEC-ITEMS.** An `execution` request refused for its own unknown required feature also lists its missing Core features as `dependency_not_selected`. Unguarded; `execution.requires-core-features` passes.
+
+**Authorization and visibility**
+
+- **G-EFFECT-AUTH.** `core.effects.get` needs `execution.read` covering the effect's target, and `core.effects.abort_obligation` needs `core.effects.abort_obligation` on it. For an effect ID that does not exist, only a resource covering the whole `execution.execution` kind covers it, so a narrowed grant gets the same `out_of_scope` for a missing effect and an uncovered one. `execution.effects-resolve-only-with-target-authority` passes.
+- **G-RECONCILE-AUTH.** `execution.reconcile` needs `execution.read`; a command ID is looked up in the caller's own deduplication scope, and executions the grant does not cover are omitted as if not held. Unguarded under grants.
+- **G-CONTROLLER-VISIBILITY.** `execution.controller` subjects are visible under a grant with `execution.read` covering them, which also decides `current_epoch` disclosure. Unguarded.
+- **G-INSPECT-GATING.** Feature members of `execution.inspect` (`steering`, `actions`, `workspace`, `usage`, `context`, `continuation`) appear only in sessions that negotiated the feature. `runtime_detail` is base.
+
+**Core capabilities and snapshots**
+
+- **G-ADAPTER-PREDICATES.** Configured adapter predicates are listed in `core.capabilities` beside `core-test.writes` (EXECUTION §10 reuses CORE §17). A changed adapter configuration across restarts therefore appends `core.capabilities.changed`. Unguarded.
+- **G-EXEC-SNAPSHOT.** EXECUTION defines no retention snapshot state. An execution's state folds the axes its events carry, a controller's is `{epoch}`, and an effect's lists its aborted obligations. Unguarded.
+
+**Not implemented, and so not claimed**
+
+- **`core.events.backpressure`.** Launch keys `events.max_pending_notification_bytes` and `events.backpressure_notice_ms` refuse the start. The four slow-consumer fixtures are `unsupported`; one is recorded as a coverage limit for the undeclared signal `backpressure.limit.reached`.
+- **Barriers and signals.** None declared; a launch that enables a barrier refuses to start.
+- **The Unix-socket binding.** The 12 `socket.*` fixtures are `skipped`.
+- **Effect history loss** (G-EFFECT-HISTORY-CODE), an inline brief (the submit schema allows only a digest reference), and real harness adapters.
+
+### G.4 Verification
+
+Run from the worktree root on macOS (Darwin 25.3) with Python 3.14.5 and the pinned Rust toolchain. The provider is real; the harness is the scripted executor. Results are under `conformance/results/` (not committed).
+
+| Command | Exit | Result |
+|---|---|---|
+| `cargo build --workspace --locked` | 0 | built |
+| `./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-m3-first` (at `188ab07`) | 1 | 176 pass, 19 fail, 4 unsupported, 12 skipped |
+| the same run at the final commit, `--out conformance/results/independent-python-core`, and three repeats | 1 | 181 pass, 14 fail (G.2), 4 unsupported, 12 skipped; identical failing set each time |
+| `python3 conformance/independent/python-core/tests/check_vectors.py` | 0 | `failures: 0` |
+| `python3 conformance/independent/python-core/tests/probe_provider.py` | 0 | 19/19 probes as documented |
+| `python3 conformance/independent/python-core/tests/probe_m2.py` | 0 | 43/43 probes as documented |
+| `python3 conformance/independent/python-core/tests/probe_f.py` | 0 | 31/31 probes as documented |
+
+Not established:
+
+- behavior no fixture exercises, beyond ad hoc smoke runs that were not kept as probes;
+- the sensitivity of the M3 fixtures to deliberate deviations (`tests/fixture_sensitivity.py` was not extended in this pass);
+- crash consistency beyond scripted crashes and SIGKILL restarts;
+- anything on the Unix-socket binding.
+
+### G.5 Realignment after resolution
+
+> Added in a fifth spec-only pass, on the same branch rebased onto the resolution commit `ad91182` ([M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md)). The read and write rules were unchanged. The resolution record and the diff of `docs/spec`, `schemas`, MATRIX and M3 between `d81e49b` and `ad91182` were read first and the change list below was written from them. The five fixtures at new versions were read only after the change list was implemented and the first run recorded.
+
+The rebase replayed this branch's three commits without conflicts, and the runner was rebuilt.
+
+**Change list, each with the resolution it follows.**
+
+| # | Change | Resolution followed | Replaces |
+|---|---|---|---|
+| 1 | Obligation IDs `<effect>.evidence` (prompt, steering, action response), `<effect>.outcome` (cancel forwarding), `<effect>.result` (status probe); lease ID `<execution>.workspace`. Action responses and status probes now carry an obligation. | EXECUTION §15.1 "Identifiers" (G-OBLIGATION-ID, G-LEASE-ID) | `<effect>.obligation`, `<execution>.lease-1`, no obligation on responses and probes |
+| 2 | Evidence classes from the §15.1 table: `recorded_before_dispatch`, `dispatch_intent`, the proof class, `transport_error`, `recovery` on the delivery record with `dispatch_uncertain` or `never_dispatched` on the effect, `delivery_timeout` or `delivery_timeout_before_dispatch`, `reconciliation`, `harness_response`, `harness_status`, `harness_observation`. The harness source is `scripted harness`. | §15.1 "Evidence classes" (G-EVIDENCE-NAMES) | own class names |
+| 3 | Writing the dispatch marker appends a `pending` `dispatch_intent` observation to the prompt effect | §15.1 (G-DISPATCH-INTENT) | marker as executor state only |
+| 4 | Dispatch happens only at `deliver`, `crash: after_write` and an unfenced `stale_dispatch`. Other steps and the end of a script no longer dispatch. Once delivery is not `pending`, `deliver` and `crash` steps have no effect. `stall` never dispatches. | §15.1 "Script steps" (G-DELIVER-STEP, G-STALL) | lazy dispatch at the first harness step (G-DISPATCH-POINT) |
+| 5 | `wait_for: action` waits until every requested action is answered, then sets runtime `active` and sends each response once; the harness acknowledges it (`provider_ack_id`, effect `succeeded`, obligation satisfied) | §15.1 (G-RESPONSE-STATUS) | response attempt right after the command; effect left `pending` |
+| 6 | `steering` and `actions` appear in inspect only once they have an entry | §15.1 "Inspect members" (G-ACTIONS-ABSENT) | present, possibly empty, in sessions with the feature |
+| 7 | At a delivery timeout: `execution.timeout.passed`, then `core.effect.obligation.overdue` for each open obligation, then `execution.delivery.observed` | §15.1 "Event order" (G-OVERDUE-ORDER) | overdue after the determination |
+| 8 | Every recovery decision advances the host generation; events are `execution.recovery.decided` (naming the new host), the delivery observation if any, then `execution.host.changed` | EXECUTION §7.1 item 3, §9, §15.1 (G-RECOVERY-HOST-EVENT) | only a resumed dispatch advanced it, with `execution.host.changed` first |
+| 9 | A refused execution keeps runtime `preparing` | §3.1 (G-REFUSED-AXES) | runtime `unknown` |
+| 10 | `execution_deadline` passes only while runtime is not `exited` | §8 (G-TIMEOUT-SCOPE) | passed regardless of runtime |
+| 11 | `effect_history_unavailable` is a registered code with retry `after_reconcile`. Records are still never discarded, so it is never sent. | CORE §12 (G-EFFECT-HISTORY-CODE) | not registered |
+
+Already as resolved, so unchanged:
+- an absent controller epoch is `stale_authority_epoch` (CORE §8, G-EPOCH-ABSENT);
+- `proof_class` only for proof-class evidence (§9, G-EVENT-PROOF-CLASS);
+- correlation through inspect only (EXE-20, G-CORRELATION-EVENTS);
+- the clock file (CORE §16.5, G-IDLE-EXPIRY-FIXED-CLOCK);
+- `exit` sets runtime `exited` (§15.1, G-EXIT-RUNTIME);
+- three attempts for retryable classes, one for `non_repeatable` (§15.1, G-MAX-ATTEMPTS);
+- the remaining §8 timeout scopes;
+- the notification split (G-NOTIFY-BATCH), which fixture version 2 no longer observes.
+
+**Runs.** 211 fixtures each.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| First run after changes 1–11 | 195 | 0 | 0 | 0 | 4 | 12 |
+| After restoring G5-CAPACITY (below), and two repeats | 195 | 0 | 0 | 0 | 4 | 12 |
+
+The four `unsupported` fixtures are the backpressure fixtures; one is listed under `coverage_limits` for the undeclared signal `backpressure.limit.reached`. The twelve `skipped` fixtures are `socket.*`. The probes and the vector check pass as in G.4.
+
+After the first run, the five fixtures at new versions were read. They agree with the change list, including the reading in G5-RECOVERY-GENERATION: `execution.crash-during-dispatch-is-reconciled-without-resending` version 2 expects `execution.host.changed` with generation 2 after an ambiguous recovery.
+
+**Remaining disagreements and underspecified points.** None of these fails a fixture.
+
+- **G5-CAPACITY (behavior kept).** §15.1 says "Capacity is released when runtime is `exited`". It does not say what an execution holds when it can never run: a delivery `failed_before_delivery` (a delivery timeout before dispatch, or recovery) or `not_delivered`, or an outcome `cancelled`. Read as the only release condition, such an execution would hold capacity forever and queued work would wait for its queue timeout. This implementation released capacity in those cases before the resolution and still does. The step was briefly narrowed to runtime `exited` only for the first run, then restored; the capacity fixture passes either way. Suggested: state whether these cases release capacity.
+- **G5-RECOVERY-GENERATION (underspecified).** §7.1 item 3, "Recovery advances the host generation", sits among the conditions for resuming dispatch, so it could be read as applying only to `dispatch_resumed`. The §15.1 event order ("the delivery observation if any, then `execution.host.changed`") and the crash-during-dispatch fixture imply every decision advances it, which is what this implementation now does. Suggested: say so in §7.1.
+- **G5-SECOND-DELIVER (underspecified).** §15.1 says `deliver` is one dispatch attempt, and a delivery is never dispatched twice, but only says `deliver` has no effect once delivery is *not* `pending`. A second `deliver` while delivery is still `pending` (after `transport_only`, say) is either a second attempt, which the rule forbids, or further evidence. Here it records the harness report as further evidence for the same dispatch, with no new marker or attempt. Unguarded.
+- **G5-TIMEOUT-OBLIGATIONS (underspecified).** At a delivery timeout the obligations become `overdue` before the determination. Whether a timeout-driven `failed_before_delivery` then satisfies them is not stated. Here they stay `overdue`, because the wait ending is not the expected observation, while an evidence-driven terminal determination satisfies them. Unguarded.
+- **G5-OBSERVATIONS (decision).** Every harness report, reconciliation finding and timeout determination appends an effect observation, even when the status is unchanged (for example `pending` with `transport_only`), as CORE §19.1 "appended as evidence" and the `dispatch_intent` row suggest. Fixtures that list observations exactly contain no repeated status apart from `dispatch_intent`.
+- **G5-CRASH-ATTEMPT (decision).** `crash: after_write` records the dispatch attempt as `completed`, since the write finished before the process died, and then exits. Unguarded.
+- **G5-STALE-HIGHER (underspecified).** A `stale_dispatch` whose generation is *above* the current one is not fenced, so under §15.1 it dispatches if the delivery is still `pending`. A generation the executor never issued arguably should not dispatch. Unguarded.
+- **G5-REFUSED-RUNTIME (followed, with a reservation).** §3.1 now keeps runtime `preparing` for a refused execution. That reads as work about to start. This implementation follows the text; an explicit "not started" value, or leaving runtime out for refusals, would be clearer.
+
+### G.6 Final alignment
+
+> Base `c3e79d6`, which resolves G.5 (section G of [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md)). The rebase fast-forwarded. Read: the EXECUTION §7.1 and §15.1 changes, the resolution table, then the new fixture.
+
+**Change:** one. A `stale_dispatch` naming any generation other than the current one is now fenced (`execution.dispatch.fenced`, nothing sent), including a generation above the current one that was never issued. This follows §15.1, which resolves G5-STALE-HIGHER. Before the change the suite at this base gave 195 pass, 1 fail (`execution.dispatcher-from-an-unissued-generation-is-fenced`, step 5: two events where three were expected), 4 unsupported, 12 skipped.
+
+**The other G.5 points against the resolved text:**
+- G5-RECOVERY-GENERATION (§7.1), G5-SECOND-DELIVER and G5-TIMEOUT-OBLIGATIONS (§15.1) were already implemented as now stated.
+- G5-CAPACITY: §15.1 now releases capacity on `failed_before_delivery` and `not_delivered`, and allows release on `cancelled`, which this implementation does. Nothing is left in dispute.
+
+**Run** (212 fixtures, twice): **196 pass, 0 fail, 0 timeout, 0 harness_error, 4 unsupported, 12 skipped.**
+
+**Remaining disagreement:** only G5-REFUSED-RUNTIME, which the resolution leaves open for the owner. This implementation follows EXECUTION §3.1 (`preparing`).
+
+### G.7 Acceptance corrections C1–C3
+
+> Base `2d8402a`, the owner's conditional M3 acceptance with corrections C1–C3. I read the changes to EXECUTION §3, §3.1, §7.1, §9 and §15.1, CORE §16.5 and §19.4, the conformance README and the fixture schema first. The three re-versioned C1 fixtures came after the change list was implemented.
+
+**Changes.**
+
+| Correction | Change |
+|---|---|
+| C1 (EXECUTION §3.1, §9) | Every execution starts at runtime `not_started`; queued and refused executions stay there. Admission, direct or later from the queue, moves runtime to `preparing`. Every `execution.admission.changed` carries `runtime` after the change: `preparing` on admission, otherwise `not_started`, including a refusal by `queue_timeout`. The retention snapshot of an execution folds that `runtime`. This resolves G5-REFUSED-RUNTIME. |
+| C3 (CORE §19.4) | A recovery decision `failed_before_delivery` with reason `deadline_passed` now leaves the delivery's obligations `overdue`. `core.effect.obligation.overdue` comes after `execution.recovery.decided` and before the delivery observation. Before this change they were satisfied (G7-RECOVERY-OBLIGATIONS, below). |
+
+**C3 checked as general rules.** No change was needed for:
+- **One dispatch per delivery (§3.1):** only the first dispatch point dispatches, and later reports while `pending` are evidence.
+- **Recovery fencing (§7.1):** any non-current generation is fenced (G.6).
+- **Causal order (§9):** `execution.timeout.passed` precedes the overdue marking and determination it causes, for the queue, delivery and reconciliation timeouts. `execution.recovery.decided` precedes the observation and host change it causes.
+- **Ended waits:** a delivery or reconciliation timeout, or an obligation deadline, leaves obligations `overdue`; only harness evidence, reconciliation or provable non-dispatch satisfies them.
+- **Evidence classes:** each states its basis, as §15.1 names them.
+
+**C2 against this implementation's limits.** It still does not claim `core.events.backpressure`. The correction also restates that sessions without the feature are bounded and closed within `backpressure_notice_ms` of a stall's start. This implementation does not meet that. Its stdio writer blocks when the caller stops reading: it has no bound on pending output, no room deadline and no closure. README "Limits" now says so. No fixture that applies to this participant observes it; the backpressure fixtures are `unsupported`.
+
+**Runs** (212 fixtures).
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| At `2d8402a` before the changes | 193 | 3 | 0 | 0 | 4 | 12 |
+| After the changes, and one repeat | 196 | 0 | 0 | 0 | 4 | 12 |
+
+Before the changes, the three failures were the C1 fixtures. `execution.admission-refuses-unenforceable-or-unknown-requirements` (step 5), `execution.capacity-queue-admits-in-order-and-times-out` (step 5) and `execution.context-bindings-gate-admission` (step 7) each found runtime `preparing` where `not_started` was expected.
+
+**Underspecified points.**
+- **G7-RECOVERY-OBLIGATIONS.** CORE §19.4 says an obligation is `overdue` when "a profile ends a wait because it timed out". §7.1 recovery also ends the delivery wait for reasons that are not timeouts: `cancelled`, `authorization_lost` and `recovery_policy`, each with an intact journal and no marker. Here those decisions satisfy the obligations, because provable non-dispatch is evidence of the effect's outcome (`never_dispatched`). A `deadline_passed` decision leaves them `overdue`. Neither text nor fixture states which applies, and no fixture observes it.
+- **G7-EXIT-ORDER.** §9's causal-order rule covers decisions and passed timeouts only. For an observed process exit, this implementation appends `execution.runtime.changed` (`exited`) before `execution.exit.observed`. Whether an observation that causes another axis change must precede it is not stated.
+
+### G.8 Exit causal order and recovery obligations
+
+> Base `25f9c0b`, which resolves G.7 (section H of [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md)). Read first: EXECUTION §7.1 "Obligations", the §9 `execution.exit.observed` row and "Causal order", and the CORE §16.5 "Declared bounds" change. Then the two fixtures at version 2.
+
+**Change.** One. A scripted exit now appends `execution.exit.observed` first, then the separate `execution.runtime.changed` (`exited`) it causes (§9: causal order covers observations). The README limit on backpressure now says this provider makes no backpressure guarantee, as CORE §16.5 now scopes the bound to providers that implement the feature. Recovery obligations already matched §7.1 (G.7).
+
+**Runs** (212 fixtures).
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| At `25f9c0b` before the change | 194 | 2 | 0 | 0 | 4 | 12 |
+| After the change, and one repeat | 195 | 1 | 0 | 0 | 4 | 12 |
+
+Before the change, the failures were `execution.evaluation-is-never-derived-from-exit` (step 5, event order) and the one below. The remaining failure is left failing, so `run` exits 1.
+
+**Remaining disagreement.**
+
+- **G8-INSPECT-OBLIGATIONS.** `execution.recovery-revalidates-before-dispatch` version 2, step 18, expects `execution.inspect`'s `obligations` to contain `e-cancel.delivery-1.evidence` with state `satisfied`.
+  - **What the text says.** EXECUTION §4 defines `execution.inspect` as returning "Current axes, receipts, **open** obligations and an events cursor", and `execution.reconcile` as returning "any **open** obligations". CORE §19.4 treats `open` and `overdue` together as the obligations still waiting (`abort_obligation` refuses any other).
+  - **This implementation.** Inspect lists `open` and `overdue` obligations only. A satisfied obligation is not open, so it is omitted; its state is observable through `core.effects.get` on `e-cancel.delivery-1`. The satisfaction the fixture wants to show does happen here, as §7.1 requires.
+  - **Suggested.** Either §4 should say inspect lists every obligation of the execution's effects, or the fixture should read the obligation through `core.effects.get`.
+
+The step 20 expectation of the same fixture (`deadline_passed` leaves the obligation `overdue` in inspect) passes, since `overdue` is listed.

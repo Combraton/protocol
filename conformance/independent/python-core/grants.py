@@ -8,6 +8,10 @@ def covers(resource: dict, subject: dict) -> bool:
     the resource is narrowed by ``id`` or ``id_prefix``."""
     if resource["kind"] != subject["kind"]:
         return False
+    if subject["id"] is None:
+        # A subject whose ID cannot be known to the reader (an effect that may
+        # not exist): only a resource covering the whole kind covers it.
+        return "id" not in resource and "id_prefix" not in resource
     if "id" in resource:
         return subject["id"] == resource["id"]
     if "id_prefix" in resource:

@@ -2178,11 +2178,14 @@ pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<
         .filter_map(Value::as_str)
     {
         if let Some(effect) = load_effect(&tx, effect_id)? {
+            // Obligations still waiting; closed ones are read through core.effects.get.
             obligations.extend(
                 effect["obligations"]
                     .as_array()
-                    .cloned()
-                    .unwrap_or_default(),
+                    .into_iter()
+                    .flatten()
+                    .filter(|o| matches!(o["state"].as_str(), Some("open" | "overdue")))
+                    .cloned(),
             );
         }
     }

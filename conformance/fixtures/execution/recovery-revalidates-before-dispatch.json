@@ -588,13 +588,7 @@
               "decision": "failed_before_delivery",
               "reason": "cancelled"
             }
-          ],
-          "obligations": {
-            "$contains": {
-              "id": "e-cancel.delivery-1.evidence",
-              "state": "satisfied"
-            }
-          }
+          ]
         }
       }
     },
@@ -688,6 +682,42 @@
       "expect": {
         "ok": {
           "delivery": "failed_before_delivery"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "core.effects.get",
+      "payload": {
+        "effect": "e-cancel.delivery-1"
+      },
+      "expect": {
+        "ok": {
+          "status": "failed",
+          "obligations": [
+            {
+              "id": "e-cancel.delivery-1.evidence",
+              "state": "satisfied"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "core.effects.get",
+      "payload": {
+        "effect": "e-deadline.delivery-1"
+      },
+      "expect": {
+        "ok": {
+          "status": "failed",
+          "obligations": [
+            {
+              "id": "e-deadline.delivery-1.evidence",
+              "state": "overdue"
+            }
+          ]
         }
       }
     },

@@ -6,8 +6,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-14, M3 close-out; presented for owner acceptance.
-- **Status:** M0, M1 and M2 merged. M3 complete on `release-0.1/m3` and awaiting owner acceptance ([M3 task](M3.md)); not merged.
+- **Checkpoint:** 2026-09-14, M3 conditionally accepted; corrections C1–C3 on the final candidate.
+- **Status:** M0, M1 and M2 merged. M3 conditionally accepted: it merges when CI passes at the final candidate head ([M3 task](M3.md)).
 
 ## Goal, decisions and constraints
 
@@ -86,7 +86,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **M3 step 5:** PR #4 checks on `d8aa553` passed on Ubuntu and macOS.
 - **M3 step 6:** PR #4 checks on `ce40da9`.
 - **M3 steps 7 and 8:** PR #4 checks on `d81e49b` and `ad91182` passed on Ubuntu and macOS.
-- **M3 close-out, local on macOS arm64:** the table in [M3 status](M3.md#status): reference stdio 200 pass and 12 skipped, Unix socket 212 pass, mutants 246 and 22 all as intended, independent 196 pass with 4 unsupported and 12 skipped.
+- **M3 final candidate, local on macOS arm64:** [M3 status](M3.md#status): reference stdio 200 pass and 12 skipped, Unix socket 212 pass, mutants 252 and 25 all as intended, independent 196 pass with 4 unsupported and 12 skipped, race regression 20/20 each way, measured backpressure bounds within the fixture limits.
+- **Timeout observed once, not reproduced:** a reference stdio run made while the helper ran its suites timed out at the first case's negotiation (`core.acknowledgment.effect-refs-empty-for-effect-free-operations`). The provider exited 0.7 s after input closed, so no response was stuck in its output queue. 30 repeats and two full suites without concurrent load passed.
 
 - **CI:** [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
 
@@ -110,6 +111,5 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## Next action
 
-1. Owner review and acceptance of M3 (draft PR #4). Do not merge without it.
-2. Owner question: the runtime value of a refused execution (M3-DIVERGENCES G5-REFUSED-RUNTIME).
-3. After acceptance: M4 per [PLAN](PLAN.md).
+1. Merge PR #4 when CI passes at the final candidate head (owner's conditional acceptance of M3, not of Protocol 0.1).
+2. Start M4 from merged `main` on a new branch and draft PR: Evidence and Context contracts and the acceptance matrix before implementation.

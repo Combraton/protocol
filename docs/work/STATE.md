@@ -2,7 +2,7 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-14 (M3 close-out; presented for owner acceptance).
+- **Updated:** 2026-09-14 (M3 conditionally accepted; corrections C1–C3 implemented on the final candidate).
 - **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
   - Current milestone: [M3 task](release-0.1/M3.md), the Execution profile.
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
@@ -24,10 +24,10 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - **Step 7:** acceptance re-check ([M3 acceptance evidence](release-0.1/M3.md#acceptance-evidence-step-7-re-check)); store faults for `unavailable` and `internal_error`; EXE-20 mutant.
   - **Step 6:** output telemetry with declared lost ranges; `core.events.backpressure` with a bounded outbox, bounded notice, closure and cursor recovery on both bindings.
   - **Step 5:** optional features (steering, actions, controller lease, workspaces, usage and budgets, context bindings, discovery, continuation), capacity and context queueing, the remaining timeouts, retry classes with attempts, obligation abort, detach and reattach, and SCN-12 to SCN-15.
-- **Evidence at close-out (local macOS arm64):** see [M3 status](release-0.1/M3.md#status).
+- **Evidence, final M3 candidate (local macOS arm64):** see [M3 status](release-0.1/M3.md#status).
   - check-fixtures 212; reference stdio 200 pass, 12 skipped; reference Unix socket 212 pass;
-  - `check-mutants`: 246 stdio and 22 socket results, all as intended;
-  - independent: 196 pass, 12 skipped, 4 unsupported (backpressure not claimed).
+  - `check-mutants`: 252 stdio and 25 socket results, all as intended;
+  - independent: 196 pass, 12 skipped, 4 unsupported (backpressure not claimed); race regression 20/20 each way.
 
   CI: [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
 - **Owner decisions recorded:**
@@ -35,8 +35,8 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - decision records 001–006 accepted (001 amended for distinct outcomes);
   - M2 accepted;
   - M3 acceptance must keep effects/reconciliation, telemetry gaps, backpressure, fault injection, a controllable test clock, idle-expiry coverage, a deterministic concurrency regression where feasible, test controls outside the protocol, a scripted executor, independent checks and uploaded CI evidence.
-- **Open owner decisions:** M3 acceptance; the runtime value of a refused execution (M3-DIVERGENCES G5-REFUSED-RUNTIME). Machine-readable feature-dependency advertising is an explicit M6 decision (CMP-5).
+- **Owner decisions, 2026-09-14:** M3 conditionally accepted with corrections C1 (runtime `not_started`), C2 (backpressure timing) and C3 (scope of the conformance conventions). Machine-readable feature-dependency advertising stays an explicit M6 decision (CMP-5).
 - **Prompt disposition:** no active continuation prompt. The workspace M2 prompt is retired, and this file and the handoff are the entry points.
-- **Next action:** owner review of M3 in draft PR #4. Do not merge without acceptance.
+- **Next action:** merge PR #4 on green CI at the final candidate head, then start M4 (Evidence and Context contracts and matrix) on a new branch and draft PR.
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

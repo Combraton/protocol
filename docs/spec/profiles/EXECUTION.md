@@ -101,7 +101,7 @@ A minimal executor implements these. *Candidate* names.
 | Operation | Kind | Semantics |
 |---|---|---|
 | `execution.submit` | command | Creates the execution (precondition revision 0). Payload: `brief` (digest and media type, or an inline bounded brief), `adapter` requirements, `restrictions` with required enforcement levels (§10), `timeouts` (§8), optional `predecessor`, `correlation`, `budget` (§12) and `context_bindings` (§13). Outcome: execution reference and the admission observation. |
-| `execution.inspect` | query | Current axes, receipts, open obligations and an events cursor for this execution. Bounded: large output and transcripts are never inlined (PIO-I §7). |
+| `execution.inspect` | query | Current axes, receipts, the obligations still waiting (`open` or `overdue`) and an events cursor for this execution. Closed obligations (`satisfied`, `aborted`) are read through `core.effects.get`. Bounded: large output and transcripts are never inlined (PIO-I §7). |
 | `execution.cancel` | command | Records a cancellation request and its forwarding effect, and returns a **request receipt** (`cancel_requested`). The outcome is observed later as `cancelled`, `refused`, `not_supported` or `unknown` (EXE-8). |
 | `execution.reconcile` | query | Given a `command_id` or `delivery_id`, returns the scoped observations the executor holds and any open obligations. It MUST NOT submit, resubmit or restart anything (EXE-10). |
 

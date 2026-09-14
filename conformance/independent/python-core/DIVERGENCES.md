@@ -1201,3 +1201,36 @@ After the first run, the five fixtures at new versions were read. They agree wit
 **Run** (212 fixtures, twice): **196 pass, 0 fail, 0 timeout, 0 harness_error, 4 unsupported, 12 skipped.**
 
 **Remaining disagreement:** only G5-REFUSED-RUNTIME, which the resolution leaves open for the owner. This implementation follows EXECUTION §3.1 (`preparing`).
+
+### G.7 Acceptance corrections C1–C3
+
+> Base `2d8402a`, the owner's conditional M3 acceptance with corrections C1–C3. I read the changes to EXECUTION §3, §3.1, §7.1, §9 and §15.1, CORE §16.5 and §19.4, the conformance README and the fixture schema first. The three re-versioned C1 fixtures came after the change list was implemented.
+
+**Changes.**
+
+| Correction | Change |
+|---|---|
+| C1 (EXECUTION §3.1, §9) | Every execution starts at runtime `not_started`; queued and refused executions stay there. Admission, direct or later from the queue, moves runtime to `preparing`. Every `execution.admission.changed` carries `runtime` after the change: `preparing` on admission, otherwise `not_started`, including a refusal by `queue_timeout`. The retention snapshot of an execution folds that `runtime`. This resolves G5-REFUSED-RUNTIME. |
+| C3 (CORE §19.4) | A recovery decision `failed_before_delivery` with reason `deadline_passed` now leaves the delivery's obligations `overdue`. `core.effect.obligation.overdue` comes after `execution.recovery.decided` and before the delivery observation. Before this change they were satisfied (G7-RECOVERY-OBLIGATIONS, below). |
+
+**C3 checked as general rules.** No change was needed for:
+- **One dispatch per delivery (§3.1):** only the first dispatch point dispatches, and later reports while `pending` are evidence.
+- **Recovery fencing (§7.1):** any non-current generation is fenced (G.6).
+- **Causal order (§9):** `execution.timeout.passed` precedes the overdue marking and determination it causes, for the queue, delivery and reconciliation timeouts. `execution.recovery.decided` precedes the observation and host change it causes.
+- **Ended waits:** a delivery or reconciliation timeout, or an obligation deadline, leaves obligations `overdue`; only harness evidence, reconciliation or provable non-dispatch satisfies them.
+- **Evidence classes:** each states its basis, as §15.1 names them.
+
+**C2 against this implementation's limits.** It still does not claim `core.events.backpressure`. The correction also restates that sessions without the feature are bounded and closed within `backpressure_notice_ms` of a stall's start. This implementation does not meet that. Its stdio writer blocks when the caller stops reading: it has no bound on pending output, no room deadline and no closure. README "Limits" now says so. No fixture that applies to this participant observes it; the backpressure fixtures are `unsupported`.
+
+**Runs** (212 fixtures).
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| At `2d8402a` before the changes | 193 | 3 | 0 | 0 | 4 | 12 |
+| After the changes, and one repeat | 196 | 0 | 0 | 0 | 4 | 12 |
+
+Before the changes, the three failures were the C1 fixtures. `execution.admission-refuses-unenforceable-or-unknown-requirements` (step 5), `execution.capacity-queue-admits-in-order-and-times-out` (step 5) and `execution.context-bindings-gate-admission` (step 7) each found runtime `preparing` where `not_started` was expected.
+
+**Underspecified points.**
+- **G7-RECOVERY-OBLIGATIONS.** CORE §19.4 says an obligation is `overdue` when "a profile ends a wait because it timed out". §7.1 recovery also ends the delivery wait for reasons that are not timeouts: `cancelled`, `authorization_lost` and `recovery_policy`, each with an intact journal and no marker. Here those decisions satisfy the obligations, because provable non-dispatch is evidence of the effect's outcome (`never_dispatched`). A `deadline_passed` decision leaves them `overdue`. Neither text nor fixture states which applies, and no fixture observes it.
+- **G7-EXIT-ORDER.** §9's causal-order rule covers decisions and passed timeouts only. For an observed process exit, this implementation appends `execution.runtime.changed` (`exited`) before `execution.exit.observed`. Whether an observation that causes another axis change must precede it is not stated.

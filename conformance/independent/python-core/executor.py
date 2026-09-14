@@ -569,6 +569,7 @@ class Executor:
         now = self.now()
         delivery_id = f"{st['id']}.delivery-1"
         x["admission"] = "admitted"
+        x["runtime"] = "preparing"  # C1: admission moves runtime from not_started
         x["admitted_at"] = now
         x["last_observation_at"] = now
         x["delivery_id"] = delivery_id
@@ -621,7 +622,8 @@ class Executor:
         x = {
             "brief": payload["brief"], "authorization": self._authorization(auth), "operation_ref": operation_ref,
             "command_id": env["command_id"], "submitted_at": now, "timeouts": dict(payload.get("timeouts", {})),
-            "runtime": "preparing", "result": "absent", "exit": "unavailable", "evaluation": "not_requested",
+            # EXECUTION 3.1 (C1): every execution starts with no work begun.
+            "runtime": "not_started", "result": "absent", "exit": "unavailable", "evaluation": "not_requested",
             "effects": [], "completions": [], "recovery": [], "passed": [], "generation": 1,
             "script_pos": 0, "dispatched": False, "transport_errors": 0, "stalled": False,
             "counters": {"cancels": 0, "steers": 0, "responses": 0, "probes": 0, "answered": 0,
@@ -654,17 +656,17 @@ class Executor:
             # EXECUTION 3.1: no delivery and no effect; delivery is
             # failed_before_delivery and the other axes keep their initial values.
             x["delivery"] = "failed_before_delivery"
-            event = {"admission": "refused", "reason": reason}
+            event = {"admission": "refused", "runtime": "not_started", "reason": reason}
         else:
             queue_reason = self._queue_reason(x)
             if queue_reason is not None:
                 x["admission"] = "queued"
                 x["queue_reason"] = queue_reason
                 x["delivery"] = "pending"
-                event = {"admission": "queued", "queue_reason": queue_reason}
+                event = {"admission": "queued", "runtime": "not_started", "queue_reason": queue_reason}
             else:
                 delivery_id = self._admit(st)
-                event = {"admission": "admitted", "delivery_id": delivery_id}
+                event = {"admission": "admitted", "runtime": "preparing", "delivery_id": delivery_id}
             if "workspace" in payload:
                 ws = payload["workspace"]
                 lease = {"lease_id": f"{xid}.workspace", "repository": ws["repository"], "base": ws["base"],
@@ -1044,8 +1046,13 @@ class Executor:
                      {"delivery_id": delivery_id, "decision": decision, "reason": reason, "host": host})
         if decision != "dispatch_resumed":
             effect_class = "dispatch_uncertain" if decision == "ambiguous" else "never_dispatched"
+            ended_wait = reason == "deadline_passed"
+            if ended_wait:
+                # CORE 19.4 (C3): the wait ended because a deadline passed, so
+                # its obligations are overdue, not satisfied (G7-RECOVERY-OBLIGATIONS).
+                self._overdue(st, delivery_id)
             self._determine(st, decision, {"class": "recovery", "source": reason},
-                            effect_evidence={"class": effect_class, "source": reason})
+                            effect_evidence={"class": effect_class, "source": reason}, close=not ended_wait)
         self._xevent(st, "execution.host.changed", {"host": host})
         return True
 
@@ -1122,7 +1129,8 @@ class Executor:
                 x.pop("queue_reason", None)
                 x["delivery"] = "failed_before_delivery"
                 self._release_budget(x)
-                self._xevent(st, "execution.admission.changed", {"admission": "refused", "reason": "queue_timeout"})
+                self._xevent(st, "execution.admission.changed", {"admission": "refused", "runtime": "not_started",
+                                                                         "reason": "queue_timeout"})
                 return True
             return False
         if x["admission"] != "admitted":
@@ -1177,11 +1185,13 @@ class Executor:
         reason = self._queue_reason(x)
         if reason is None:
             delivery_id = self._admit(st)
-            self._xevent(st, "execution.admission.changed", {"admission": "admitted", "delivery_id": delivery_id})
+            self._xevent(st, "execution.admission.changed", {"admission": "admitted", "runtime": "preparing",
+                                                                     "delivery_id": delivery_id})
             return True
         if reason != x.get("queue_reason"):
             x["queue_reason"] = reason
-            self._xevent(st, "execution.admission.changed", {"admission": "queued", "queue_reason": reason})
+            self._xevent(st, "execution.admission.changed", {"admission": "queued", "runtime": "not_started",
+                                                                     "queue_reason": reason})
             return True
         return False
 

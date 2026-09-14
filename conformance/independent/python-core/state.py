@@ -132,6 +132,8 @@ def reduce_state(prior: dict | None, event: dict) -> dict:
         axis = EXECUTION_AXIS_EVENTS.get(kind)
         if axis is not None and axis in payload:
             state[axis] = payload[axis]
+        if kind == "execution.admission.changed" and "runtime" in payload:
+            state["runtime"] = payload["runtime"]  # EXECUTION 9 (C1)
         return state
     if subject_kind == "execution.controller":
         return {"epoch": payload["epoch"]}

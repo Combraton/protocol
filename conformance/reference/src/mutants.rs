@@ -5,6 +5,22 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "notice-budget-per-subscription",
+        "restarts the ending-notice budget for each subscription",
+    ),
+    (
+        "room-wait-unbounded",
+        "waits without bound for a stalled consumer to make room",
+    ),
+    (
+        "unstarted-work-reported-preparing",
+        "reports runtime preparing for queued or refused work that has not started",
+    ),
+    (
+        "refusal-records-delivery-effect",
+        "records a prompt delivery effect for an execution it refused",
+    ),
+    (
         "recovery-host-change-silent",
         "advances the host generation during recovery without an execution.host.changed event",
     ),

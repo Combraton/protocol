@@ -473,6 +473,7 @@ impl State<'_> {
                 Ok(())
             }
             "collect_until_close" => self.collect_until_close(step),
+            "expect_signal_gap" => self.expect_signal_gap(step),
             other => Err(Harness(format!("unknown step {other:?}"))),
         }
     }
@@ -743,6 +744,42 @@ impl State<'_> {
             let (_, sequence) =
                 previous.ok_or_else(|| Fail("no event before close to resume after".into()))?;
             self.vars.insert(name.to_string(), json!(sequence + 1));
+        }
+        Ok(())
+    }
+
+    /// Check the time between two signals the participant emitted, from their files' modification
+    /// times (decision 007 §4): `min_ms <= to - from <= max_ms`.
+    fn expect_signal_gap(&mut self, step: &Value) -> Result<(), StepError> {
+        let directory = self.barrier_directory();
+        let modified = |name: &str| -> Result<std::time::SystemTime, StepError> {
+            std::fs::metadata(directory.join(format!("{name}.signal")))
+                .and_then(|m| m.modified())
+                .map_err(|_| Fail(format!("signal {name} was not emitted")))
+        };
+        let from = step["from"].as_str().unwrap_or_default();
+        let to = step["to"].as_str().unwrap_or_default();
+        let gap = modified(to)?
+            .duration_since(modified(from)?)
+            .map_err(|_| Fail(format!("signal {to} was emitted before {from}")))?
+            .as_millis() as u64;
+        self.note(
+            "expect_signal_gap",
+            json!({"from": from, "to": to, "gap_ms": gap}),
+        );
+        if let Some(max) = step["max_ms"].as_u64()
+            && gap > max
+        {
+            return Err(Fail(format!(
+                "signal gap {from} to {to} was {gap} ms, above the bound {max} ms"
+            )));
+        }
+        if let Some(min) = step["min_ms"].as_u64()
+            && gap < min
+        {
+            return Err(Fail(format!(
+                "signal gap {from} to {to} was {gap} ms, below {min} ms"
+            )));
         }
         Ok(())
     }

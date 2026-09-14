@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "core.events.slow-consumer-is-closed-with-notice-and-resumes",
-  "version": 1,
+  "version": 2,
   "title": "A subscriber that stops reading is ended with consumer_too_slow once its pending output exceeds the declared bound, its connection closes, and it resumes from its last cursor with no skipped event while telemetry loss stays declared",
   "requirements": [
     "TRN-4",
@@ -31,12 +31,14 @@
     "executor.script"
   ],
   "requires_barriers": [
-    "backpressure.limit.reached"
+    "backpressure.limit.reached",
+    "backpressure.stall.started"
   ],
   "polarity": "negative",
   "kills": [
     "semantic-events-dropped-under-pressure",
-    "unbounded-pending-output"
+    "unbounded-pending-output",
+    "room-wait-unbounded"
   ],
   "kill_expectations": {
     "semantic-events-dropped-under-pressure": {
@@ -44,6 +46,10 @@
       "reason_contains": "not closed"
     },
     "unbounded-pending-output": {
+      "step": 6,
+      "reason_contains": "no signal"
+    },
+    "room-wait-unbounded": {
       "step": 6,
       "reason_contains": "no signal"
     }
@@ -213,6 +219,14 @@
       },
       "capture_cursor": "cursor",
       "capture_next_sequence": "next"
+    },
+    {
+      "step": "expect_signal_gap",
+      "from": "backpressure.stall.started",
+      "to": "backpressure.limit.reached",
+      "min_ms": 1450,
+      "max_ms": 2250,
+      "note": "room deadline: backpressure_notice_ms from the stall's start"
     },
     {
       "step": "start",

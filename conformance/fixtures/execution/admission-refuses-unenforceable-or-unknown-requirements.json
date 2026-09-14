@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.admission-refuses-unenforceable-or-unknown-requirements",
-  "version": 2,
+  "version": 3,
   "title": "A required restriction above the adapter's enforcement, or an unknown required predicate, is refused with a reason and an alternative",
   "requirements": [
     "EXE-2",
@@ -28,7 +28,9 @@
   "polarity": "negative",
   "kills": [
     "admits-weaker-enforcement",
-    "unknown-predicate-supported"
+    "unknown-predicate-supported",
+    "unstarted-work-reported-preparing",
+    "refusal-records-delivery-effect"
   ],
   "kill_expectations": {
     "admits-weaker-enforcement": {
@@ -38,6 +40,14 @@
     "unknown-predicate-supported": {
       "step": 3,
       "reason_contains": "result/"
+    },
+    "unstarted-work-reported-preparing": {
+      "step": 5,
+      "reason_contains": "result/runtime"
+    },
+    "refusal-records-delivery-effect": {
+      "step": 2,
+      "reason_contains": "acknowledgment/effect_refs"
     }
   },
   "steps": [
@@ -227,9 +237,111 @@
       "expect": {
         "ok": {
           "admission": "refused",
+          "runtime": "not_started",
           "delivery": "failed_before_delivery",
+          "result": "absent",
+          "exit": "unavailable",
+          "evaluation": "not_requested",
+          "deliveries": [],
+          "effects": [],
+          "obligations": []
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "core.effects.get",
+      "payload": {
+        "effect": "e-1.delivery-1"
+      },
+      "expect": {
+        "error": "not_found"
+      }
+    },
+    {
+      "step": "describe",
+      "note": "a tick after refusal must not start or dispatch refused work"
+    },
+    {
+      "step": "query",
+      "operation": "core.events.read",
+      "payload": {
+        "from": "start",
+        "limit": 100,
+        "kinds": [
+          "execution.execution"
+        ]
+      },
+      "expect": {
+        "ok": {
+          "items": [
+            {
+              "event": {
+                "type": "execution.admission.changed",
+                "subject": {
+                  "kind": "execution.execution",
+                  "id": "e-1"
+                },
+                "payload": {
+                  "admission": "refused",
+                  "runtime": "not_started",
+                  "reason": "enforcement_unavailable"
+                }
+              }
+            },
+            {
+              "event": {
+                "type": "execution.admission.changed",
+                "subject": {
+                  "kind": "execution.execution",
+                  "id": "e-2"
+                },
+                "payload": {
+                  "admission": "refused",
+                  "runtime": "not_started"
+                }
+              }
+            },
+            {
+              "event": {
+                "type": "execution.admission.changed",
+                "subject": {
+                  "kind": "execution.execution",
+                  "id": "e-3"
+                },
+                "payload": {
+                  "admission": "admitted",
+                  "runtime": "preparing"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "execution.inspect",
+      "payload": {
+        "execution": "e-2"
+      },
+      "expect": {
+        "ok": {
+          "runtime": "not_started",
           "deliveries": [],
           "effects": []
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "execution.inspect",
+      "payload": {
+        "execution": "e-3"
+      },
+      "expect": {
+        "ok": {
+          "runtime": "preparing"
         }
       }
     },

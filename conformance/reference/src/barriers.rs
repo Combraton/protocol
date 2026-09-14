@@ -13,7 +13,9 @@ pub const RECHECK_AFTER_AUTHORIZATION: &str = "subscription.recheck.after_author
 pub const LOCK_CONTENDED: &str = "processing.lock.contended";
 /// Signal emitted after a Unix-socket session has closed and its provider state was released.
 pub const SESSION_CLOSED: &str = "session.closed";
-/// Signal emitted when a connection's pending output first exceeds its bound.
+/// Signal emitted when a stall begins: output would exceed the bound and the provider waits for room.
+pub const BACKPRESSURE_STALL_STARTED: &str = "backpressure.stall.started";
+/// Signal emitted when a consumer made no room within the bound and is declared too slow.
 pub const BACKPRESSURE_LIMIT_REACHED: &str = "backpressure.limit.reached";
 /// Signal emitted once a connection closed for backpressure, after any ending notice attempt.
 pub const BACKPRESSURE_CONNECTION_CLOSED: &str = "backpressure.connection.closed";

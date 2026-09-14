@@ -1,8 +1,8 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "core.events.unread-ending-notice-does-not-hold-the-connection",
-  "version": 1,
-  "title": "When the slow consumer also leaves the ending notice unread, the provider closes the connection within its declared notice bound instead of waiting",
+  "version": 2,
+  "title": "When the slow consumer also leaves its ending notices unread, the provider waits for room once, attempts every subscription's notice within one shared budget, and closes the connection within twice the declared bound",
   "requirements": [
     "TRN-4"
   ],
@@ -29,20 +29,32 @@
     "executor.script"
   ],
   "requires_barriers": [
-    "backpressure.connection.closed"
+    "backpressure.connection.closed",
+    "backpressure.limit.reached",
+    "backpressure.stall.started"
   ],
   "polarity": "negative",
   "kills": [
     "notice-waits-indefinitely",
-    "unbounded-pending-output"
+    "unbounded-pending-output",
+    "notice-budget-per-subscription",
+    "room-wait-unbounded"
   ],
   "kill_expectations": {
     "notice-waits-indefinitely": {
-      "step": 6,
+      "step": 8,
       "reason_contains": "no signal"
     },
     "unbounded-pending-output": {
-      "step": 6,
+      "step": 8,
+      "reason_contains": "no signal"
+    },
+    "notice-budget-per-subscription": {
+      "step": 10,
+      "reason_contains": "above the bound"
+    },
+    "room-wait-unbounded": {
+      "step": 8,
       "reason_contains": "no signal"
     }
   },
@@ -149,8 +161,38 @@
       }
     },
     {
+      "step": "query",
+      "operation": "core.events.subscribe",
+      "payload": {
+        "cursor": {
+          "$var": "cursor"
+        },
+        "kinds": [
+          "execution.execution"
+        ]
+      },
+      "expect": {
+        "ok": {}
+      }
+    },
+    {
+      "step": "query",
+      "operation": "core.events.subscribe",
+      "payload": {
+        "cursor": {
+          "$var": "cursor"
+        },
+        "kinds": [
+          "core.effect"
+        ]
+      },
+      "expect": {
+        "ok": {}
+      }
+    },
+    {
       "step": "pause_reading",
-      "note": "the consumer stops reading"
+      "note": "the consumer stops reading all three subscriptions"
     },
     {
       "step": "command",
@@ -184,7 +226,30 @@
         "backpressure.connection.closed"
       ],
       "within_ms": 20000,
-      "note": "the consumer is still not reading; the notice cannot be written"
+      "note": "the consumer is still not reading; the notices cannot be written"
+    },
+    {
+      "step": "expect_signal_gap",
+      "from": "backpressure.stall.started",
+      "to": "backpressure.limit.reached",
+      "min_ms": 1450,
+      "max_ms": 2250,
+      "note": "room deadline"
+    },
+    {
+      "step": "expect_signal_gap",
+      "from": "backpressure.limit.reached",
+      "to": "backpressure.connection.closed",
+      "min_ms": 1450,
+      "max_ms": 2250,
+      "note": "one notice budget for all three subscriptions"
+    },
+    {
+      "step": "expect_signal_gap",
+      "from": "backpressure.stall.started",
+      "to": "backpressure.connection.closed",
+      "max_ms": 3750,
+      "note": "maximum time to closure: twice backpressure_notice_ms"
     },
     {
       "step": "resume_reading"

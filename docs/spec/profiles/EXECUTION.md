@@ -44,7 +44,7 @@ Execution state is six independent axes. Each axis changes only through an execu
 |---|---|---|
 | `admission` | `queued` (with `queue_reason`), `admitted`, `refused` (with `reason` and optional `alternative`) | The executor's capacity and policy decision (EXE-2) |
 | `delivery` | `pending`, `acknowledged`, `delivered`, `not_delivered`, `failed_before_delivery`, `ambiguous` (§3.1) | The current determination of whether the brief reached the harness, with its evidence |
-| `runtime` | `preparing`, `active`, `requires_action` (with `action_id` and `owner`), `quiescent`, `exited`, `unknown` | Current observed state (EXE-4) |
+| `runtime` | `not_started`, `preparing`, `active`, `requires_action` (with `action_id` and `owner`), `quiescent`, `exited`, `unknown` | Current observed state (EXE-4) |
 | `result` | `absent`, `partial`, `returned` | Output availability |
 | `exit` | `{ "code" }`, `{ "signal" }`, `forced_termination`, `unavailable` | Process outcome, where meaningful |
 | `evaluation` | `not_requested`, or an attributed external reference | A caller or verifier's assessment, never derived from `exit` or `result` (EXE-5) |
@@ -80,10 +80,17 @@ Owner decision, 2026-09-14. Each delivery has a **current determination** and a 
   A delivery never stays `pending` after its wait ends (§8).
 - **Resolution replaces the current view.** When later evidence resolves a delivery, the current determination changes to the resolved value with that evidence, for example `ambiguous` → `delivered`. The previous determination, with its evidence, is appended to `history`, which is never rewritten. The original `delivery.observed` event stays in the event stream. The axis does not stay `ambiguous` merely to preserve history.
 - **Resolution never submits.** Reconciliation reads evidence; it never causes another submission.
+- **One dispatch per delivery.** A delivery is dispatched at most once under its identity. Harness reports that arrive while it is still `pending` are evidence for that dispatch, never a new attempt.
+- **Evidence classes.** Proof classes are defined above. Other evidence classes are named by the executor, but each MUST truthfully state the basis of its observation: recorded before dispatch, dispatch may have begun, never dispatched, a wait that ended, a reconciliation finding, and so on. The conformance executor's names are in §15.1.
 - **What delivery does not establish.** `acknowledged` and `delivered` are distinct facts, and neither establishes comprehension, compliance or task success.
 - **Public record.** `execution.inspect` shows each delivery as `{ delivery_id, delivery, evidence, proof_class?, determined_at, history: [ { delivery, evidence?, recorded_at } ] }`.
 - **Effect status.** The delivery effect's status (CORE §19) follows the determination: `acknowledged` and `delivered` give `succeeded`; `not_delivered` and `failed_before_delivery` give `failed`; `ambiguous` gives `unknown`; `pending` gives `pending`.
-- **Refused admission** records the execution with no delivery and no effect. Its `delivery` axis is `failed_before_delivery`, because nothing was or will be dispatched; the other axes keep their initial values (`runtime: preparing`, `result: absent`, `exit: unavailable`, `evaluation: not_requested`). A queued execution's `delivery` is `pending`.
+- **Refused admission** records the execution with no delivery and no effect. Its `delivery` axis is `failed_before_delivery`, because nothing was or will be dispatched. Runtime is `not_started`; the other axes keep their initial values (`result: absent`, `exit: unavailable`, `evaluation: not_requested`). A queued execution's `delivery` is `pending` and its runtime `not_started`.
+
+**Runtime before and after admission** (owner decision C1, 2026-09-14; a change to the draft vocabulary):
+- `not_started`: no execution work has begun. Every execution starts here. Queued and refused executions stay here: a refused execution never dispatched, has no delivery and has recorded no execution effect.
+- `preparing`: the executor admitted the execution and is preparing it; no harness observation has arrived yet. Admission moves runtime from `not_started` to `preparing`. The `execution.admission.changed` event that records admission carries the new `runtime`, so the change has its event.
+- Once admitted, runtime never returns to `not_started`. Runtime `unknown` means the executor cannot observe work that may have begun; it is never used for work that has not started.
 
 `requires_action` is a runtime condition, not a progress level. `cancel_requested` is not `cancelled` (§7).
 
@@ -129,7 +136,7 @@ Commands that act on an existing execution (`execution.cancel` and the feature c
 ## 7. Cancellation and fencing
 
 - `execution.cancel` commits the request first, then forwards it through the harness's supported mechanism, then observes the outcome.
-- **Forwarding effect.** The command records effect `<execution>.cancel-<n>` of kind `execution.cancel_forwarding`, retry class `idempotent_key` with the effect ID as its key, and an open obligation for the outcome. Its ID is in the acknowledgment's `effect_refs`. A forwarding attempt whose outcome is unknown is retried with the same key (CORE §19.3); if no attempt completes, the outcome is `unknown`.
+- **Forwarding effect.** The command records a new effect of kind `execution.cancel_forwarding` (the conformance executor names it `<execution>.cancel-<n>`, §15.1), retry class `idempotent_key` with the effect ID as its key, and an open obligation for the outcome. Its ID is in the acknowledgment's `effect_refs`. A forwarding attempt whose outcome is unknown is retried with the same key (CORE §19.3); if no attempt completes, the outcome is `unknown`.
 - A lost cancel acknowledgment is recovered by retransmitting the same command, which returns the same receipt through Core deduplication (EXE-8).
 - Escalation to process termination requires verified host ownership and generation; a process number alone is insufficient (PIO §8).
 - Cancellation, a stopped process and reconciled external effects are separate observations. Outstanding external effects survive cancellation, timeout and abandonment as open obligations (CORE §19).
@@ -141,7 +148,7 @@ Owner decision, 2026-09-14. After a restart, an accepted execution whose deliver
 
 1. **Write-ahead dispatch marker.** Before any harness write, the executor durably records a dispatch marker for the delivery, bound to the host generation that will send. This is mandatory for every executor.
 2. **Intact durable history.** The absence of a marker is proof only if the journal is intact. If the executor cannot vouch for journal continuity, for example after a restore or a new stream epoch (CORE §16.1), a missing marker is not proof: the delivery becomes `ambiguous`.
-3. **Fencing.** Every recovery decision advances the host generation and appends `execution.host.changed`. A dispatcher from an older generation MUST NOT send afterwards, and its attempt is recorded (`execution.dispatch.fenced`).
+3. **Fencing.** Every recovery decision advances the host generation and appends `execution.host.changed`. A dispatcher whose generation is not the current one MUST NOT send, including one naming a generation the executor never issued; its attempt is recorded (`execution.dispatch.fenced`). A dispatcher from an older generation MUST NOT send afterwards, and its attempt is recorded (`execution.dispatch.fenced`).
 4. **Revalidation before dispatch.** The executor revalidates at the recovery point, and dispatches only if all of these still hold:
    - no cancellation has been requested;
    - the submitter is still authorized (an authority, or an active, unexpired grant bound to a current epoch);
@@ -182,7 +189,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 
 | Type | Payload |
 |---|---|
-| `execution.admission.changed` | `{ "admission", "reason"?, "queue_reason"?, "delivery_id"? }`; `delivery_id` when a queued execution is admitted |
+| `execution.admission.changed` | `{ "admission", "runtime", "reason"?, "queue_reason"?, "delivery_id"? }`; `runtime` is the runtime after this change (`preparing` on admission, otherwise `not_started`); `delivery_id` when a queued execution is admitted |
 | `execution.delivery.observed` | `{ "delivery_id", "delivery", "proof_class"?, "evidence" }`; `proof_class` only when the evidence is a proof class (§3) |
 | `execution.delivery.reconciled` | `{ "delivery_id", "outcome": "delivered" \| "not_delivered" \| "unknown", "delivery", "evidence" }`; `delivery` is the resulting current determination |
 | `execution.recovery.decided` | `{ "delivery_id", "decision", "reason", "host" }` (§7.1) |
@@ -205,6 +212,8 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.context.delivery.observed` | The delivery observation of §13 |
 | `execution.transition.observed` | `{ "transition" }`: a named runtime transition that context bindings can depend on |
 | `execution.output.lost` | A lost range (§14.1) |
+
+**Causal order.** An event that records a decision or a passed timeout precedes the events it causes. For example, `execution.recovery.decided` precedes the delivery observation and host change it causes, and `execution.timeout.passed` precedes the overdue marking and determination it causes. Order among events with the same cause is otherwise unspecified (§15.1 fixes it for the conformance executor).
 
 `origin` is `command` for events caused by a caller command, and `provider` for observations from the harness or host (CORE §16.2). Provider-origin events never carry a `command_id`.
 
@@ -249,7 +258,7 @@ The shapes below are *candidate* names for Protocol 0.1.
 - A harness action request sets runtime `requires_action`. `execution.inspect` then carries `runtime_detail: { action_id, owner }`, and lists `actions`: `{ action_id, owner, state: "pending" | "answered", requested_at, answered_at?, response_effect? }`.
 - `execution.respond_action` (command) on an execution, payload `{ action_id, response: { digest, media_type } }`.
   - The action ID belongs to that execution. An ID that is not a pending action of this execution, including one pending in another execution or already answered, is `not_found` and authorizes nothing.
-  - The outcome is `{ action_id, state: "answered", response_effect }`. The command records effect `<execution>.response-<n>` of kind `execution.action_response` (`non_repeatable`).
+  - The outcome is `{ action_id, state: "answered", response_effect }`. The command records a new effect of kind `execution.action_response` (`non_repeatable`), named in `response_effect`.
 - A pending action survives an executor restart under the same ID (SCN-12).
 
 ### 11.3 Controller lease
@@ -354,7 +363,9 @@ No execution operation, method name, event type or error is reserved for testing
 
 ### 15.1 Conformance executor conventions
 
-Normative only for an executor running under the conformance launch configuration (owner decision Q4). They fix names and orderings the contract leaves to executors, so fixtures can observe them. A production executor may choose differently, and callers must not depend on these values.
+Normative only for an executor running under the conformance launch configuration (owner decision Q4, confirmed at M3 acceptance as C3). They fix identifiers, class names and orderings the contract leaves to executors, so fixtures can observe them. A production executor may choose differently within the public contract, and callers must not depend on these values.
+
+Nothing here relaxes a requirement stated elsewhere. Required identity relationships, evidence meaning, authorization, durability, causal ordering (§9) and recovery rules (§7.1) bind every implementation. Where an entry below restates such a rule for the script, the rule's normative home is the section named.
 
 - **Identifiers.**
   - Prompt delivery effect: `<execution>.delivery-1`, with obligation `<effect>.evidence`.
@@ -378,15 +389,15 @@ Normative only for an executor running under the conformance launch configuratio
   | Status probe answered | `harness_status` |
   | Behavior attributable to a steering message | `harness_observation` |
 - **Script steps.**
-  - Dispatch happens only at `deliver`, at `crash: after_write`, and at a `stale_dispatch` that is not fenced. A `stale_dispatch` naming any generation other than the current one is fenced, including one never issued.
-  - The first `deliver` is the one dispatch attempt. A later `deliver` while delivery is still `pending` is further evidence for the same dispatch, with no new attempt. Once delivery is no longer `pending`, `deliver` and `crash` steps have no effect: a delivery is never dispatched twice, and later evidence for an ambiguous delivery is scripted with `reconcile_finds`.
+  - Dispatch happens only at `deliver`, at `crash: after_write`, and at a `stale_dispatch` that is not fenced. A `stale_dispatch` naming any generation other than the current one is fenced (§7.1).
+  - The first `deliver` is the one dispatch attempt. A later `deliver` while delivery is still `pending` is further evidence for the same dispatch, with no new attempt (§3.1). Once delivery is no longer `pending`, `deliver` and `crash` steps have no effect: a delivery is never dispatched twice, and later evidence for an ambiguous delivery is scripted with `reconcile_finds`.
   - `stall` stops the script without dispatching. `exit` also sets runtime `exited`.
   - When every requested action is answered, `wait_for: action` sets runtime `active` and sends each response, which the harness acknowledges (`provider_ack_id`; the response effect `succeeded`, its obligation satisfied).
   - `transport_errors` makes the next attempts end unknown. Retryable classes (`read`, `idempotent_key`) get at most three attempts; `non_repeatable` gets one.
   - Capacity is released when runtime is `exited` or delivery is `failed_before_delivery` or `not_delivered`. An executor may also release it when it observes a `cancelled` outcome.
-  - A determination made because a wait ended (a timeout) leaves the delivery's obligations `overdue`; a determination made from evidence satisfies them.
+  - A determination made because a wait ended leaves the delivery's obligations `overdue` (CORE §19.4); a determination made from evidence satisfies them.
 - **Inspect members.** `steering` and `actions` appear only once they have an entry.
-- **Event order.** At a delivery timeout: `execution.timeout.passed`, then `core.effect.obligation.overdue` for each open obligation, then `execution.delivery.observed`. At recovery: `execution.recovery.decided`, the delivery observation if any, then `execution.host.changed`.
+- **Event order.** The causal order in §9 binds everyone. Among events with the same cause, the conformance executor emits, at a delivery timeout, `execution.timeout.passed`, then `core.effect.obligation.overdue` for each open obligation, then `execution.delivery.observed`. At recovery it emits `execution.recovery.decided`, the delivery observation if any, then `execution.host.changed`.
 
 ## 16. What execution does not establish
 

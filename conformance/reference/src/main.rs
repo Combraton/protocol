@@ -405,10 +405,7 @@ fn close_for_backpressure(
 ) {
     barriers::signal(barriers::BACKPRESSURE_LIMIT_REACHED);
     if provider.backpressure_negotiated() || mutant_set.on("consumer-too-slow-to-older-consumers") {
-        // The ending notice is attempted within the declared bound, never waited for forever.
-        for notice in provider.end_subscriptions("consumer_too_slow") {
-            outbox.push(json::encode_frame(&notice));
-        }
+        // One notice budget covers every subscription's ending notice (CORE section 16.5).
         let bound = if mutant_set.on("notice-waits-indefinitely") {
             None
         } else {
@@ -416,6 +413,12 @@ fn close_for_backpressure(
                 provider.backpressure_notice_ms(),
             ))
         };
+        for notice in provider.end_subscriptions("consumer_too_slow") {
+            outbox.push(json::encode_frame(&notice));
+            if mutant_set.on("notice-budget-per-subscription") {
+                outbox.wait_written(outbox.queued(), bound);
+            }
+        }
         outbox.wait_written(outbox.queued(), bound);
     }
     // Closure: nothing more is written, whether or not the notice was.
@@ -460,8 +463,15 @@ fn serve_frames<R: std::io::Read>(
     let unbounded = mutant_set.on("unbounded-pending-output");
     let drop_under_pressure = mutant_set.on("semantic-events-dropped-under-pressure");
     // A consumer that makes no room within the bound is too slow: close its connection.
+    // A stall's deadline runs from its start; partial progress does not extend it.
     let make_room = |provider: &mut Provider| -> Result<(), Ended> {
-        if outbox.wait_drained(stall) {
+        barriers::signal(barriers::BACKPRESSURE_STALL_STARTED);
+        let drained = if mutant_set.on("room-wait-unbounded") {
+            outbox.wait_written(outbox.queued(), None)
+        } else {
+            outbox.wait_drained(stall)
+        };
+        if drained {
             Ok(())
         } else {
             close_for_backpressure(provider, outbox, closer, &mutant_set);

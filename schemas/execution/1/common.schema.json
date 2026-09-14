@@ -98,6 +98,7 @@
     },
     "runtime": {
       "enum": [
+        "not_started",
         "preparing",
         "active",
         "requires_action",

@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.capacity-queue-admits-in-order-and-times-out",
-  "version": 1,
+  "version": 2,
   "title": "Beyond the executor's capacity a submission is queued with a reason and admitted when capacity frees; a queued execution whose queue timeout passes is refused",
   "requirements": [
     "EXE-2",
@@ -29,12 +29,17 @@
   ],
   "polarity": "negative",
   "kills": [
-    "capacity-ignored"
+    "capacity-ignored",
+    "unstarted-work-reported-preparing"
   ],
   "kill_expectations": {
     "capacity-ignored": {
       "step": 3,
       "reason_contains": "outcome/admission"
+    },
+    "unstarted-work-reported-preparing": {
+      "step": 5,
+      "reason_contains": "result/runtime"
     }
   },
   "steps": [
@@ -220,6 +225,7 @@
         "ok": {
           "admission": "queued",
           "queue_reason": "capacity",
+          "runtime": "not_started",
           "deliveries": [],
           "effects": []
         }
@@ -238,7 +244,10 @@
       "expect": {
         "ok": {
           "admission": "refused",
-          "reason": "queue_timeout"
+          "reason": "queue_timeout",
+          "runtime": "not_started",
+          "deliveries": [],
+          "effects": []
         }
       }
     },
@@ -250,7 +259,8 @@
       },
       "expect": {
         "ok": {
-          "admission": "queued"
+          "admission": "queued",
+          "runtime": "not_started"
         }
       }
     },
@@ -282,6 +292,7 @@
           "queue_reason": {
             "$absent": true
           },
+          "runtime": "preparing",
           "delivery": "acknowledged",
           "deliveries": [
             {
@@ -314,6 +325,7 @@
                 "origin": "provider",
                 "payload": {
                   "admission": "admitted",
+                  "runtime": "preparing",
                   "delivery_id": "e-2.delivery-1"
                 }
               }

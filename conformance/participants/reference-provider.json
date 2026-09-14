@@ -43,7 +43,8 @@
     ],
     "test_barriers": [
       "backpressure.limit.reached",
-      "backpressure.connection.closed"
+      "backpressure.connection.closed",
+      "backpressure.stall.started"
     ]
   },
   "launch": {
@@ -272,7 +273,11 @@
       "unavailable-after-binding",
       "internal-error-state-without-binding",
       "correlation-dropped",
-      "recovery-host-change-silent"
+      "recovery-host-change-silent",
+      "unstarted-work-reported-preparing",
+      "refusal-records-delivery-effect",
+      "notice-budget-per-subscription",
+      "room-wait-unbounded"
     ]
   }
 }

@@ -45,7 +45,8 @@
       "subscription.recheck.after_authorization",
       "session.closed",
       "backpressure.limit.reached",
-      "backpressure.connection.closed"
+      "backpressure.connection.closed",
+      "backpressure.stall.started"
     ]
   },
   "launch": {
@@ -84,7 +85,9 @@
       "consumer-too-slow-to-older-consumers",
       "notice-waits-indefinitely",
       "unbounded-pending-output",
-      "semantic-events-dropped-under-pressure"
+      "semantic-events-dropped-under-pressure",
+      "notice-budget-per-subscription",
+      "room-wait-unbounded"
     ]
   }
 }

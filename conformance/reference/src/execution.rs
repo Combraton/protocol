@@ -435,7 +435,8 @@ pub fn submit(
     let mut record = json!({
         "admission": "admitted",
         "delivery": "pending",
-        "runtime": "preparing",
+        // No execution work has begun until admission (EXECUTION section 3).
+        "runtime": "not_started",
         "result": "absent",
         "exit": "unavailable",
         "evaluation": "not_requested",
@@ -581,7 +582,17 @@ pub fn submit(
         record["delivery"] = json!("failed_before_delivery");
     }
     let mut outcome = json!({"execution": subject(execution_id), "admission": admission});
-    let mut event = json!({"admission": admission});
+    let unstarted = if mutants.on("unstarted-work-reported-preparing") {
+        "preparing"
+    } else {
+        "not_started"
+    };
+    record["runtime"] = json!(if admission == "admitted" {
+        "preparing"
+    } else {
+        unstarted
+    });
+    let mut event = json!({"admission": admission, "runtime": record["runtime"]});
     let mut effect_refs = Vec::new();
     if let Some((reason, alternative)) = refusal {
         for target in [&mut outcome, &mut record] {
@@ -589,6 +600,16 @@ pub fn submit(
             target["alternative"] = json!(alternative);
         }
         event["reason"] = json!(reason);
+        if mutants.on("refusal-records-delivery-effect") {
+            effect_refs.push(open_delivery(
+                tx,
+                execution_id,
+                &mut record,
+                &ctx.now,
+                "execution.submit owner transaction",
+                mutants,
+            )?);
+        }
     } else {
         if record["budget"].is_object() {
             record["budget"]["reservation"] = json!("reserved");
@@ -1041,6 +1062,7 @@ fn admit_from_queue(
             break;
         }
         record["admission"] = json!("admitted");
+        record["runtime"] = json!("preparing");
         record["admitted_at"] = json!(now);
         record["last_observation_at"] = json!(now);
         if let Some(map) = record.as_object_mut() {
@@ -1063,7 +1085,7 @@ fn admit_from_queue(
                 "execution.admission.changed",
                 subject(&id),
                 revision + 1,
-                json!({"admission": "admitted", "delivery_id": delivery_id}),
+                json!({"admission": "admitted", "runtime": "preparing", "delivery_id": delivery_id}),
             ),
         )?;
         admitted = true;
@@ -1956,7 +1978,7 @@ fn timeouts(
                 "execution.admission.changed",
                 subject(id),
                 revision,
-                json!({"admission": "refused", "reason": "queue_timeout"}),
+                json!({"admission": "refused", "runtime": record["runtime"], "reason": "queue_timeout"}),
             ),
         );
     }

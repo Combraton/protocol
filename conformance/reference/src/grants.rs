@@ -121,7 +121,7 @@ pub fn within_parent(parent: &Value, child: &Value) -> bool {
     rights_ok && resources_ok && expiry_ok && depth_ok && binding_ok
 }
 
-/// Current instant as `YYYY-MM-DDTHH:MM:SSZ`; a fixed test clock comes from launch configuration.
+/// Current system instant as `YYYY-MM-DDTHH:MM:SSZ` (used by `clock::Clock::System`).
 pub fn now(fixed: Option<&str>) -> String {
     if let Some(fixed) = fixed {
         return fixed.to_string();

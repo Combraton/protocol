@@ -12,6 +12,7 @@ This directory holds the normative, language-neutral conformance material for Pr
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |
 | `runner/` | The black-box runner (Rust crate `combraton-conformance`) |
 | `reference/` | The reference provider and its 147 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product). Its `tests/` hold implementation-specific checks, such as constructed cursors, that portable fixtures must not rely on. |
+| `scripts/repeat_fixture.py` | Runs one fixture repeatedly; every run must pass on the provider, or fail at the expected step and reason on the mutant (deterministic race evidence) |
 | `scripts/peer_user_check.py` | Different-OS-user check for the Unix-socket binding, run as root through passwordless `sudo` (CI) |
 | `independent/python-core/` | Independent Core provider in Python written from the documents only, with its divergence log (M2) |
 | `crosscheck/` | Independent non-Rust checks of the encoding vectors (Python `rfc8785`, Node `canonicalize`) |
@@ -35,7 +36,10 @@ It launches the provider with a data directory and a launch configuration file. 
 | `unsupported` | The participant does not claim a profile or feature the fixture needs | not run |
 | `skipped` | The fixture is written for another transport binding | not run |
 
-A mutant is killed only by `fail` or `timeout`. The CI workflow uploads `conformance/results/` from every job, whatever the outcome.
+A mutant is killed only by `fail` or `timeout`.
+- **Intended reasons.** A fixture may state `kill_expectations`: for a mutant, the step where it must fail and a substring of the reason. `check-mutants` reports a mutant that fails elsewhere as `WRONG-REASON`. `mutants.json` records every failing step, reason and expectation.
+- **Coverage limits.** A fixture that requires a test control or barrier the participant does not declare is `unsupported`, and the manifest lists it under `coverage_limits`. It is never a pass.
+- **Upload.** The CI workflow uploads `conformance/results/` from every job, whatever the outcome.
 
 ## Writing a fixture
 
@@ -48,6 +52,10 @@ A fixture is a JSON file conforming to `schemas/fixture.schema.json`. The common
 | `command`, `query` | Build a Core envelope with defaults. Use `set` and `remove` to override fields. The command digest is computed unless `digest` gives a literal. |
 | `request`, `notify`, `raw` | Send an arbitrary request, a notification, or raw, padded or unterminated bytes |
 | `expect_frame`, `expect_close`, `close_input` | Frame-level expectations |
+| `command` or `query` with `"await": false` and `name`; `expect_response` | Pipelined send, and a later check of the named response in any arrival order ([decision 007](../docs/decisions/007-execution-test-controls.md)). Pipelining does not establish commit order. |
+| `set_clock` | Replace the controlled clock file atomically with `instant` (forward only unless `allow_backward`) or `raw` content |
+| `kill` | SIGKILL the provider process; a later `start` relaunches it over the same data directory |
+| `await_barrier`, `release_barrier`, `await_any` | Implementation-specific barriers and signals: wait for a pause point (then clear old signals), release it, or wait until a signal exists or every named response arrived. Real-time bounds; expiry fails the case. |
 
 Expectations are `{"ok": pattern}`, `{"error": code, "details": pattern}`, or `{"any_of": [expectation, …]}` for behaviors the spec leaves to the provider. Object patterns match subsets of members. Array patterns match exactly, in length and order; use `$contains` for membership. Patterns support `$var`, `$ne_var`, `$type`, `$contains`, `$len`, `$absent`, `$any` and `$exact`. `capture` stores JSON-pointer values from a response for later steps. Values the runner sends may use `{"$var": name}`, `{"$unique": prefix}` and `{"$repeat": [text, count]}`, which expands to `text` repeated `count` times. Every frame a participant sends must fit the caller's receive limit: 1 MiB, or the `receive_limits.max_frame_bytes` of the session's successful negotiation.
 
@@ -73,6 +81,8 @@ A participant under test is launched with a data directory and a JSON launch con
 | `events.retain_last` | At this start, discard all but the newest N events (CORE §16.4) |
 | `capabilities` | Map of capability name to status, such as `{"core-test.writes": "unsupported"}` (CORE §17.4) |
 | `clock.fixed` | Fixed provider clock instant `YYYY-MM-DDTHH:MM:SSZ` (CORE §15.2) |
+| `clock.file` | Path of a clock file holding one instant; the provider reads protocol-visible time from it whenever needed. A missing or malformed file refuses the start. During a run, a missing, malformed or backward instant keeps the last good one. Fixtures write `clock: {"controlled": instant}` (or `controlled_raw` to test refusal) and the runner supplies the path. Participants declare support under `claims.test_controls: ["clock.file"]`. |
+| `test_barriers` | `{ "directory", "enabled" }`: implementation-specific barriers to pause at once each; the start step's `barriers` sets it. Participants declare names under `claims.test_barriers`; the reference declares `subscription.recheck.after_authorization` and emits signal `processing.lock.contended`. |
 
 At each start the keys apply in this order: `dedupe`, `events.new_epoch_on_start`, `events.retain_last` (counted across all epochs), then `capabilities`, so a capability change event recorded at start is never discarded by the same start.
 

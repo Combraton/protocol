@@ -350,6 +350,15 @@ impl Session {
         None
     }
 
+    /// SIGKILL an owned stdio process (runner step `kill`, decision 007).
+    pub fn kill(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+            self.note("killed", &json!({"reason": "kill step"}));
+        }
+    }
+
     /// Close the connection (and stop an owned stdio process); return the transcript.
     pub fn finish(mut self) -> Vec<Value> {
         self.writer = None;

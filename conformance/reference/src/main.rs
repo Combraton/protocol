@@ -3,6 +3,8 @@
 //! Not a product. It speaks the stdio form of the local stream binding and
 //! implements core/1 plus the conformance-only core-test/1 profile.
 
+mod barriers;
+mod clock;
 mod frames;
 mod grants;
 mod json;
@@ -173,7 +175,8 @@ fn run(args: Args) -> Result<(), String> {
         .as_str()
         .unwrap_or("conformance-provider")
         .to_string();
-    let fixed_clock = config["clock"]["fixed"].as_str().map(String::from);
+    let clock = std::sync::Arc::new(clock::Clock::from_config(&config, &mutant_set)?);
+    barriers::init(&config);
     let writes = config["capabilities"]["core-test.writes"]
         .as_str()
         .unwrap_or("supported");
@@ -186,7 +189,7 @@ fn run(args: Args) -> Result<(), String> {
         .apply_capabilities(
             &provider_id,
             &capabilities,
-            &grants::now(fixed_clock.as_deref()),
+            &clock.now(),
             mutant_set.on("capability-revision-static"),
             (
                 mutant_set.on("capability-event-wrong-revision"),
@@ -213,7 +216,7 @@ fn run(args: Args) -> Result<(), String> {
         mutant_names: args.mutants.clone(),
         identity: provider::Identity {
             provider_id,
-            fixed_clock,
+            clock,
             capabilities,
             authorities,
             principal,

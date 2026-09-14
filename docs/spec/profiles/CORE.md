@@ -328,7 +328,7 @@ Rights (§15): `core-test.claim` on the authority subject for `claim`; `core-tes
 
 Conformance runs need states that ordinary operations cannot reach in bounded time, such as a provider restart or discarded deduplication history. The suite reaches them only through the **environment** of the process under test, never through a protocol operation:
 
-- **Launch.** The runner launches the provider with a data directory and a **launch configuration** file ([conformance README](../../../conformance/README.md#launch-configuration)). The file can set the session principal and authority principals, limits, deduplication retention, event retention and epoch changes, capability status, and a fixed provider clock.
+- **Launch.** The runner launches the provider with a data directory and a **launch configuration** file ([conformance README](../../../conformance/README.md#launch-configuration)). The file can set the session principal and authority principals, limits, deduplication retention, event retention and epoch changes, capability status, a fixed provider clock, a controlled clock file, and implementation-specific barriers ([decision 007](../../decisions/007-execution-test-controls.md)). Files the runner writes in its per-case work directory, such as the clock file and barrier releases, are environment too; process kills are lifecycle, not protocol.
 - **Restart.** A restart is ending the process and launching it again over the same data directory.
 - **No domain writes.** The launch configuration MUST NOT create, modify or delete subjects, commands, epochs or grants. Those are reached only through real operations.
 

@@ -200,7 +200,7 @@ pub struct Identity {
     pub principal: String,
     pub provider_id: String,
     pub authorities: Vec<String>,
-    pub fixed_clock: Option<String>,
+    pub clock: std::sync::Arc<crate::clock::Clock>,
 }
 
 pub struct Provider {
@@ -277,9 +277,17 @@ impl Provider {
 
     /// Handle one request. `id` is the validated JSON-RPC id.
     pub fn handle(&mut self, id: Value, method: &str, params: Value) -> Value {
-        let _guard = PROCESSING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = match PROCESSING.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // Test signal (decision 007): this request found the lock held and will wait.
+                crate::barriers::signal(crate::barriers::LOCK_CONTENDED);
+                PROCESSING
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            }
+        };
         let response = match self.process(&id, method, params) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
             Err(Reject { code, details }) => error_response(id.clone(), code, details),
@@ -486,7 +494,7 @@ impl Provider {
                             "operation_ref": ack["operation_ref"],
                             "command_id": ack["command_id"],
                             "caused_by": [],
-                            "recorded_at": grants::now(self.identity.fixed_clock.as_deref()),
+                            "recorded_at": self.identity.clock.now(),
                             "payload": stored_value["outcome"],
                         });
                         self.store
@@ -565,7 +573,7 @@ impl Provider {
         let operation_name = operation.name;
         let payload = params["payload"].clone();
         let stream = self.store.stream_id().map_err(storage)?;
-        let recorded_at = grants::now(self.identity.fixed_clock.as_deref());
+        let recorded_at = self.identity.clock.now();
         let caused_by = if self.mutants.on("drop-caused-by") {
             json!([])
         } else {
@@ -765,7 +773,7 @@ impl Provider {
         if grant["state"] != "active" && !self.mutants.on("ignore-revocation") {
             return Err(denied("revoked"));
         }
-        let now = grants::now(self.identity.fixed_clock.as_deref());
+        let now = self.identity.clock.now();
         if let Some(expiry) = grant.get("expires_at").and_then(Value::as_str)
             && !self.mutants.on("ignore-expiry")
             && (expiry < now.as_str()
@@ -834,7 +842,7 @@ impl Provider {
             binding_check()?;
         }
         if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
-            let now = grants::now(self.identity.fixed_clock.as_deref());
+            let now = self.identity.clock.now();
             let too_early = if self.mutants.on("issue-at-now-accepted") {
                 expiry < now.as_str()
             } else {
@@ -2010,9 +2018,11 @@ impl Provider {
     /// The re-authorization and the event read run under the processing lock, so no command
     /// can commit between them: an item committed after a revocation is never delivered.
     pub fn drain_notifications(&mut self, idle: bool) -> Vec<Value> {
-        let _guard = PROCESSING
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _guard = (!self.mutants.on("recheck-outside-lock")).then(|| {
+            PROCESSING
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
         let mut frames = Vec::new();
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
         subscriptions.retain(|subscription| {
@@ -2026,6 +2036,8 @@ impl Provider {
                 self.usable_grant(grant_id).is_ok()
             };
             if self.mutants.on("subscription-survives-authorization-loss") || still_authorized {
+                // Test barrier (decision 007): between re-authorization and reading events.
+                crate::barriers::pause(crate::barriers::RECHECK_AFTER_AUTHORIZATION);
                 return true;
             }
             frames.push(json!({

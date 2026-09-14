@@ -40,6 +40,8 @@ cargo test --workspace --locked
 ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
 ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
 python3 conformance/scripts/peer_user_check.py --require --out conformance/results/peer-user
+python3 conformance/scripts/repeat_fixture.py --participant conformance/participants/reference-provider-unix.json --fixture socket.subscription-recheck-race-regression --runs 20 --out conformance/results/race-repeat/correct
+python3 conformance/scripts/repeat_fixture.py --participant conformance/participants/reference-provider-unix.json --fixture socket.subscription-recheck-race-regression --mutant recheck-outside-lock --runs 20 --out conformance/results/race-repeat/recheck-outside-lock
 python3 conformance/scripts/peer_user_check.py --require --mutant skip-peer-check --expect accepted --out conformance/results/peer-user-mutant
 ```
 
@@ -55,6 +57,7 @@ What each command establishes:
 | `run` | The named participant passed every applicable fixture over its binding (stdio or Unix socket); `unsupported` and `skipped` fixtures are reported separately and not run. A result manifest with fixture digests and per-case transcripts is written to `conformance/results/<participant>/` (not committed). | Conformance for any profile without fixtures; real-adapter behavior |
 | `run` on `independent-python-core.json` | The spec-only Python implementation passes every fixture applicable to the profiles, features and binding it claims (Core with grants, events and capabilities, over stdio) | That it or the reference is correct where fixtures are silent; see its divergence log |
 | `check-mutants` | Each of the reference provider's deliberately broken mutants fails every fixture that declares it, and every mutant is declared by at least one fixture | That no other wrong implementation can pass. Mutants share the reference author's assumptions. |
+| `repeat_fixture.py` | Every one of the runs had the intended outcome: the correct provider passed each time, or the mutant failed each time at the stated step with the stated reason | That no other interleaving is wrong; it proves only the scripted ordering is deterministic |
 | `peer_user_check.py` | A root client, a different OS user, is closed without a frame while a same-user client is answered; with mutant `skip-peer-check` the root client is answered, so the check detects the missing rule | Separation between principals of the same OS user; that is the credential's job (decision 006) |
 
 To test another stdio provider, write a participant descriptor like `conformance/participants/reference-provider.json` (launch argv with `{repo}`, `{data_dir}` and `{config_file}` placeholders, plus claimed profiles) and pass it to `run`. The provider must accept a data directory and the launch configuration file ([decision 001](decisions/001-conformance-suite-architecture.md)).

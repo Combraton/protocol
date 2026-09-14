@@ -20,6 +20,12 @@
       "core.grants",
       "core.events",
       "core.capabilities"
+    ],
+    "test_controls": [
+      "clock.file"
+    ],
+    "test_barriers": [
+      "subscription.recheck.after_authorization"
     ]
   },
   "launch": {
@@ -47,7 +53,10 @@
       "echo-credential",
       "unchecked-socket-directory",
       "no-cross-session-delivery",
-      "idle-subscriptions-not-rechecked"
+      "idle-subscriptions-not-rechecked",
+      "recheck-outside-lock",
+      "clock-file-ignored",
+      "clock-file-start-unchecked"
     ]
   }
 }

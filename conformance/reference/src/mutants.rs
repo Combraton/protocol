@@ -5,6 +5,26 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "clock-file-start-unchecked",
+        "starts with an arbitrary instant when the clock file is malformed",
+    ),
+    (
+        "recheck-outside-lock",
+        "re-checks idle subscriptions and reads their events without holding the processing lock",
+    ),
+    (
+        "clock-file-ignored",
+        "keeps the clock file's initial instant for the whole process",
+    ),
+    (
+        "clock-follows-backward-time",
+        "lets the clock file move virtual time backward",
+    ),
+    (
+        "clock-malformed-resets",
+        "resets virtual time to the launch instant when the clock file is malformed",
+    ),
+    (
         "issue-binding-before-expiry",
         "checks an issue's binding scope before its expiry",
     ),

@@ -1,0 +1,39 @@
+{
+  "format": "combraton-conformance-participant/1",
+  "name": "combraton-independent-python-core",
+  "version": "0.1.0-dev.0",
+  "description": "Independent spec-only Core provider in Python (standard library only; not a product). Written from the published documents and schemas without reading the reference provider. See conformance/independent/python-core/README.md.",
+  "role": "provider",
+  "binding": "stdio",
+  "claims": {
+    "profiles": [
+      {
+        "name": "core",
+        "major": 1
+      },
+      {
+        "name": "core-test",
+        "major": 1
+      }
+    ],
+    "features": [
+      "core.grants",
+      "core.events",
+      "core.capabilities"
+    ]
+  },
+  "launch": {
+    "argv": [
+      "python3",
+      "{repo}/conformance/independent/python-core/provider.py",
+      "--data-dir",
+      "{data_dir}",
+      "--config",
+      "{config_file}"
+    ]
+  },
+  "mutants": {
+    "argv": [],
+    "names": []
+  }
+}

@@ -2,24 +2,39 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-13T10:55Z.
-- **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1). Plan: [release plan](release-0.1/PLAN.md). Detailed evidence and next steps: [release handoff](release-0.1/HANDOFF.md).
-- **Inspected revisions:** protocol `main` at `f654a29` (unchanged). Sibling checkouts combraton `9af69ce`, pio `e65b7c0`, cbr `3278393`, benchmarks `c8d5878`; none modified.
-- **Branch:** `release-0.1/foundation`, pushed; head recorded in the handoff. Not merged. Opened as a draft pull request for review; see issue #1.
-- **Completed:**
-  - M0: proposed scope, matrix, milestone plan and decision records 001–005.
-  - M1: Core command path and stdio binding drafts; JSON Schemas; Rust runner and reference provider with 32 mutants; 57 fixtures; encoding vectors with Python and Node cross-checks; Conformance CI.
-- **Evidence:**
-  - All documented commands in [VERIFICATION](../VERIFICATION.md) exited 0 locally on macOS arm64.
-  - GitHub Conformance CI succeeded on `dce3863` and `d0ae764` (Ubuntu and macOS Rust jobs, non-Rust cross-checks).
-  - Limits: stdio only; one provider written by the fixture author; no grants, events, sockets or non-Core profiles; no PIO/CBR integration.
-- **Remaining:** owner review of M0/M1; then M2 to M6 per the plan. The release scope is **not accepted**.
-- **Decisions/uncertainty:**
-  - Decision records 001–005 are proposed.
-  - Owner decisions U1–U6 are open (PLAN §6), including the Unix-socket principal credential (U3/U9) needed for M2 sockets, and the license (U6).
-  - Owner input 2026-09-13: PIO, CBR and the control plane are Rust. This selected Rust conformance tooling.
-- **Task resources:** none running. Build and results directories are git-ignored.
-- **Prompt disposition:** the workspace-local kickoff prompt was rewritten to a continuation notice pointing here and to the handoff.
-- **Next action:** owner reviews the M1 packet and decides U1–U6. Then start M2 with grants, events and subscriptions, and the spec-only non-Rust Core implementation. Confirm CI on the current head first.
+- **Updated:** 2026-09-14 (M2 close-out pass complete).
+- **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
+  - Milestone awaiting acceptance: [M2 task](release-0.1/M2.md), including its close-out pass table.
+  - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
+- **Merged:** PR #2 (M0 and M1) into `main` as `f42d21a`.
+- **Branch:** `release-0.1/m2` in [PR #3](https://github.com/Combraton/protocol/pull/3). It is open for owner acceptance and not merged.
+- **Done in M2:**
+  - grants, events and subscriptions, and capabilities;
+  - the Unix-socket binding (decision 006);
+  - three resolved independent passes;
+  - the owner-requested close-out pass.
+
+  Totals: 155 fixtures and 147 reference mutants.
+- **Evidence:** Conformance CI run 34821316336 at `8530c26` succeeded on Ubuntu and macOS. Its uploaded result manifests show:
+  - reference over stdio: 148 pass, 7 skipped;
+  - reference over the Unix socket: 155 pass;
+  - independent implementation: 148 pass, 7 skipped;
+  - every declared mutant killed;
+  - peer-user check `pass`, and its mutant check `pass`.
+
+  CI for the later records-only commits is shown in PR #3's checks. `0f84d6c` passed Conformance run 34827777661 and Documentation.
+- **Owner decisions recorded:**
+  - scope accepted;
+  - macOS and Linux only;
+  - MIT license;
+  - Rust tooling;
+  - decision records 001–006 accepted, with 001 amended for distinct `unsupported` and `skipped` outcomes;
+  - U12: credential file plus `core.authenticate`;
+  - M3 starts only after M2 acceptance, in a separate PR, with explicit acceptance criteria.
+- **Open owner decision:** acceptance of M2 (PR #3).
+- **Prompt disposition:** the workspace-local continuation prompt is the single active pointer to this file; earlier versions are retired.
+- **Next action:**
+  1. Owner reviews and accepts PR #3. Merge only with authorization.
+  2. After acceptance, start M3 in a separate PR per [M3](release-0.1/M3.md).
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

@@ -21,6 +21,10 @@ pub struct Laxness {
     pub duplicate_members: bool,
     /// Mutant `lax-numbers`: accept fractions, exponents and out-of-range integers.
     pub numbers: bool,
+    /// Mutant `accept-lone-surrogates`: replace unpaired surrogate escapes instead of refusing.
+    pub surrogates: bool,
+    /// Mutant `accept-noncharacters`.
+    pub noncharacters: bool,
 }
 
 pub fn parse_frame(bytes: &[u8], lax: Laxness) -> Result<Value, FrameFault> {
@@ -216,6 +220,13 @@ impl Parser<'_> {
                         b't' => out.push('\t'),
                         b'u' => {
                             let unit = self.hex4()?;
+                            let lone = (0xDC00..=0xDFFF).contains(&unit)
+                                || ((0xD800..=0xDBFF).contains(&unit)
+                                    && self.s.get(self.i..self.i + 2) != Some(b"\\u"));
+                            if lone && self.lax.surrogates {
+                                out.push('\u{FFFD}');
+                                continue;
+                            }
                             let code = if (0xD800..=0xDBFF).contains(&unit) {
                                 if self.s.get(self.i..self.i + 2) != Some(b"\\u") {
                                     return Err(FrameFault::ParseError);
@@ -239,7 +250,7 @@ impl Parser<'_> {
                 _ => return Err(FrameFault::ParseError),
             }
         }
-        if out.chars().any(is_noncharacter) {
+        if out.chars().any(is_noncharacter) && !self.lax.noncharacters {
             return Err(FrameFault::ParseError);
         }
         Ok(out)

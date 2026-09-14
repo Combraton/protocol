@@ -80,16 +80,16 @@ A row is satisfied only when its positive **and** negative evidence exists and C
 | OBS-4 | Sequence gaps pause dependent interpretation until repaired or declared unavailable | P §7 | A: runner-as-provider sends a gap to the reference caller. R provider never emits undeclared gaps. | M2 |
 | OBS-5 | Retention gap returns a typed snapshot plus coverage boundary, never an incomplete "complete" replay | P §7 | F: compact history, then subscribe from an old cursor. M: silent partial replay. | M2 |
 | OBS-6 | Stream epoch change is explicit, with recovery coverage | P §3 | F: epoch change. The new epoch is announced with its coverage. M: silent sequence reset. | M2 |
-| OBS-7 | Semantic events never dropped; telemetry loss has an explicit range and byte count where known | P §7 | F: telemetry backpressure produces a lost-range record. M: drops silently. | M2 |
+| OBS-7 | Semantic events never dropped; telemetry loss has an explicit range and byte count where known | P §7 | F: telemetry backpressure produces a lost-range record. M: drops silently. | M3 |
 | OBS-8 | Opaque cursors; bounded metadata reads with declared coverage; unavailable is not empty | PIO-I §7 | A: unavailable projection reported as unavailable, not an empty list. | M2 |
-| EFF-1 | Effect descriptor: ID, kind, target, payload digest, authorization, retry class, status evidence | P §6 | Schema plus R. | M2 |
-| EFF-2 | On response loss, query by the same effect ID; an unanswerable provider leaves an unresolved obligation | P §6 | F: drop a response, then query. A: provider cannot answer, so the obligation stays open. M: reports "not found = not happened". | M2 |
-| EFF-3 | Retry permitted only per retry class | P §6 | Fixtures per class: read retry allowed; idempotent-key retry within promised semantics; non-repeatable effect needs reconciliation. M: blind retry. | M2 |
-| EFF-4 | Obligations and terminal coverage; a closed wait (`aborted`) does not prove the effect did not happen | P §6 | F: deadline passes. The obligation is overdue or aborted and the effect status stays unknown. | M2 |
+| EFF-1 | Effect descriptor: ID, kind, target, payload digest, authorization, retry class, status evidence | P §6 | Schema plus R. | M3 |
+| EFF-2 | On response loss, query by the same effect ID; an unanswerable provider leaves an unresolved obligation | P §6 | F: drop a response, then query. A: provider cannot answer, so the obligation stays open. M: reports "not found = not happened". | M3 |
+| EFF-3 | Retry permitted only per retry class | P §6 | Fixtures per class: read retry allowed; idempotent-key retry within promised semantics; non-repeatable effect needs reconciliation. M: blind retry. | M3 |
+| EFF-4 | Obligations and terminal coverage; a closed wait (`aborted`) does not prove the effect did not happen | P §6 | F: deadline passes. The obligation is overdue or aborted and the effect status stays unknown. | M3 |
 | TRN-1 | JSON-RPC 2.0 mapping; events as notifications; JSON-RPC ID is not the idempotency key | P §11 | Binding document plus CORE-1 fixtures. A: JSON-RPC-level errors versus domain errors. | M1 |
 | TRN-2 | Pinned framing: encoding, max frame length, oversized rejection, malformed frames, disconnect | P §11 | A: frame at the limit, limit + 1, invalid UTF-8, truncated frame then EOF, garbage between frames, peer closing mid-response. | M1 |
 | TRN-3 | Authenticated local channel (Unix socket) and a stdio binding | P §11 | Binding document. A: peer credential mismatch refused on macOS and Linux CI. | M2 |
-| TRN-4 | Separate backpressure policies for semantic events and telemetry | P §7 | F: slow consumer; semantic events are preserved and telemetry coalescing is declared. | M2 |
+| TRN-4 | Separate backpressure policies for semantic events and telemetry | P §7 | F: slow consumer; semantic events are preserved and telemetry coalescing is declared. | M3 |
 | TRN-5 | Disconnect is not cancellation; the caller reconciles in-flight commands by command ID | PIO-C §2, §6 | F: disconnect after sending a command; reconnect, query, and see exactly one effect. | M2 |
 
 ## Execution

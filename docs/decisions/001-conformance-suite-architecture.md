@@ -50,7 +50,7 @@ Inference drawn from these sources, not stated by any of them: once fixtures are
    - the reference passes every fixture;
    - each mutant fails at least one fixture that declares it;
    - each negative fixture declares at least one mutant it fails.
-5. **Outcomes are explicit:** `pass`, `pass_acceptable`, `fail`, `untestable`, `not_applicable`, `timeout`, `harness_error`. `untestable` and `harness_error` never count as passing. `not_applicable` applies only to profiles or features the participant does not claim.
+5. **Outcomes are explicit:** `pass`, `pass_acceptable`, `fail`, `untestable`, `unsupported`, `skipped`, `timeout`, `harness_error`. `untestable` and `harness_error` never count as passing. `unsupported` applies only to profiles or features the participant does not claim; `skipped` only to fixtures written for another transport binding. *Amended 2026-09-13 at the owner's request in the M2 close-out: the former `not_applicable` was split into these two, so a binding mismatch is never reported as missing support. `pass_acceptable` and `untestable` are not produced by the 0.1 runner yet.*
 6. **The result manifest is a scoped claim.** It records:
    - suite version and fixture digests;
    - runner version;

@@ -120,9 +120,11 @@ version = "0.1.0-dev.0"
 dependencies = [
  "hex",
  "jsonschema",
+ "libc",
  "rusqlite",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

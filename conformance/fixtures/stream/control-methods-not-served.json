@@ -1,12 +1,14 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "stream.control-methods-not-served",
-  "version": 1,
-  "title": "The product endpoint refuses test-control method names",
+  "version": 2,
+  "title": "Unknown operations get method_not_found before and after negotiation",
   "requirements": [
-    "CORE-14"
+    "CORE-14",
+    "TRN-1"
   ],
   "spec_refs": [
+    "docs/spec/profiles/CORE.md#10-command-processing-order",
     "docs/spec/profiles/CORE.md#131-test-control-is-environment-only"
   ],
   "role": "provider",
@@ -18,11 +20,23 @@
   ],
   "polarity": "negative",
   "kills": [
-    "expose-control-endpoint"
+    "unknown-method-negotiation-required"
   ],
   "steps": [
     {
       "step": "start"
+    },
+    {
+      "step": "request",
+      "method": "control.restart",
+      "params": {
+        "operation": "control.restart",
+        "message_id": "m-1",
+        "payload": {}
+      },
+      "expect": {
+        "error": "method_not_found"
+      }
     },
     {
       "step": "negotiate"
@@ -32,7 +46,7 @@
       "method": "control.restart",
       "params": {
         "operation": "control.restart",
-        "message_id": "m-1",
+        "message_id": "m-2",
         "payload": {}
       },
       "expect": {

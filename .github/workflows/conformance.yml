@@ -23,17 +23,64 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
+        id: build
         run: cargo build --workspace --locked
       - name: Unit tests (includes encoding vectors in the reference provider)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: cargo test --workspace --locked
       - name: Runner self-test against encoding vectors
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./target/debug/combraton-conformance self-test
       - name: Check fixtures
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./target/debug/combraton-conformance check-fixtures
       - name: Run suite against the reference provider
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json
       - name: Every negative fixture fails its declared mutants
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json
+      - name: Run suite against the reference provider over the Unix-socket binding
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
+      - name: Socket fixtures fail their declared mutants
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
+      - name: Run suite against the independent Python implementation (built from documents only)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
+      - name: Different OS user is refused on the Unix socket (root client through sudo)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 conformance/scripts/peer_user_check.py --require --out conformance/results/peer-user
+      - name: The different-user check detects a provider without the peer check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 conformance/scripts/peer_user_check.py --require --mutant skip-peer-check --expect accepted --out conformance/results/peer-user-mutant
+      - name: Summarize outcomes
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          print("| Result | Outcomes |\n|---|---|")
+          for path in sorted(pathlib.Path("conformance/results").glob("**/manifest.json")):
+              if "mutants" in path.parts:
+                  continue
+              summary = json.loads(path.read_text()).get("summary", {})
+              print(f"| {path.parent} | " + ", ".join(f"{k}: {v}" for k, v in sorted(summary.items())) + " |")
+          for path in sorted(pathlib.Path("conformance/results").glob("**/mutants.json")):
+              data = json.loads(path.read_text())
+              survived = [r["mutant"] for r in data["results"] if not r["killed"]]
+              print(f"| {path} | all killed: {data['all_killed']}; not killed: {', '.join(sorted(set(survived))) or 'none'} |")
+          for path in sorted(pathlib.Path("conformance/results").glob("peer-user*/result.json")):
+              print(f"| {path} | {json.loads(path.read_text())['outcome']} |")
+          PY
+      - name: Upload result manifests, transcripts and logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conformance-results-${{ matrix.os }}
+          path: conformance/results/
+          if-no-files-found: warn
+          retention-days: 30
 
   crosscheck:
     name: Non-Rust encoding cross-checks

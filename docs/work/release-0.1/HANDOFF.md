@@ -6,99 +6,104 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-13T10:50Z. **M0 done; M1 implemented and awaiting review.**
+- **Checkpoint:** 2026-09-14, after the owner-requested M2 close-out pass.
+- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 is complete on branch `release-0.1/m2`, including the close-out pass ([M2 task](M2.md)). It awaits owner acceptance in PR #3. Both implementations pass the suite.
 
-## Goal and acceptance
+## Goal, decisions and constraints
 
-See [PLAN](PLAN.md) and [MATRIX](MATRIX.md).
-
-- **Status:** the release scope and decision records 001–005 are **proposed, not accepted**.
-- **Owner decisions open:** U1–U6 in [PLAN §6](PLAN.md#6-unresolved-choices-that-affect-scope-or-public-semantics).
-- **Owner input received 2026-09-13:** PIO, CBR and the control plane will be written in Rust. This led to Rust conformance tooling ([decision 001](../../decisions/001-conformance-suite-architecture.md) item 7).
-- **Preserved constraints:**
-  - Protocol owns contracts and fixtures only.
-  - No PIO, CBR, Combraton or benchmark runner implementation.
-  - Coordination and Remote trust are unsupported.
-  - Nothing is merged or released.
+- **Plan:** [PLAN](PLAN.md), [MATRIX](MATRIX.md).
+- **Owner decisions (2026-09-13):**
+  - Scope accepted.
+  - macOS and Linux only (U4).
+  - MIT license (U6).
+  - Decision records 001–005 accepted.
+  - Rust tooling, because PIO, CBR and the control plane are Rust.
+  - U12: credential file plus `core.authenticate` ([decision 006](../../decisions/006-unix-socket-principal-credential.md)).
+- **Constraints:** Protocol owns contracts and fixtures only. Nothing is released. Commit and push as work progresses (owner request). Do not merge without owner authorization.
 
 ## Git state
 
-- **Branch and base:** repository `Combraton/protocol`, branch `release-0.1/foundation`, base `main` at `f654a29bd6574a75d8ce7c7b76d6a67ef22b45ea`. The branch is pushed to `origin`.
-- **Commits (oldest first):**
-  - `81f21be` — M0: plan, matrix, draft Core/ENCODING/STREAM, decisions 001–005.
-  - `33d6e6b` — Core schemas, encoding vectors, Python/Node cross-checks, Rust tooling decision.
-  - `d77fc71` — Rust reference provider with mutants.
-  - `d5abb04` — Rust runner, fixture schema, first fixture.
-  - `dce3863` — 52 fixtures, 32 mutants, Conformance CI, VERIFICATION.
-  - `d0ae764` — five positive fixtures (57 total).
-  - A later docs commit updates this handoff and STATE.
-- **Uncommitted files at checkpoint:** none besides this handoff and STATE update.
+- **Branches.** `main` at `f42d21a`. `release-0.1/m2` is pushed; its head is in `git log`.
+- **M2 PR:** [#3](https://github.com/Combraton/protocol/pull/3), open for owner review.
+- **Latest M2 commits (oldest first):**
 
-## Dependency state
+| Commit | Change |
+|---|---|
+| `26f8d5b` | Unix-socket binding with principal credentials (decision 006) |
+| `668928e` | Positive fixtures for M2 rows that had only negative coverage |
+| `6ea7c67` | Draft M3 Execution task packet |
+| `561939a`, `341b363` | Independent Python provider extended to grants, events and capabilities; merged |
+| `6c64ae4` | Section E resolutions: spec, schema, reference, runner, 22 new and 4 revised fixtures |
+| `572cd65` | Merge of the independent third pass (section F of its divergence log) |
+| `eabfd8e` | Section F resolutions: spec, reference, 9 new and 2 revised fixtures, 20 mutants |
+| `9571ed9` | PR #3 recorded |
+| `8530c26` | Close-out pass: idle revocation race fix, capability revision fix, issue check order, reference-only cursor test, peer-user check, distinct outcomes, CI artifacts |
+| next commit | Close-out records: M2 close-out table, M3 acceptance criteria, state, handoff |
 
-Requirements were read at combraton `9af69ce`, pio `e65b7c0`, cbr `3278393` and benchmarks `c8d5878` (full SHAs in [PLAN §2](PLAN.md#2-pinned-sources)). No sibling repository was modified.
+## What exists on `release-0.1/m2`
 
-## What exists now (M1)
-
-- **Schemas:** `schemas/core/1`, `schemas/core-test/1` (conformance-only profile), `schemas/stream/1`. All JSON Schema 2020-12.
-- **Draft specs:**
-  - [Core](../../spec/profiles/CORE.md): negotiation, closed envelopes with `requires`/`extensions`, processing order, intent digest, deduplication generations, preconditions, epochs, errors, test profile, environment-only test control.
-  - [ENCODING](../../spec/bindings/ENCODING.md) and [STREAM](../../spec/bindings/STREAM.md) (stdio form; Unix socket reserved for M2).
-- **Cargo workspace** (toolchain 1.97.1, `Cargo.lock`):
-  - `conformance/runner`: black-box runner with `self-test`, `check-fixtures`, `run` and `check-mutants`.
-  - `conformance/reference`: reference provider with its own parser and canonicalizer, SQLite store and 32 mutants.
-- **Suite data:**
-  - 57 fixtures under `conformance/fixtures/`.
-  - Encoding vectors in `conformance/vectors/encoding.json`, cross-checked by Python `rfc8785` 0.1.4 and Node `canonicalize` 5.0.0 (`conformance/crosscheck`).
-- **CI:** `.github/workflows/conformance.yml` (Ubuntu and macOS, plus the cross-check job) alongside the existing Documentation workflow.
+- **Core draft:**
+  - §15 grants: denial order, delegation bounds, issue validation at step 6, binding scopes, revocation rules, which operations are protected.
+  - §16 events: visibility equal to direct read authority, exact `filtered`, snapshot contents, old-epoch cursors, size limits, `ended` notifications.
+  - §17 capabilities.
+  - §18 credentials.
+- **STREAM:** stdio and Unix-socket forms.
+- **Suite:**
+  - 155 fixtures; 147 reference mutants.
+  - The runner enforces the caller's receive limit on every received frame and notification-after-response ordering.
+  - It supports `any_of`, fresh data directories and `$repeat` values.
+  - New launch key: `events.unvouched_last`.
 
 ## Evidence
 
-Local run on macOS arm64 at `dce3863`, then again for `d0ae764`. Log at the time: session scratchpad `verify-m1.log` (not durable). All exit 0:
+**CI, Conformance run 34821316336 at `8530c26`.** Success on Ubuntu and macOS, plus the cross-check job. Its artifacts `conformance-results-ubuntu-latest` and `conformance-results-macos-latest` were downloaded and inspected. On both OSes:
 
-| Command | Result |
+| Result | Outcome |
 |---|---|
-| `cargo fmt --all -- --check` | clean |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
-| `cargo build --workspace --locked`; `cargo test --workspace --locked` | 2 test binaries, all passed |
-| `./target/debug/combraton-conformance self-test` | 31 vectors ok |
-| `./target/debug/combraton-conformance check-fixtures` | 57 fixtures ok |
-| `./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json` | 57 pass, 0 not passing |
-| `./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json` | Every mutant killed by every fixture declaring it; no survivors, no timeouts. The kill reasons were inspected and match each mutant's defect. |
-| `uv run python generate_encoding_vectors.py --check ../vectors/encoding.json`; Node cross-check | match |
-| `python3 scripts/check_docs.py --workspace ..`; `git diff --check` | clean |
+| Reference, stdio | 148 pass, 7 skipped (socket fixtures) |
+| Reference, Unix socket | 155 pass |
+| Independent Python, stdio | 148 pass, 7 skipped |
+| `check-mutants`, stdio and socket | all declared mutants killed (`mutants.json`) |
+| Peer-user check | `pass`: root client (uid 0) closed with 0 bytes; same-user control answered |
+| Peer-user check with `skip-peer-check` | `pass`: root client answered, so the check detects the missing rule |
 
-**GitHub CI — observed:**
+**Local (macOS arm64), all exit 0 except as noted:**
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build --workspace --locked`, `cargo test --workspace --locked`: the latter includes the capability-revision unit test, which fails against the old digest, and the reference cursor test;
+- `self-test`, `check-fixtures` (155);
+- `run` and `check-mutants` for both reference participants, and `run` for the independent participant;
+- `python3 scripts/check_docs.py`;
+- `peer_user_check.py`: exit 77 `unsupported`, because this host has no passwordless `sudo`.
 
-| Head | Runs | Result |
-|---|---|---|
-| `dce3863` | Conformance 34752476067, Documentation 34752476060 | Both succeeded. Conformance jobs `ubuntu-latest` and `macos-latest` (Rust) plus non-Rust cross-checks all passed. |
-| `d0ae764` | Conformance 34752526676, Documentation 34752526711 | Both succeeded; same three jobs passed. |
-
-CI annotation: `actions/checkout` at the pinned v4 SHA targets the deprecated Node.js 20 runtime and is forced onto Node 24. It is not a failure, but the pin should be updated in a follow-up change.
+**Independence notes:**
+- The second pass found a disclosure bug and a receive-limit bug.
+- The third found 21 unguarded requirements, all now guarded.
+- The close-out pass found two real reference bugs, both fixed: the idle re-check race and the capability digest.
 
 ## What remains uncertain
 
-- **Owner decisions U1–U6**, especially U3/U9: the Unix-socket principal credential (M2).
-- **Independence:** the fixtures and the only tested provider were written by the same session. Mutants share its assumptions. The spec-only non-Rust implementation (M2) and PIO/CBR review are the next independence evidence.
-- **Unreachable states:** environment-only control cannot yet reach crash-mid-transaction states. Nothing is marked `untestable` in M1 because no M1 fixture needs it.
-- **Coverage limits:** M1 fixtures cover the stdio binding only. CORE-2, CORE-11–13, CORE-15–17, OBS-*, EFF-* and TRN-3–5 are M2.
+- **Concurrency.** Ordering under concurrent revocation rests on the processing lock and code review. The race cannot be forced deterministically.
+- **Idle grant expiry during a session.** No portable fixture observes it, because the launch clock is fixed. A controllable test clock is an M3 acceptance criterion.
+- **Peer-user check.** It exercises only root as the other user, and hosts without passwordless `sudo` report `unsupported`.
+- **Reference-only evidence.** Capability revision on an evidence-source change, and cursors past the head, are tested only by reference tests. Portable fixtures cannot force them.
+- **Single implementation:** the Unix-socket binding and credentials.
+- **Deferred to M3 acceptance:**
+  - effects and reconciliation;
+  - telemetry lost ranges;
+  - backpressure;
+  - fault injection;
+  - pipelined requests.
+
+  Highest-common-major selection is deferred to M6.
 
 ## Active resources
 
-No long-running process belongs to this task. Conformance runs spawn short-lived provider processes in temporary directories and clean them up. Local build output is in `target/` and results in `conformance/results/`, both git-ignored.
+None. Conformance runs spawn short-lived providers in temporary directories.
 
 ## State and prompt disposition
 
-[STATE](../STATE.md) is updated. The workspace-local kickoff prompt was rewritten to a continuation pointer for M2 and owner review; it is outside Git.
+[STATE](../STATE.md) is updated. The workspace continuation prompt points here.
 
 ## Next action
 
-1. Confirm the Conformance CI result for the latest branch head.
-2. Present the M1 review packet to the owner.
-3. Unless the owner changes scope, begin M2 on this branch or a follow-up branch:
-   - grants and principal scopes;
-   - events, subscriptions, cursors and gaps;
-   - capability snapshots and effects;
-   - the Unix-socket binding, once U3/U9 is decided;
-   - the spec-only non-Rust Core implementation.
+1. Owner acceptance of [PR #3](https://github.com/Combraton/protocol/pull/3). Do not merge without authorization.
+2. After acceptance, start M3 in a separate PR per [M3](M3.md), with its explicit acceptance criteria.

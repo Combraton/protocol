@@ -6,7 +6,7 @@ Use one small file per meaningful decision. Include title, status (proposed/acce
 
 ## Index
 
-Records 001–005 were accepted by the owner on 2026-09-13 for the Protocol 0.1 release ([tracking issue #1](https://github.com/Combraton/protocol/issues/1)); 004's Unix-socket credential part remains open.
+Records 001–005 were accepted by the owner on 2026-09-13 for the Protocol 0.1 release ([tracking issue #1](https://github.com/Combraton/protocol/issues/1)); decision 006 settles the Unix-socket credential.
 
 | Record | Status | Subject |
 |---|---|---|
@@ -15,5 +15,6 @@ Records 001–005 were accepted by the owner on 2026-09-13 for the Protocol 0.1 
 | [003](003-canonical-encoding-and-digests.md) | accepted | Integer-only I-JSON domain, RFC 8785 command digests, byte digests for content, `sha256:` strings |
 | [004](004-local-stream-binding.md) | accepted | Bounded newline-delimited JSON-RPC over stdio and Unix sockets; close on frame-level failure |
 | [005](005-deduplication-generations.md) | accepted | Command intent digest, binding on acceptance, deduplication generations instead of clocks |
+| [006](006-unix-socket-principal-credential.md) | accepted | Unix-socket placement and peer check, `ccred1` credential files and `core.authenticate` |
 
 Wire/compatibility decisions belong in Protocol; cross-system authority changes belong in Combraton. Link the owning decision instead of maintaining independent copies. An experiment result does not silently select a product direction. Keep ordinary local choices lightweight and record material selections in their implementation PR.

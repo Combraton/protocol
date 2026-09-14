@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Combraton/protocol/conformance/schemas/launch-config.schema.json",
+  "title": "Conformance launch configuration (combraton-conformance-config/1)",
+  "type": "object",
+  "required": [
+    "format"
+  ],
+  "properties": {
+    "format": {
+      "const": "combraton-conformance-config/1"
+    },
+    "principal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "authority_principals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "provider_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_frame_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_payload_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_string_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_array_items": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "dedupe": {
+      "type": "object",
+      "properties": {
+        "advance_on_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retain_generations": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "properties": {
+        "new_epoch_on_start": {
+          "type": "boolean"
+        },
+        "unvouched_last": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retain_last": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": {
+        "enum": [
+          "supported",
+          "unsupported",
+          "unknown"
+        ]
+      }
+    },
+    "clock": {
+      "type": "object",
+      "properties": {
+        "fixed": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "credentials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "type": "string",
+            "pattern": "^ccred1\\.[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}\\.[A-Za-z0-9_-]{43}$",
+            "maxLength": 200
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -142,6 +142,14 @@ pub fn render(template: &Value, vars: &Vars, counter: &mut u64) -> Result<Value,
                 .cloned()
                 .ok_or_else(|| format!("unknown variable {name}"))
         }
+        Value::Object(map) if map.len() == 1 && map.contains_key("$repeat") => {
+            match map["$repeat"].as_array().map(Vec::as_slice) {
+                Some([Value::String(text), count]) if count.is_u64() => Ok(Value::String(
+                    text.repeat(count.as_u64().unwrap_or_default() as usize),
+                )),
+                _ => Err("$repeat takes [text, count]".into()),
+            }
+        }
         Value::Object(map) if map.len() == 1 && map.contains_key("$unique") => {
             *counter += 1;
             Ok(Value::String(format!(

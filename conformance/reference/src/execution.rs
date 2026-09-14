@@ -326,6 +326,10 @@ fn running(tx: &Transaction) -> rusqlite::Result<i64> {
         if let Some((_, record)) = load(tx, &id)?
             && record["admission"] == "admitted"
             && record["runtime"] != "exited"
+            && !matches!(
+                record["delivery"].as_str(),
+                Some("failed_before_delivery" | "not_delivered")
+            )
         {
             count += 1;
         }
@@ -916,6 +920,7 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
                 );
                 observe_effect(&mut effect, "failed", "never_dispatched", reason, now);
                 set_obligation(&mut effect, "satisfied");
+                bump_generation(&mut record);
                 drafts.push((
                     "execution.delivery.observed",
                     subject(&id),
@@ -931,7 +936,7 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
             }
         }
         drafts[0].3["host"] = record["host"].clone();
-        if decision != "failed_before_delivery" && !mutants.on("recovery-host-change-silent") {
+        if !mutants.on("recovery-host-change-silent") {
             drafts.push((
                 "execution.host.changed",
                 subject(&id),
@@ -1228,7 +1233,7 @@ fn step(
         std::process::exit(CRASH_STATUS);
     } else if let Some(stale) = step["stale_dispatch"]["generation"].as_i64() {
         let current = generation.as_i64().unwrap_or(1);
-        if stale < current && !mutants.on("stale-dispatcher-sends") {
+        if stale != current && !mutants.on("stale-dispatcher-sends") {
             drafts.push((
                 "execution.dispatch.fenced",
                 subject(id),
@@ -1269,7 +1274,9 @@ fn step(
                 map.remove("deferred_effect");
             }
         }
-        let sent = if effect.is_object() {
+        // A later report while delivery is still pending is evidence for the same dispatch, not a
+        // second attempt (EXECUTION 15.1).
+        let sent = if effect.is_object() && effect["dispatch"].is_null() {
             mark_dispatch(&mut effect, &generation, now);
             run_attempts(&mut effect, &mut record, now, mutants)
         } else {

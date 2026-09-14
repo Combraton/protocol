@@ -141,7 +141,7 @@ Owner decision, 2026-09-14. After a restart, an accepted execution whose deliver
 
 1. **Write-ahead dispatch marker.** Before any harness write, the executor durably records a dispatch marker for the delivery, bound to the host generation that will send. This is mandatory for every executor.
 2. **Intact durable history.** The absence of a marker is proof only if the journal is intact. If the executor cannot vouch for journal continuity, for example after a restore or a new stream epoch (CORE §16.1), a missing marker is not proof: the delivery becomes `ambiguous`.
-3. **Fencing.** Recovery advances the host generation. A dispatcher from an older generation MUST NOT send afterwards, and its attempt is recorded (`execution.dispatch.fenced`).
+3. **Fencing.** Every recovery decision advances the host generation and appends `execution.host.changed`. A dispatcher from an older generation MUST NOT send afterwards, and its attempt is recorded (`execution.dispatch.fenced`).
 4. **Revalidation before dispatch.** The executor revalidates at the recovery point, and dispatches only if all of these still hold:
    - no cancellation has been requested;
    - the submitter is still authorized (an authority, or an active, unexpired grant bound to a current epoch);
@@ -378,11 +378,13 @@ Normative only for an executor running under the conformance launch configuratio
   | Status probe answered | `harness_status` |
   | Behavior attributable to a steering message | `harness_observation` |
 - **Script steps.**
-  - Dispatch happens only at `deliver`, at `crash: after_write`, and at a `stale_dispatch` that is not fenced. `deliver` is one dispatch attempt. Once delivery is no longer `pending`, `deliver` and `crash` steps have no effect: a delivery is never dispatched twice, and later evidence for an ambiguous delivery is scripted with `reconcile_finds`.
+  - Dispatch happens only at `deliver`, at `crash: after_write`, and at a `stale_dispatch` that is not fenced. A `stale_dispatch` naming any generation other than the current one is fenced, including one never issued.
+  - The first `deliver` is the one dispatch attempt. A later `deliver` while delivery is still `pending` is further evidence for the same dispatch, with no new attempt. Once delivery is no longer `pending`, `deliver` and `crash` steps have no effect: a delivery is never dispatched twice, and later evidence for an ambiguous delivery is scripted with `reconcile_finds`.
   - `stall` stops the script without dispatching. `exit` also sets runtime `exited`.
   - When every requested action is answered, `wait_for: action` sets runtime `active` and sends each response, which the harness acknowledges (`provider_ack_id`; the response effect `succeeded`, its obligation satisfied).
   - `transport_errors` makes the next attempts end unknown. Retryable classes (`read`, `idempotent_key`) get at most three attempts; `non_repeatable` gets one.
-  - Capacity is released when runtime is `exited`.
+  - Capacity is released when runtime is `exited` or delivery is `failed_before_delivery` or `not_delivered`. An executor may also release it when it observes a `cancelled` outcome.
+  - A determination made because a wait ended (a timeout) leaves the delivery's obligations `overdue`; a determination made from evidence satisfies them.
 - **Inspect members.** `steering` and `actions` appear only once they have an entry.
 - **Event order.** At a delivery timeout: `execution.timeout.passed`, then `core.effect.obligation.overdue` for each open obligation, then `execution.delivery.observed`. At recovery: `execution.recovery.decided`, the delivery observation if any, then `execution.host.changed`.
 

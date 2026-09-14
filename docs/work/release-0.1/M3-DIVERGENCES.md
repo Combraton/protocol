@@ -58,6 +58,16 @@ These are unguarded choices the contract allows. They are recorded, not required
 - **Clock file.** `core.events.subscription-ends-at-grant-expiry` and `core.grants.test-clock-never-moves-backward` were coverage limits for the independent participant. It now implements `clock.file`, and both run and pass. These limits are **resolved**.
 - **Backpressure signals, barriers and the Unix socket.** They remain coverage limits for the independent participant: its runs report them as `unsupported` or `skipped`, never as passes.
 
-## G. Follow-up
+## G. Realignment and its findings
 
-The helper realigns its implementation with the resolved documents, in a further spec-only pass on the same branch, rebased onto the resolution commit.
+The helper rebased onto the resolution commit `ad91182` and realigned from the resolved documents (its section G.5): **195 pass, 0 fail, 4 unsupported, 12 skipped**, the same in four runs. It recorded these remaining points, resolved as follows:
+
+| Tag | Resolution |
+|---|---|
+| G5-RECOVERY-GENERATION | **spec:** EXECUTION §7.1 — every recovery decision advances the host generation and appends `execution.host.changed`. **reference:** a `failed_before_delivery` recovery now advances it too. |
+| G5-CAPACITY | **spec:** §15.1 — capacity is also released when delivery is `failed_before_delivery` or `not_delivered`; an executor may release it on an observed `cancelled` outcome. **reference:** releases in those delivery states. |
+| G5-SECOND-DELIVER | **spec:** §15.1 — a later `deliver` while delivery is still `pending` is further evidence, not a second attempt. **reference:** no second marker or attempt. |
+| G5-TIMEOUT-OBLIGATIONS | **spec:** §15.1 — a timeout-driven determination leaves obligations `overdue`; an evidence-driven one satisfies them. Both implementations already behaved this way. |
+| G5-STALE-HIGHER | **spec:** §15.1 — a `stale_dispatch` naming any generation other than the current one is fenced. **reference:** fences generations above the current one. **fixture:** `execution.dispatcher-from-an-unissued-generation-is-fenced` (M `stale-dispatcher-sends`). The independent implementation realigned on this point in a final pass. |
+| G5-OBSERVATIONS, G5-CRASH-ATTEMPT | Recorded executor decisions; unguarded and allowed |
+| G5-REFUSED-RUNTIME | **Open for the owner.** EXECUTION §3.1 keeps runtime `preparing` for a refused execution, which reads as work about to start. A clearer contract would add an explicit "not started" value or omit runtime for refusals. Both would be vocabulary changes, so they are left for owner review rather than made here. |

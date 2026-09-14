@@ -940,7 +940,22 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
                     true,
                 );
                 observe_effect(&mut effect, "failed", "never_dispatched", reason, now);
-                set_obligation(&mut effect, "satisfied");
+                if reason == "deadline_passed" {
+                    // The wait ended; ending it is not the expected observation (CORE 19.4).
+                    for obligation in effect["obligations"].as_array().into_iter().flatten() {
+                        if obligation["state"] == "open" {
+                            drafts.push((
+                                "core.effect.obligation.overdue",
+                                subject(&id),
+                                revision,
+                                json!({"effect": delivery_id, "obligation": obligation["id"]}),
+                            ));
+                        }
+                    }
+                    set_obligation(&mut effect, "overdue");
+                } else {
+                    set_obligation(&mut effect, "satisfied");
+                }
                 bump_generation(&mut record);
                 drafts.push((
                     "execution.delivery.observed",

@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.recovery-revalidates-before-dispatch",
-  "version": 1,
+  "version": 2,
   "title": "Before resuming undispatched work after a restart, recovery revalidates cancellation, authorization and deadlines and records each decision",
   "requirements": [
     "EXE-24",
@@ -588,7 +588,13 @@
               "decision": "failed_before_delivery",
               "reason": "cancelled"
             }
-          ]
+          ],
+          "obligations": {
+            "$contains": {
+              "id": "e-cancel.delivery-1.evidence",
+              "state": "satisfied"
+            }
+          }
         }
       }
     },
@@ -629,6 +635,12 @@
             {
               "decision": "failed_before_delivery",
               "reason": "deadline_passed"
+            }
+          ],
+          "obligations": [
+            {
+              "id": "e-deadline.delivery-1.evidence",
+              "state": "overdue"
             }
           ]
         }

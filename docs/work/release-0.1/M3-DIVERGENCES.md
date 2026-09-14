@@ -71,3 +71,13 @@ The helper rebased onto the resolution commit `ad91182` and realigned from the r
 | G5-STALE-HIGHER | **spec:** §15.1 — a `stale_dispatch` naming any generation other than the current one is fenced. **reference:** fences generations above the current one. **fixture:** `execution.dispatcher-from-an-unissued-generation-is-fenced` (M `stale-dispatcher-sends`). The independent implementation realigned on this point in a final pass. |
 | G5-OBSERVATIONS, G5-CRASH-ATTEMPT | Recorded executor decisions; unguarded and allowed |
 | G5-REFUSED-RUNTIME | **Resolved by owner correction C1:** runtime `not_started` for work that has not begun, including refusal; `preparing` only once admitted (EXECUTION §3). Fixtures `execution.admission-refuses-unenforceable-or-unknown-requirements` v3, `execution.capacity-queue-admits-in-order-and-times-out` v2, `execution.context-bindings-gate-admission` v3; mutants `unstarted-work-reported-preparing`, `refusal-records-delivery-effect`. |
+
+## H. Acceptance corrections and the last independent update
+
+After the owner's conditional acceptance (corrections C1–C3, [M3 status](M3.md#status)), the helper updated the independent implementation from `2d8402a` (its section G.7). Before its changes it had 193 pass and 3 fail, the three C1 fixtures. After them: 196 pass, 0 fail, 4 unsupported, 12 skipped. Its remaining points:
+
+| Tag | Resolution |
+|---|---|
+| G7-RECOVERY-OBLIGATIONS | **spec:** EXECUTION §7.1 — a `deadline_passed` recovery leaves obligations `overdue` with their events; other `failed_before_delivery` decisions satisfy them. **reference:** it previously satisfied them for `deadline_passed` too. **fixture:** `execution.recovery-revalidates-before-dispatch` v2 checks both. |
+| G7-EXIT-ORDER | **spec:** EXECUTION §9 — `execution.exit.observed` sets runtime `exited`, and causal order covers observations, so any separate `execution.runtime.changed` follows it. **fixture:** `execution.evaluation-is-never-derived-from-exit` v2 accepts either form in that order. The independent implementation emitted the runtime change first and was realigned. |
+| C2 scope | **spec:** CORE §16.5 — the bounding and closure rule binds providers that implement `core.events.backpressure`. The independent provider does not, so its stdio writer blocking on a non-reading caller is a documented limitation, not a violation. |

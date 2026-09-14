@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.evaluation-is-never-derived-from-exit",
-  "version": 1,
+  "version": 2,
   "title": "Exit status zero does not produce an evaluation",
   "requirements": [
     "EXE-5"
@@ -136,6 +136,82 @@
           "evaluation": "not_requested"
         }
       }
+    },
+    {
+      "step": "query",
+      "operation": "core.events.read",
+      "payload": {
+        "from": "start",
+        "limit": 100,
+        "kinds": [
+          "execution.execution"
+        ]
+      },
+      "expect": {
+        "any_of": [
+          {
+            "ok": {
+              "items": [
+                {
+                  "event": {
+                    "type": "execution.admission.changed"
+                  }
+                },
+                {
+                  "event": {
+                    "type": "execution.delivery.observed"
+                  }
+                },
+                {
+                  "event": {
+                    "type": "execution.exit.observed",
+                    "payload": {
+                      "exit": {
+                        "code": 0
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "ok": {
+              "items": [
+                {
+                  "event": {
+                    "type": "execution.admission.changed"
+                  }
+                },
+                {
+                  "event": {
+                    "type": "execution.delivery.observed"
+                  }
+                },
+                {
+                  "event": {
+                    "type": "execution.exit.observed",
+                    "payload": {
+                      "exit": {
+                        "code": 0
+                      }
+                    }
+                  }
+                },
+                {
+                  "event": {
+                    "type": "execution.runtime.changed",
+                    "payload": {
+                      "runtime": "exited"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "note": "the exit observation precedes any runtime change it causes (EXECUTION 9)"
     },
     {
       "step": "stop"

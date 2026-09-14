@@ -162,6 +162,7 @@ Owner decision, 2026-09-14. After a restart, an accepted execution whose deliver
 **Outcomes:**
 - **Marker present.** If dispatch might have begun, the delivery becomes `ambiguous` and is reconciled. It is never resent blindly.
 - **Terminal.** A delivery already durably declared `failed_before_delivery` is never reopened.
+- **Obligations.** A `failed_before_delivery` decision made because a deadline passed (`deadline_passed`) ends a wait, so the delivery's open obligations become `overdue`, with their events (CORE §19.4). A decision the executor bases on its own knowledge that nothing was dispatched (`cancelled`, `authorization_lost`, `recovery_policy`) is the expected observation and satisfies them.
 - **Termination policy.** An executor may terminate provably undispatched work as a declared recovery policy (`recovery_policy`). That policy is allowed, not required by the Protocol.
 
 
@@ -196,7 +197,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.dispatch.fenced` | `{ "delivery_id", "generation", "current_generation" }`: an older dispatcher was refused (§7.1) |
 | `execution.runtime.changed` | `{ "runtime", "action_id"?, "owner"? }` |
 | `execution.result.changed` | `{ "result" }` |
-| `execution.exit.observed` | `{ "exit" }` |
+| `execution.exit.observed` | `{ "exit" }`; also sets runtime `exited`. If an executor appends a separate `execution.runtime.changed` for that change, it follows this event (causal order). |
 | `execution.completion.recorded` | `{ "completion_id", "digest", "invocation_id", "host", "status": "recorded" \| "duplicate" \| "conflict" \| "superseded_attempt" }` |
 | `execution.cancel.requested` / `execution.cancel.observed` | `{ "receipt" }` / `{ "outcome" }` |
 | `execution.timeout.passed` | `{ "timeout" }` |
@@ -213,7 +214,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.transition.observed` | `{ "transition" }`: a named runtime transition that context bindings can depend on |
 | `execution.output.lost` | A lost range (§14.1) |
 
-**Causal order.** An event that records a decision or a passed timeout precedes the events it causes. For example, `execution.recovery.decided` precedes the delivery observation and host change it causes, and `execution.timeout.passed` precedes the overdue marking and determination it causes. Order among events with the same cause is otherwise unspecified (§15.1 fixes it for the conformance executor).
+**Causal order.** An event that records a decision, a passed timeout or an observation precedes the events it causes. For example, `execution.recovery.decided` precedes the delivery observation and host change it causes, and `execution.timeout.passed` precedes the overdue marking and determination it causes. Order among events with the same cause is otherwise unspecified (§15.1 fixes it for the conformance executor).
 
 `origin` is `command` for events caused by a caller command, and `provider` for observations from the harness or host (CORE §16.2). Provider-origin events never carry a `command_id`.
 

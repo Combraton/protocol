@@ -193,6 +193,30 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "steering": {
+              "enum": [
+                "live",
+                "unsupported"
+              ],
+              "description": "Whether the scripted harness accepts live steering (default unsupported)."
+            },
+            "enforced_bounds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Budget measures the adapter enforces as hard bounds."
+            },
+            "context_boundaries": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "initial_prompt",
+                  "turn_steering",
+                  "context_request"
+                ]
+              }
             }
           },
           "additionalProperties": false
@@ -212,6 +236,113 @@
             "terminate"
           ],
           "description": "Recovery policy for provably undispatched deliveries after a restart (default resume)."
+        },
+        "host_id": {
+          "type": "string",
+          "description": "The scripted host slot's ID (default scripted-host)."
+        },
+        "capacity": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Admitted executions that may run at once; later submissions queue with reason capacity."
+        },
+        "budget_pools": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "measure",
+              "limit"
+            ],
+            "properties": {
+              "measure": {
+                "type": "string"
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "context_packets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "ref",
+              "digest"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Context packets the executor holds, by reference and exact digest."
+        },
+        "installations": {
+          "type": "array",
+          "description": "Scripted installations for execution.discovery (owner decision Q2).",
+          "items": {
+            "type": "object",
+            "required": [
+              "installation_id",
+              "harness",
+              "detected"
+            ],
+            "properties": {
+              "installation_id": {
+                "type": "string"
+              },
+              "harness": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "detected": {
+                "type": "boolean"
+              },
+              "adapter_recognized": {
+                "enum": [
+                  "yes",
+                  "no",
+                  "unknown"
+                ]
+              },
+              "version_supported": {
+                "enum": [
+                  "yes",
+                  "no",
+                  "unknown"
+                ]
+              },
+              "authentication": {
+                "enum": [
+                  "authenticated",
+                  "unauthenticated",
+                  "unknown"
+                ]
+              },
+              "reachable": {
+                "enum": [
+                  "yes",
+                  "no",
+                  "unknown"
+                ]
+              },
+              "last_verified": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -295,7 +426,11 @@
             "type": "string"
           },
           "wait_for": {
-            "const": "cancel"
+            "enum": [
+              "cancel",
+              "steer",
+              "action"
+            ]
           },
           "stall": {
             "const": true
@@ -312,6 +447,138 @@
               }
             },
             "additionalProperties": false
+          },
+          "steer_deliver": {
+            "enum": [
+              "provider_ack_id",
+              "echo",
+              "transport_only",
+              "bytes_written"
+            ]
+          },
+          "steer_behavior": {
+            "const": "observed"
+          },
+          "request_action": {
+            "type": "object",
+            "required": [
+              "action_id",
+              "owner"
+            ],
+            "properties": {
+              "action_id": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "probes"
+            ],
+            "properties": {
+              "head": {
+                "type": "string"
+              },
+              "dirty_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "untracked_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "probes": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "tracked",
+                    "dirty",
+                    "untracked"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "agent_reports_commit": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "required": [
+              "invocation_id",
+              "basis"
+            ],
+            "properties": {
+              "invocation_id": {
+                "type": "string"
+              },
+              "basis": {
+                "enum": [
+                  "observed",
+                  "estimated",
+                  "unknown",
+                  "enforced_bound"
+                ]
+              },
+              "measure": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "context_delivery": {
+            "type": "object",
+            "required": [
+              "binding_id",
+              "boundary",
+              "harness"
+            ],
+            "properties": {
+              "binding_id": {
+                "type": "string"
+              },
+              "boundary": {
+                "enum": [
+                  "initial_prompt",
+                  "turn_steering",
+                  "context_request"
+                ]
+              },
+              "harness": {
+                "enum": [
+                  "acknowledged",
+                  "accepted",
+                  "queued",
+                  "lost"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "transition": {
+            "type": "string"
+          },
+          "transport_errors": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The next effect attempts fail with an unknown outcome this many times."
+          },
+          "probe_status": {
+            "const": true
           }
         },
         "additionalProperties": false

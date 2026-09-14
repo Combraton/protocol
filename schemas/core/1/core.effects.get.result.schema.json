@@ -5,13 +5,18 @@
   "type": "object",
   "required": [
     "effect",
+    "revision",
     "status",
     "observations",
+    "attempts",
     "obligations"
   ],
   "properties": {
     "effect": {
       "$ref": "../../core/1/common.schema.json#/$defs/effect_descriptor"
+    },
+    "revision": {
+      "$ref": "../../core/1/common.schema.json#/$defs/revision"
     },
     "status": {
       "$ref": "../../core/1/common.schema.json#/$defs/effect_status"
@@ -21,6 +26,12 @@
       "minItems": 1,
       "items": {
         "$ref": "../../core/1/common.schema.json#/$defs/effect_observation"
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "$ref": "../../core/1/common.schema.json#/$defs/effect_attempt"
       }
     },
     "obligations": {

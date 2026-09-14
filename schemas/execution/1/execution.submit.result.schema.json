@@ -40,29 +40,55 @@
         },
         "delivery_id": {
           "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "queue_reason": {
+          "$ref": "common.schema.json#/$defs/queue_reason"
+        },
+        "continuation": {
+          "$ref": "common.schema.json#/$defs/continuation"
         }
       },
       "unevaluatedProperties": false,
-      "if": {
-        "properties": {
-          "admission": {
-            "const": "admitted"
-          }
+      "oneOf": [
+        {
+          "properties": {
+            "admission": {
+              "const": "admitted"
+            },
+            "reason": false,
+            "alternative": false,
+            "queue_reason": false
+          },
+          "required": [
+            "delivery_id"
+          ]
+        },
+        {
+          "properties": {
+            "admission": {
+              "const": "queued"
+            },
+            "reason": false,
+            "alternative": false,
+            "delivery_id": false
+          },
+          "required": [
+            "queue_reason"
+          ]
+        },
+        {
+          "properties": {
+            "admission": {
+              "const": "refused"
+            },
+            "delivery_id": false,
+            "queue_reason": false
+          },
+          "required": [
+            "reason"
+          ]
         }
-      },
-      "then": {
-        "required": [
-          "delivery_id"
-        ]
-      },
-      "else": {
-        "required": [
-          "reason"
-        ],
-        "properties": {
-          "delivery_id": false
-        }
-      }
+      ]
     }
   },
   "unevaluatedProperties": false

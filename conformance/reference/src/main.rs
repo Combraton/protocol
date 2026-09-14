@@ -6,6 +6,7 @@
 mod barriers;
 mod clock;
 mod execution;
+mod features;
 mod frames;
 mod grants;
 mod json;
@@ -326,6 +327,7 @@ fn serve_unix(socket: &std::path::Path, shared: std::sync::Arc<Shared>) -> Resul
                 shared.credentials.clone(),
             );
             let _ = serve(stream, writer, provider, &shared, true);
+            barriers::signal(barriers::SESSION_CLOSED);
         });
     }
     Ok(())

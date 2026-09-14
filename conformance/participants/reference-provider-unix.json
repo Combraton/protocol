@@ -24,14 +24,23 @@
       "core.grants",
       "core.events",
       "core.capabilities",
-      "core.effects"
+      "core.effects",
+      "execution.steering",
+      "execution.actions",
+      "execution.controller",
+      "execution.workspaces",
+      "execution.usage",
+      "execution.context",
+      "execution.discovery",
+      "execution.continuation"
     ],
     "test_controls": [
       "clock.file",
       "executor.script"
     ],
     "test_barriers": [
-      "subscription.recheck.after_authorization"
+      "subscription.recheck.after_authorization",
+      "session.closed"
     ]
   },
   "launch": {
@@ -62,7 +71,9 @@
       "idle-subscriptions-not-rechecked",
       "recheck-outside-lock",
       "clock-file-ignored",
-      "clock-file-start-unchecked"
+      "clock-file-start-unchecked",
+      "executor-ticks-only-on-requests",
+      "cancels-on-session-close"
     ]
   }
 }

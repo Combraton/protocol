@@ -155,6 +155,12 @@ impl Store {
         if kind == "core.grant" {
             return Ok(self.grant(id)?.map_or(0, |(revision, _)| revision));
         }
+        if kind == "core.effect" {
+            return Ok(self
+                .effect_record(id)?
+                .and_then(|record| record["revision"].as_i64())
+                .unwrap_or(0));
+        }
         Ok(self
             .subject(kind, id)?
             .map_or(0, |(revision, _, _)| revision))
@@ -424,6 +430,22 @@ impl Store {
     /// An owner transaction for execution changes made outside a command (scripted executor ticks).
     pub fn transaction(&mut self) -> rusqlite::Result<rusqlite::Transaction<'_>> {
         self.connection.transaction()
+    }
+
+    /// A read-only view for checks made before a command commits (rolled back when dropped).
+    pub fn reader(&self) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+        self.connection.unchecked_transaction()
+    }
+
+    /// An effect record (CORE section 19), including its revision.
+    pub fn effect_record(&self, effect: &str) -> rusqlite::Result<Option<serde_json::Value>> {
+        let record: Option<String> = self
+            .connection
+            .query_row("SELECT record FROM effects WHERE id=?1", [effect], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(record.and_then(|r| serde_json::from_str(&r).ok()))
     }
 
     pub fn capability_revision(&self) -> rusqlite::Result<i64> {

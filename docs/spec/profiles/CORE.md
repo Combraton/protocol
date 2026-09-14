@@ -656,7 +656,7 @@ Its **status** is observed separately and appended as evidence: `pending`, `succ
 
 ### 19.2 Querying after response loss
 
-`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "status", "observations", "obligations" }`. `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
+`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "revision", "status", "observations", "attempts", "obligations" }`. `revision` is the effect record's revision, used as the precondition revision of subject `{ "kind": "core.effect", "id" }` (§19.4). `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
 
 - After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
 - A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.
@@ -674,6 +674,9 @@ Its **status** is observed separately and appended as evidence: `pending`, `succ
 
 A provider MUST NOT retry an effect outside its class. Blind retry of a `non_repeatable` effect after an `unknown` outcome is a conformance failure (EFF-3).
 
+- **Attempts.** Each try at the external action is recorded in `attempts`: `{ attempt, idempotency_key?, outcome: "completed" | "failed" | "unknown", recorded_at }`. An attempt's outcome describes the call, not the effect: a completed call can still leave the effect `pending` or `unknown`.
+- **Keys.** An `idempotent_key` effect carries `idempotency_key` in its descriptor, and every attempt uses that same key.
+
 ### 19.4 Obligations
 
 An obligation records an expected observation: an effect outcome, a lifecycle transition, or required terminal output coverage. Each has a deadline on the provider clock.
@@ -681,6 +684,9 @@ An obligation records an expected observation: an effect outcome, a lifecycle tr
 - **States:** `open`, `satisfied`, `overdue`, `aborted`.
 - **Deadline:** when the deadline passes with no observation, a provider-origin event marks the obligation `overdue`, even if no other event arrives.
 - **Aborting:** closes the wait. It MUST NOT change the effect's status: an aborted wait for an `unknown` effect leaves the effect `unknown` (EFF-4).
+  - `core.effects.abort_obligation` (command, *candidate*) on subject `{ "kind": "core.effect", "id" }`, with precondition revision equal to the effect's revision and payload `{ "obligation" }`. It returns `{ effect, obligation: { id, state: "aborted" }, status }`, and appends `core.effect.obligation.aborted` with payload `{ effect, obligation, target }` on the effect subject.
+  - An obligation that is not `open` or `overdue` is `not_found`. The command records no effect, so `effect_refs` is `[]`.
+  - Under a grant it needs right `core.effects.abort_obligation` on the effect's target. An effect subject is visible in events exactly when its target is.
 - **Survival:** obligations survive cancellation, timeouts and restarts until satisfied or explicitly aborted.
 
 ### 19.5 What effects do not establish

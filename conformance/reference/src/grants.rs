@@ -27,6 +27,17 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "execution.cancel".to_string(),
             params["subject"].clone(),
         )]),
+        "execution.steer"
+        | "execution.respond_action"
+        | "execution.controller.claim"
+        | "execution.workspace.checkpoint" => Some(vec![(
+            params["operation"].as_str().unwrap_or_default().to_string(),
+            params["subject"].clone(),
+        )]),
+        "execution.discovery.list" => Some(vec![(
+            "execution.discovery.list".to_string(),
+            serde_json::json!({"kind": "execution.discovery", "id": "installations"}),
+        )]),
         "execution.inspect" => Some(vec![(
             "execution.read".to_string(),
             serde_json::json!({"kind": crate::execution::KIND, "id": params["payload"]["execution"]}),

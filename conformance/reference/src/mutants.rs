@@ -5,6 +5,126 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "cancels-on-session-close",
+        "cancels running executions when one socket session closes while the provider keeps running",
+    ),
+    (
+        "executor-ticks-only-on-requests",
+        "advances the scripted executor and its timeouts only when a request arrives, never while idle",
+    ),
+    (
+        "steer-claims-delivery",
+        "reports a steering message acknowledged as soon as it is recorded, without evidence",
+    ),
+    (
+        "steer-unsupported-accepted",
+        "records steering as live when the adapter cannot steer",
+    ),
+    (
+        "steer-ack-implies-behavior",
+        "treats a steering acknowledgment as observed behavior",
+    ),
+    (
+        "global-action-namespace",
+        "answers a native action request found in any execution",
+    ),
+    (
+        "requires-action-without-identity",
+        "reports requires_action without the action ID and owner",
+    ),
+    (
+        "actions-lost-on-restart",
+        "drops pending native action requests when the provider restarts",
+    ),
+    (
+        "stale-controller-accepted",
+        "accepts mutating execution commands carrying a superseded controller epoch",
+    ),
+    (
+        "agent-commit-as-receipt",
+        "reports an agent-reported commit as the checkpoint head",
+    ),
+    (
+        "incomplete-checkpoint-complete",
+        "declares a checkpoint complete although some state was not probed",
+    ),
+    (
+        "admits-unenforceable-ceiling",
+        "admits a hard budget ceiling the adapter cannot enforce",
+    ),
+    (
+        "refunds-on-timeout",
+        "releases a budget reservation and resolves liability when the execution deadline passes",
+    ),
+    (
+        "required-binding-admitted",
+        "admits an execution whose required-before-start context binding is unsatisfied",
+    ),
+    (
+        "digest-mismatch-satisfies",
+        "treats a held packet with a different digest as satisfying a binding",
+    ),
+    (
+        "no-late-state",
+        "reports a packet delivered after its dependent boundary as delivered, not late",
+    ),
+    (
+        "detected-offered-as-usable",
+        "offers every detected installation as usable",
+    ),
+    (
+        "discovery-unknown-as-yes",
+        "reports unknown discovery facts as positive",
+    ),
+    (
+        "fresh-labeled-resumed",
+        "labels a fresh continuation as resumed",
+    ),
+    (
+        "non-repeatable-retried",
+        "retries a non-repeatable effect after an unknown attempt outcome",
+    ),
+    (
+        "idempotent-retry-new-key",
+        "retries an idempotent effect under a new idempotency key",
+    ),
+    (
+        "read-never-retried",
+        "gives up on a read effect after one unknown attempt",
+    ),
+    (
+        "abort-marks-effect-failed",
+        "marks an effect failed when a wait for it is aborted",
+    ),
+    (
+        "capacity-ignored",
+        "admits executions beyond the executor's capacity",
+    ),
+    (
+        "inactivity-marks-exited",
+        "treats a passed inactivity timeout as proof the execution exited",
+    ),
+    (
+        "reconciliation-timeout-resolves",
+        "treats a passed reconciliation timeout as proof of non-delivery",
+    ),
+    (
+        "cancels-on-disconnect",
+        "cancels running executions when a session closes",
+    ),
+    (
+        "respawn-on-restart",
+        "respawns running executions with a new prompt effect after a restart",
+    ),
+    (
+        "feature-operations-ungated",
+        "serves optional execution feature operations that were not negotiated",
+    ),
+    (
+        "feature-fields-accepted",
+        "accepts submit fields of optional features that were not negotiated",
+    ),
+    (
         "recovery-ignores-cancellation",
         "resumes dispatch during recovery although cancellation was requested",
     ),

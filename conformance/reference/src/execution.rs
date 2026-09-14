@@ -10,6 +10,9 @@
 //! is recorded before any harness write. Recovery after a restart may resume an undispatched
 //! delivery under the same identity only with an intact journal and after revalidation, and it
 //! fences older dispatchers by advancing the host generation.
+//!
+//! Optional features (EXECUTION section 11) keep their state in the same record; their commands
+//! are in `features.rs`.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -18,7 +21,10 @@ use crate::mutants::Mutants;
 use crate::store::{Store, append_event};
 
 pub const KIND: &str = "execution.execution";
+pub const CONTROLLER_KIND: &str = "execution.controller";
 const CRASH_STATUS: i32 = 86;
+/// Attempts an executor makes for one effect when its retry class permits retries (CORE 19.3).
+const MAX_ATTEMPTS: usize = 3;
 
 /// Everything a command needs besides the store.
 pub struct Context<'a> {
@@ -40,9 +46,16 @@ pub struct Recovery<'a> {
     pub journal_intact: bool,
 }
 
-type Draft = (&'static str, Value, i64, Value);
+pub(crate) type Draft = (&'static str, Value, i64, Value);
+/// (revision, outcome, events, effect references) of one applied command.
+pub(crate) type Applied = (i64, Value, Vec<Draft>, Vec<String>);
 
-fn subject(id: &str) -> Value {
+/// The scripted executor's single host slot.
+pub fn host_id(executor: &Value) -> &str {
+    executor["host_id"].as_str().unwrap_or("scripted-host")
+}
+
+pub(crate) fn subject(id: &str) -> Value {
     json!({"kind": KIND, "id": id})
 }
 
@@ -62,7 +75,12 @@ pub fn load(tx: &Transaction, id: &str) -> rusqlite::Result<Option<(i64, Value)>
     }))
 }
 
-fn save(tx: &Transaction, id: &str, revision: i64, record: &Value) -> rusqlite::Result<()> {
+pub(crate) fn save(
+    tx: &Transaction,
+    id: &str,
+    revision: i64,
+    record: &Value,
+) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO subjects VALUES (?1, ?2, ?3, ?4, 1)
          ON CONFLICT (kind, id) DO UPDATE SET revision=excluded.revision, value=excluded.value,
@@ -72,38 +90,162 @@ fn save(tx: &Transaction, id: &str, revision: i64, record: &Value) -> rusqlite::
     Ok(())
 }
 
-fn load_effect(tx: &Transaction, id: &str) -> rusqlite::Result<Option<Value>> {
+pub(crate) fn load_effect(tx: &Transaction, id: &str) -> rusqlite::Result<Option<Value>> {
     let row: Option<String> = tx
         .query_row("SELECT record FROM effects WHERE id=?1", [id], |r| r.get(0))
         .optional()?;
     Ok(row.map(|record| serde_json::from_str(&record).unwrap_or(Value::Null)))
 }
 
-fn save_effect(
+/// Save an effect record, advancing its revision (the precondition revision of `core.effect`).
+pub(crate) fn save_effect(
     tx: &Transaction,
     id: &str,
     execution: &str,
     record: &Value,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<i64> {
+    let mut record = record.clone();
+    let revision = record["revision"].as_i64().unwrap_or(0) + 1;
+    record["revision"] = json!(revision);
     tx.execute(
         "INSERT INTO effects VALUES (?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET record=excluded.record",
         params![id, execution, record.to_string()],
     )?;
-    Ok(())
+    Ok(revision)
 }
 
-fn observe_effect(effect: &mut Value, status: &str, class: &str, source: &str, now: &str) {
+pub(crate) fn observe_effect(
+    effect: &mut Value,
+    status: &str,
+    class: &str,
+    source: &str,
+    now: &str,
+) {
     if let Some(list) = effect["observations"].as_array_mut() {
         list.push(json!({"status": status, "evidence": {"class": class, "source": source}, "recorded_at": now}));
     }
 }
 
-fn set_obligation(effect: &mut Value, state: &str) {
+pub(crate) fn set_obligation(effect: &mut Value, state: &str) {
     for obligation in effect["obligations"].as_array_mut().into_iter().flatten() {
         if obligation["state"] == "open" {
             obligation["state"] = json!(state);
         }
     }
+}
+
+/// Append to an array member, creating it when absent.
+pub(crate) fn push(value: &mut Value, key: &str, item: Value) {
+    if !value[key].is_array() {
+        value[key] = json!([]);
+    }
+    if let Some(list) = value[key].as_array_mut() {
+        list.push(item);
+    }
+}
+
+fn count_prefixed(record: &Value, key: &str, marker: &str) -> usize {
+    record[key]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|id| id.contains(marker))
+        .count()
+}
+
+/// A new effect record, observed as recorded before any external I/O (CORE section 19.1).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_effect(
+    id: &str,
+    kind: &str,
+    execution_id: &str,
+    payload_digest: &Value,
+    record: &Value,
+    retry_class: &str,
+    operation_ref: &Value,
+    obligation: Option<(&str, &str, Value)>,
+    now: &str,
+    source: &str,
+) -> Value {
+    let mut effect = json!({
+        "descriptor": {
+            "id": id,
+            "kind": kind,
+            "target": subject(execution_id),
+            "payload_digest": payload_digest,
+            "authorization": {"principal": record["authorization"]["principal"]},
+            "retry_class": retry_class,
+            "operation_ref": operation_ref,
+        },
+        "observations": [],
+        "attempts": [],
+        "obligations": [],
+        "dispatch": Value::Null,
+    });
+    if let Some(grant) = record["authorization"]["grant"].as_str() {
+        effect["descriptor"]["authorization"]["grant"] = json!(grant);
+    }
+    if retry_class == "idempotent_key" {
+        effect["descriptor"]["idempotency_key"] = json!(id);
+    }
+    if let Some((suffix, expects, deadline)) = obligation {
+        effect["obligations"] = json!([{"id": format!("{id}.{suffix}"), "expects": expects, "deadline": deadline, "state": "open"}]);
+    }
+    observe_effect(
+        &mut effect,
+        "pending",
+        "recorded_before_dispatch",
+        source,
+        now,
+    );
+    effect
+}
+
+/// Try an effect against the scripted harness, retrying only as its retry class permits
+/// (CORE section 19.3). Scripted transport errors make an attempt's outcome unknown. Returns
+/// whether an attempt completed.
+fn run_attempts(effect: &mut Value, record: &mut Value, now: &str, mutants: &Mutants) -> bool {
+    let class = effect["descriptor"]["retry_class"]
+        .as_str()
+        .unwrap_or("non_repeatable")
+        .to_string();
+    let key = effect["descriptor"]["idempotency_key"]
+        .as_str()
+        .map(String::from);
+    let mut errors = record["pending_transport_errors"].as_i64().unwrap_or(0);
+    let mut completed = false;
+    for number in 1..=MAX_ATTEMPTS {
+        let mut attempt = json!({"attempt": number, "recorded_at": now});
+        if let Some(key) = &key {
+            attempt["idempotency_key"] = if number > 1 && mutants.on("idempotent-retry-new-key") {
+                json!(format!("{key}.retry-{number}"))
+            } else {
+                json!(key)
+            };
+        }
+        if errors > 0 {
+            errors -= 1;
+            attempt["outcome"] = json!("unknown");
+            push(effect, "attempts", attempt);
+            let retry = match class.as_str() {
+                "pure" => true,
+                "read" => !mutants.on("read-never-retried"),
+                "idempotent_key" => key.is_some(),
+                _ => mutants.on("non-repeatable-retried"),
+            };
+            if !retry {
+                break;
+            }
+        } else {
+            attempt["outcome"] = json!("completed");
+            push(effect, "attempts", attempt);
+            completed = true;
+            break;
+        }
+    }
+    record["pending_transport_errors"] = json!(errors);
+    completed
 }
 
 fn enforcement_rank(level: &str) -> i32 {
@@ -115,12 +257,12 @@ fn enforcement_rank(level: &str) -> i32 {
     }
 }
 
-fn add_seconds(instant: &str, seconds: i64) -> String {
+pub(crate) fn add_seconds(instant: &str, seconds: i64) -> String {
     crate::clock::from_seconds(crate::clock::to_seconds(instant) + seconds)
 }
 
 /// Effect status implied by a delivery determination (CORE section 19).
-fn status_for(delivery: &str) -> &'static str {
+pub(crate) fn status_for(delivery: &str) -> &'static str {
     match delivery {
         "acknowledged" | "delivered" => "succeeded",
         "not_delivered" | "failed_before_delivery" => "failed",
@@ -137,7 +279,7 @@ fn is_terminal(delivery: &str) -> bool {
 }
 
 /// Replace the current delivery determination, keeping the previous one in history.
-fn determine(
+pub(crate) fn determine(
     record: &mut Value,
     delivery: &str,
     evidence: Value,
@@ -166,6 +308,88 @@ fn determine(
         slot["proof_class"] = json!(proof);
     }
     record["delivery"] = json!(delivery);
+    if delivery == "ambiguous" {
+        record["ambiguous_since"] = json!(now);
+    }
+    // Durable evidence that the invocation was never dispatched and never will be under this
+    // identity releases its budget reservation (EXECUTION section 12).
+    if delivery == "failed_before_delivery" && record["budget"]["reservation"] == "reserved" {
+        record["budget"]["reservation"] = json!("released");
+    }
+}
+
+fn operation_sequence(record: &Value) -> i64 {
+    record["operation_ref"]
+        .as_str()
+        .and_then(|r| r.strip_prefix("op-"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(i64::MAX)
+}
+
+/// Admitted executions that have not exited (the capacity in use).
+fn running(tx: &Transaction) -> rusqlite::Result<i64> {
+    let mut count = 0;
+    for id in execution_ids(tx)? {
+        if let Some((_, record)) = load(tx, &id)?
+            && record["admission"] == "admitted"
+            && record["runtime"] != "exited"
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Amount held in a budget pool: active reservations and settled consumption.
+fn held_in_pool(tx: &Transaction, pool: &str) -> rusqlite::Result<i64> {
+    let mut held = 0;
+    for id in execution_ids(tx)? {
+        if let Some((_, record)) = load(tx, &id)?
+            && record["budget"]["pool"] == pool
+            && matches!(
+                record["budget"]["reservation"].as_str(),
+                Some("reserved" | "settled")
+            )
+        {
+            held += record["budget"]["amount"].as_i64().unwrap_or(1);
+        }
+    }
+    Ok(held)
+}
+
+/// Record the prompt delivery effect and its delivery slot for an admitted execution.
+fn open_delivery(
+    tx: &Transaction,
+    execution_id: &str,
+    record: &mut Value,
+    now: &str,
+    source: &str,
+    mutants: &Mutants,
+) -> rusqlite::Result<String> {
+    let delivery_id = format!("{execution_id}.delivery-1");
+    let deadline = record["timeouts"]["delivery"]
+        .as_i64()
+        .map_or(Value::Null, |seconds| json!(add_seconds(now, seconds)));
+    let effect = new_effect(
+        &delivery_id,
+        "execution.prompt_submission",
+        execution_id,
+        &record["brief_digest"],
+        record,
+        "non_repeatable",
+        &record["operation_ref"],
+        Some(("evidence", "delivery evidence", deadline)),
+        now,
+        source,
+    );
+    if mutants.on("effect-recorded-after-dispatch") {
+        record["deferred_effect"] = effect;
+    } else {
+        save_effect(tx, &delivery_id, execution_id, &effect)?;
+    }
+    record["deliveries"] = json!([{"delivery_id": delivery_id, "delivery": "pending", "determined_at": now, "history": []}]);
+    push(record, "effects", json!(delivery_id));
+    Ok(delivery_id)
 }
 
 /// `execution.submit` inside the Core owner transaction (CORE section 10 step 8).
@@ -175,14 +399,15 @@ pub fn submit(
     payload: &Value,
     sequence: i64,
     ctx: &Context,
-) -> rusqlite::Result<(i64, Value, Vec<Draft>, Vec<String>)> {
+) -> rusqlite::Result<Applied> {
     let adapter = &ctx.executor["adapter"];
+    let mutants = ctx.mutants;
     let advertised = adapter["enforcement"].as_str().unwrap_or("cooperative");
     let mut refusal: Option<(&str, String)> = None;
     for required in payload["restrictions"].as_array().into_iter().flatten() {
         let wanted = required["enforcement"].as_str().unwrap_or_default();
         if enforcement_rank(wanted) > enforcement_rank(advertised)
-            && !ctx.mutants.on("admits-weaker-enforcement")
+            && !mutants.on("admits-weaker-enforcement")
         {
             refusal = Some((
                 "enforcement_unavailable",
@@ -197,14 +422,8 @@ pub fn submit(
         .into_iter()
         .flatten()
     {
-        let status = adapter["predicates"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|p| p["name"] == *name)
-            .and_then(|p| p["status"].as_str())
-            .unwrap_or("unknown");
-        if status != "supported" && !ctx.mutants.on("unknown-predicate-supported") {
+        let status = predicate_status(adapter, name.as_str().unwrap_or_default());
+        if status != "supported" && !mutants.on("unknown-predicate-supported") {
             refusal = Some((
                 "capability_unavailable",
                 format!("capability {name} is {status}"),
@@ -217,7 +436,7 @@ pub fn submit(
         .or_else(|| ctx.executor["default_script"].as_array().cloned())
         .unwrap_or_default();
     let mut record = json!({
-        "admission": if refusal.is_some() { "refused" } else { "admitted" },
+        "admission": "admitted",
         "delivery": "pending",
         "runtime": "preparing",
         "result": "absent",
@@ -227,8 +446,12 @@ pub fn submit(
         "completions": [],
         "effects": [],
         "recovery": [],
-        "host": {"id": "scripted-host", "generation": 1},
+        "host": {"id": host_id(ctx.executor), "generation": 1},
         "submitted_at": ctx.now,
+        "admitted_at": ctx.now,
+        "last_observation_at": ctx.now,
+        "operation_ref": format!("op-{sequence}"),
+        "brief_digest": payload["brief"]["digest"],
         "timeouts": payload["timeouts"].clone(),
         "timeouts_passed": [],
         "script": script,
@@ -236,78 +459,207 @@ pub fn submit(
         "authorization": {"principal": ctx.principal, "grant": ctx.grant},
     });
     if let Some(predecessor) = payload.get("predecessor")
-        && !ctx.mutants.on("predecessor-dropped")
+        && !mutants.on("predecessor-dropped")
     {
         record["predecessor"] = predecessor.clone();
     }
     if let Some(correlation) = payload.get("correlation") {
         record["correlation"] = correlation.clone();
     }
-    let mut outcome = json!({"execution": subject(execution_id), "admission": record["admission"]});
-    let mut events = vec![(
+    // Usage and liability (EXECUTION section 12).
+    if let Some(budget) = payload.get("budget") {
+        let pool_id = budget["pool"].as_str().unwrap_or_default();
+        let ceiling = budget["ceiling"].as_str().unwrap_or("soft");
+        let amount = budget["amount"].as_i64().unwrap_or(1);
+        record["budget"] = json!({"pool": pool_id, "ceiling": ceiling, "amount": amount, "reservation": "not_reserved"});
+        match ctx.executor["budget_pools"].get(pool_id) {
+            _ if refusal.is_some() => {}
+            None => {
+                refusal = Some((
+                    "budget_unavailable",
+                    "name a budget pool this executor defines".to_string(),
+                ));
+            }
+            Some(pool) => {
+                let measure = pool["measure"].as_str().unwrap_or("invocations");
+                record["budget"]["measure"] = json!(measure);
+                let enforced = adapter["enforced_bounds"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|bound| bound == measure);
+                if ceiling == "hard" && !enforced && !mutants.on("admits-unenforceable-ceiling") {
+                    refusal = Some((
+                        "enforcement_unavailable",
+                        format!(
+                            "request a soft ceiling, or use an executor that enforces a {measure} bound"
+                        ),
+                    ));
+                } else if held_in_pool(tx, pool_id)? + amount > pool["limit"].as_i64().unwrap_or(0)
+                {
+                    refusal = Some((
+                        "budget_exhausted",
+                        format!(
+                            "wait until reservations in budget pool {pool_id} are released or settled"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    let mut queue_reason: Option<&str> = None;
+    // Context bindings (EXECUTION section 13).
+    if let Some(bindings) = payload["context_bindings"].as_array() {
+        let held = ctx.executor["context_packets"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let mut states = Vec::new();
+        for binding in bindings {
+            let packet = &binding["packet"];
+            let holds = held.iter().any(|p| {
+                p["ref"] == packet["ref"]
+                    && (p["digest"] == packet["digest"] || mutants.on("digest-mismatch-satisfies"))
+            });
+            let obligation = binding["obligation"].as_str().unwrap_or_default();
+            let state = match (holds, obligation) {
+                (true, _) => "satisfied",
+                (false, "advisory") => "gap",
+                _ => "unsatisfied",
+            };
+            if !holds
+                && obligation == "required_before_start"
+                && !mutants.on("required-binding-admitted")
+            {
+                queue_reason = Some("context_binding_unsatisfied");
+            }
+            let mut entry = binding.clone();
+            entry["state"] = json!(state);
+            states.push(entry);
+        }
+        record["context"] = json!({"bindings": states, "deliveries": []});
+    }
+    if let Some(workspace) = payload.get("workspace") {
+        let mut lease = workspace.clone();
+        lease["lease_id"] = json!(format!("{execution_id}.workspace"));
+        lease["writer"] = json!(ctx.principal);
+        lease["lease_epoch"] = json!(1);
+        record["workspace"] = json!({"lease": lease, "checkpoints": [], "annotations": []});
+    }
+    if let Some(continuation) = payload.get("continuation") {
+        let mode = continuation["mode"].as_str().unwrap_or("resume");
+        let predicate = if mode == "fork" {
+            "adapter.fork"
+        } else {
+            "adapter.resume"
+        };
+        let label = if predicate_status(adapter, predicate) == "supported" {
+            if mode == "fork" { "forked" } else { "resumed" }
+        } else if mode == "resume" && mutants.on("fresh-labeled-resumed") {
+            "resumed"
+        } else {
+            "fresh_continuation"
+        };
+        record["continuation"] =
+            json!({"of": continuation["of"], "requested": mode, "label": label});
+    }
+    if refusal.is_none()
+        && queue_reason.is_none()
+        && let Some(capacity) = ctx.executor["capacity"].as_i64()
+        && !mutants.on("capacity-ignored")
+        && running(tx)? >= capacity
+    {
+        queue_reason = Some("capacity");
+    }
+    let admission = match (&refusal, queue_reason) {
+        (Some(_), _) => "refused",
+        (None, Some(_)) => "queued",
+        (None, None) => "admitted",
+    };
+    record["admission"] = json!(admission);
+    let mut outcome = json!({"execution": subject(execution_id), "admission": admission});
+    let mut event = json!({"admission": admission});
+    let mut effect_refs = Vec::new();
+    if let Some((reason, alternative)) = refusal {
+        for target in [&mut outcome, &mut record] {
+            target["reason"] = json!(reason);
+            target["alternative"] = json!(alternative);
+        }
+        event["reason"] = json!(reason);
+    } else {
+        if record["budget"].is_object() {
+            record["budget"]["reservation"] = json!("reserved");
+        }
+        if let Some(reason) = queue_reason {
+            outcome["queue_reason"] = json!(reason);
+            record["queue_reason"] = json!(reason);
+            event["queue_reason"] = json!(reason);
+        } else {
+            let delivery_id = open_delivery(
+                tx,
+                execution_id,
+                &mut record,
+                &ctx.now,
+                "execution.submit owner transaction",
+                mutants,
+            )?;
+            outcome["delivery_id"] = json!(delivery_id);
+            effect_refs.push(delivery_id);
+        }
+    }
+    if let Some(continuation) = record.get("continuation") {
+        outcome["continuation"] = continuation.clone();
+    }
+    save(tx, execution_id, 1, &record)?;
+    let events = vec![(
         "execution.admission.changed",
         subject(execution_id),
         1,
-        json!({"admission": record["admission"]}),
+        event,
     )];
-    let mut effect_refs = Vec::new();
-    if let Some((reason, alternative)) = refusal {
-        outcome["reason"] = json!(reason);
-        outcome["alternative"] = json!(alternative);
-        events[0].3["reason"] = json!(reason);
-    } else {
-        let delivery_id = format!("{execution_id}.delivery-1");
-        let deadline = payload["timeouts"]["delivery"]
-            .as_i64()
-            .map_or(Value::Null, |seconds| json!(add_seconds(&ctx.now, seconds)));
-        let mut effect = json!({
-            "descriptor": {
-                "id": delivery_id,
-                "kind": "execution.prompt_submission",
-                "target": subject(execution_id),
-                "payload_digest": payload["brief"]["digest"],
-                "authorization": {"principal": ctx.principal},
-                "retry_class": "non_repeatable",
-                "operation_ref": format!("op-{sequence}"),
-            },
-            "observations": [],
-            "obligations": [{"id": format!("{delivery_id}.evidence"), "expects": "delivery evidence", "deadline": deadline, "state": "open"}],
-            "dispatch": Value::Null,
-        });
-        if let Some(grant) = ctx.grant {
-            effect["descriptor"]["authorization"]["grant"] = json!(grant);
-        }
-        observe_effect(
-            &mut effect,
-            "pending",
-            "recorded_before_dispatch",
-            "execution.submit owner transaction",
-            &ctx.now,
-        );
-        if ctx.mutants.on("effect-recorded-after-dispatch") {
-            record["deferred_effect"] = effect;
-        } else {
-            save_effect(tx, &delivery_id, execution_id, &effect)?;
-        }
-        record["deliveries"] = json!([{"delivery_id": delivery_id, "delivery": "pending", "determined_at": ctx.now, "history": []}]);
-        record["effects"] = json!([delivery_id]);
-        outcome["delivery_id"] = json!(delivery_id);
-        effect_refs.push(delivery_id);
-    }
-    save(tx, execution_id, 1, &record)?;
     Ok((1, outcome, events, effect_refs))
 }
 
-/// `execution.cancel`: records the request and returns a request receipt (EXECUTION section 7).
+fn predicate_status<'a>(adapter: &'a Value, name: &str) -> &'a str {
+    adapter["predicates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| p["name"] == name)
+        .and_then(|p| p["status"].as_str())
+        .unwrap_or("unknown")
+}
+
+/// `execution.cancel`: records the request and its forwarding effect and returns a request
+/// receipt (EXECUTION section 7). The harness is asked later; the outcome is observed separately.
 pub fn cancel(
     tx: &Transaction,
     execution_id: &str,
     sequence: i64,
     ctx: &Context,
-) -> rusqlite::Result<(i64, Value, Vec<Draft>, Vec<String>)> {
+) -> rusqlite::Result<Applied> {
     let (revision, mut record) = load(tx, execution_id)?.unwrap_or((0, json!({})));
-    let receipt = json!({"state": "cancel_requested", "operation_ref": format!("op-{sequence}")});
-    record["cancellation"] = json!({"receipt": receipt});
+    let operation_ref = format!("op-{sequence}");
+    let receipt = json!({"state": "cancel_requested", "operation_ref": operation_ref});
+    let effect_id = format!(
+        "{execution_id}.cancel-{}",
+        count_prefixed(&record, "effects", ".cancel-") + 1
+    );
+    let effect = new_effect(
+        &effect_id,
+        "execution.cancel_forwarding",
+        execution_id,
+        &json!(crate::json::sha256_digest(operation_ref.as_bytes())),
+        &record,
+        "idempotent_key",
+        &json!(operation_ref),
+        Some(("outcome", "cancellation outcome", Value::Null)),
+        &ctx.now,
+        "execution.cancel owner transaction",
+    );
+    save_effect(tx, &effect_id, execution_id, &effect)?;
+    push(&mut record, "effects", json!(effect_id));
+    record["cancellation"] = json!({"receipt": receipt, "effect": effect_id});
     if ctx.mutants.on("cancel-reports-cancelled") {
         record["cancellation"]["outcome"] = json!("cancelled");
     }
@@ -319,10 +671,20 @@ pub fn cancel(
         revision,
         json!({"receipt": receipt}),
     )];
-    Ok((revision, json!({"receipt": receipt}), events, Vec::new()))
+    Ok((
+        revision,
+        json!({"receipt": receipt}),
+        events,
+        vec![effect_id],
+    ))
 }
 
-fn provider_event(tx: &Transaction, stream: &str, now: &str, draft: Draft) -> rusqlite::Result<()> {
+pub(crate) fn provider_event(
+    tx: &Transaction,
+    stream: &str,
+    now: &str,
+    draft: Draft,
+) -> rusqlite::Result<()> {
     let (event_type, event_subject, revision, payload) = draft;
     append_event(
         tx,
@@ -341,7 +703,7 @@ fn provider_event(tx: &Transaction, stream: &str, now: &str, draft: Draft) -> ru
     Ok(())
 }
 
-fn execution_ids(tx: &Transaction) -> rusqlite::Result<Vec<String>> {
+pub(crate) fn execution_ids(tx: &Transaction) -> rusqlite::Result<Vec<String>> {
     let mut statement = tx.prepare("SELECT id FROM subjects WHERE kind=?1 ORDER BY id")?;
     let rows = statement.query_map([KIND], |r| r.get(0))?;
     rows.collect()
@@ -395,16 +757,24 @@ fn still_authorized(
     Ok(true)
 }
 
+fn started_at(record: &Value) -> String {
+    record["admitted_at"]
+        .as_str()
+        .or_else(|| record["submitted_at"].as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn deadline_passed(record: &Value, now: &str) -> bool {
-    let submitted = record["submitted_at"].as_str().unwrap_or_default();
+    let started = started_at(record);
     ["delivery", "execution_deadline"].iter().any(|name| {
         record["timeouts"][*name]
             .as_i64()
-            .is_some_and(|seconds| now >= add_seconds(submitted, seconds).as_str())
+            .is_some_and(|seconds| now >= add_seconds(&started, seconds).as_str())
     })
 }
 
-fn bump_generation(record: &mut Value) {
+pub(crate) fn bump_generation(record: &mut Value) {
     let generation = record["host"]["generation"].as_i64().unwrap_or(1) + 1;
     record["host"]["generation"] = json!(generation);
 }
@@ -416,7 +786,9 @@ fn bump_generation(record: &mut Value) {
 ///   recovery policy: resume under the same identity, or terminate as `failed_before_delivery`.
 ///
 /// A resumed or ambiguous delivery advances the host generation so older dispatchers are fenced.
-/// A delivery already declared `failed_before_delivery` is never reopened.
+/// A delivery already declared `failed_before_delivery` is never reopened. Executions whose host
+/// survived keep their host generation and are reattached, not respawned (SCN-13); pending native
+/// action requests survive (SCN-12).
 pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
     let stream = store.stream_id()?;
     let tx = store.transaction()?;
@@ -426,6 +798,54 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
         let Some((mut revision, mut record)) = load(&tx, &id)? else {
             continue;
         };
+        if mutants.on("actions-lost-on-restart")
+            && record["actions"]
+                .as_array()
+                .is_some_and(|list| list.iter().any(|a| a["state"] == "pending"))
+        {
+            if let Some(list) = record["actions"].as_array_mut() {
+                list.retain(|a| a["state"] != "pending");
+            }
+            record["runtime"] = json!("unknown");
+            if let Some(map) = record.as_object_mut() {
+                map.remove("runtime_detail");
+            }
+            revision += 1;
+            save(&tx, &id, revision, &record)?;
+        }
+        if mutants.on("respawn-on-restart")
+            && record["admission"] == "admitted"
+            && matches!(
+                record["delivery"].as_str(),
+                Some("acknowledged" | "delivered")
+            )
+            && record["runtime"] != "exited"
+        {
+            bump_generation(&mut record);
+            let count = record["deliveries"].as_array().map_or(0, Vec::len) + 1;
+            let delivery_id = format!("{id}.delivery-{count}");
+            let effect = new_effect(
+                &delivery_id,
+                "execution.prompt_submission",
+                &id,
+                &record["brief_digest"],
+                &record,
+                "non_repeatable",
+                &record["operation_ref"],
+                None,
+                now,
+                "respawn",
+            );
+            save_effect(&tx, &delivery_id, &id, &effect)?;
+            push(
+                &mut record,
+                "deliveries",
+                json!({"delivery_id": delivery_id, "delivery": "pending", "determined_at": now, "history": []}),
+            );
+            push(&mut record, "effects", json!(delivery_id));
+            save(&tx, &id, revision + 1, &record)?;
+            continue;
+        }
         let reopen = record["delivery"] == "failed_before_delivery"
             && mutants.on("failed-before-delivery-reopened");
         if record["admission"] != "admitted" || (record["delivery"] != "pending" && !reopen) {
@@ -524,7 +944,25 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
     tx.commit()
 }
 
-/// Advance every execution's script and timeouts as far as the provider clock allows.
+/// Mutant `cancels-on-disconnect` only: a closing session cancels every running execution.
+pub fn cancel_on_disconnect(store: &mut Store, now: &str) -> rusqlite::Result<()> {
+    let tx = store.transaction()?;
+    for id in execution_ids(&tx)? {
+        if let Some((revision, mut record)) = load(&tx, &id)?
+            && record["admission"] == "admitted"
+            && record["runtime"] != "exited"
+            && record.get("cancellation").is_none()
+        {
+            record["cancellation"] = json!({"receipt": {"state": "cancel_requested", "operation_ref": "op-disconnect"}, "outcome": "cancelled"});
+            save(&tx, &id, revision + 1, &record)?;
+        }
+    }
+    let _ = now;
+    tx.commit()
+}
+
+/// Advance every execution's script and timeouts as far as the provider clock allows, then admit
+/// executions waiting for capacity.
 pub fn tick(
     store: &mut Store,
     now: &str,
@@ -532,35 +970,98 @@ pub fn tick(
     mutants: &Mutants,
 ) -> rusqlite::Result<()> {
     let stream = store.stream_id()?;
-    let ids = {
-        let tx = store.transaction()?;
-        let ids = execution_ids(&tx)?;
-        tx.commit()?;
-        ids
-    };
-    for id in ids {
-        loop {
+    loop {
+        let ids = {
             let tx = store.transaction()?;
-            let Some((revision, record)) = load(&tx, &id)? else {
-                break;
-            };
-            let progressed = step(&tx, &stream, now, executor, mutants, &id, revision, record)?;
+            let ids = execution_ids(&tx)?;
             tx.commit()?;
-            if !progressed {
-                break;
+            ids
+        };
+        for id in ids {
+            loop {
+                let tx = store.transaction()?;
+                let Some((revision, record)) = load(&tx, &id)? else {
+                    break;
+                };
+                let progressed = step(&tx, &stream, now, executor, mutants, &id, revision, record)?;
+                tx.commit()?;
+                if !progressed {
+                    break;
+                }
             }
+            let tx = store.transaction()?;
+            if let Some((revision, record)) = load(&tx, &id)? {
+                timeouts(&tx, &stream, now, mutants, &id, revision, record)?;
+            }
+            tx.commit()?;
         }
-        let tx = store.transaction()?;
-        if let Some((revision, record)) = load(&tx, &id)? {
-            timeouts(&tx, &stream, now, mutants, &id, revision, record)?;
+        if !admit_from_queue(store, &stream, now, executor, mutants)? {
+            return Ok(());
         }
-        tx.commit()?;
     }
-    Ok(())
+}
+
+/// Admit executions queued for capacity, oldest first, while capacity allows (EXE-2).
+fn admit_from_queue(
+    store: &mut Store,
+    stream: &str,
+    now: &str,
+    executor: &Value,
+    mutants: &Mutants,
+) -> rusqlite::Result<bool> {
+    let tx = store.transaction()?;
+    let mut queued = Vec::new();
+    for id in execution_ids(&tx)? {
+        if let Some((revision, record)) = load(&tx, &id)?
+            && record["admission"] == "queued"
+            && record["queue_reason"] == "capacity"
+        {
+            queued.push((operation_sequence(&record), id, revision, record));
+        }
+    }
+    queued.sort_by_key(|entry| entry.0);
+    let mut admitted = false;
+    for (_, id, revision, mut record) in queued {
+        if executor["capacity"]
+            .as_i64()
+            .is_some_and(|capacity| running(&tx).is_ok_and(|n| n >= capacity))
+        {
+            break;
+        }
+        record["admission"] = json!("admitted");
+        record["admitted_at"] = json!(now);
+        record["last_observation_at"] = json!(now);
+        if let Some(map) = record.as_object_mut() {
+            map.remove("queue_reason");
+        }
+        let delivery_id = open_delivery(
+            &tx,
+            &id,
+            &mut record,
+            now,
+            "admission from the capacity queue",
+            mutants,
+        )?;
+        save(&tx, &id, revision + 1, &record)?;
+        provider_event(
+            &tx,
+            stream,
+            now,
+            (
+                "execution.admission.changed",
+                subject(&id),
+                revision + 1,
+                json!({"admission": "admitted", "delivery_id": delivery_id}),
+            ),
+        )?;
+        admitted = true;
+    }
+    tx.commit()?;
+    Ok(admitted)
 }
 
 /// Record the write-ahead dispatch marker before any harness write.
-fn mark_dispatch(effect: &mut Value, generation: &Value, now: &str) {
+pub(crate) fn mark_dispatch(effect: &mut Value, generation: &Value, now: &str) {
     if effect["dispatch"].is_null() {
         effect["dispatch"] = json!({"generation": generation});
         observe_effect(
@@ -570,6 +1071,30 @@ fn mark_dispatch(effect: &mut Value, generation: &Value, now: &str) {
             "write-ahead dispatch marker",
             now,
         );
+    }
+}
+
+fn liability(record: &Value) -> &'static str {
+    let observations = record["usage"]["observations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if observations.is_empty() {
+        return "none";
+    }
+    let mut latest: Vec<(Value, Value)> = Vec::new();
+    for observation in observations {
+        let invocation = observation["invocation_id"].clone();
+        latest.retain(|(id, _)| *id != invocation);
+        latest.push((invocation, observation["basis"].clone()));
+    }
+    if latest
+        .iter()
+        .all(|(_, basis)| basis == "observed" || basis == "enforced_bound")
+    {
+        "resolved"
+    } else {
+        "unresolved"
     }
 }
 
@@ -609,15 +1134,66 @@ fn step(
         if now < instant {
             return Ok(false);
         }
-    } else if step["wait_for"] == "cancel" {
-        if record.get("cancellation").is_none() {
+    } else if let Some(what) = step["wait_for"].as_str() {
+        let ready = match what {
+            "cancel" => record.get("cancellation").is_some(),
+            "steer" => record["steering"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|s| s["request"] == "recorded"),
+            "action" => record["actions"].as_array().is_some_and(|list| {
+                !list.is_empty() && list.iter().all(|a| a["state"] == "answered")
+            }),
+            _ => false,
+        };
+        if !ready {
             return Ok(false);
+        }
+        if what == "action" {
+            dispatch_action_responses(tx, id, &mut record, &generation, now, mutants)?;
+            record["runtime"] = json!("active");
+            if let Some(map) = record.as_object_mut() {
+                map.remove("runtime_detail");
+            }
+            drafts.push((
+                "execution.runtime.changed",
+                subject(id),
+                revision,
+                json!({"runtime": "active"}),
+            ));
         }
     } else if let Some(outcome) = step["on_cancel"].as_str() {
         if record.get("cancellation").is_none() {
             return Ok(false);
         }
         if record["cancellation"].get("outcome").is_none() {
+            let mut outcome = outcome.to_string();
+            if let Some(effect_id) = record["cancellation"]["effect"].as_str().map(String::from)
+                && let Some(mut forwarding) = load_effect(tx, &effect_id)?
+            {
+                mark_dispatch(&mut forwarding, &generation, now);
+                if run_attempts(&mut forwarding, &mut record, now, mutants) {
+                    observe_effect(
+                        &mut forwarding,
+                        "succeeded",
+                        "harness_response",
+                        "scripted harness cancellation response",
+                        now,
+                    );
+                    set_obligation(&mut forwarding, "satisfied");
+                } else {
+                    observe_effect(
+                        &mut forwarding,
+                        "unknown",
+                        "transport_error",
+                        "scripted harness transport",
+                        now,
+                    );
+                    outcome = "unknown".to_string();
+                }
+                save_effect(tx, &effect_id, id, &forwarding)?;
+            }
             record["cancellation"]["outcome"] = json!(outcome);
             drafts.push((
                 "execution.cancel.observed",
@@ -686,47 +1262,71 @@ fn step(
                 map.remove("deferred_effect");
             }
         }
-        if effect.is_object() {
+        let sent = if effect.is_object() {
             mark_dispatch(&mut effect, &generation, now);
-        }
-        let proves = match proof {
-            "provider_ack_id" => true,
-            "echo" => {
-                executor["adapter"]["echo_proves_delivery"]
-                    .as_bool()
-                    .unwrap_or(false)
-                    || mutants.on("echo-always-acknowledged")
-            }
-            "bytes_written" => mutants.on("bytes-written-acknowledged"),
-            _ => false,
-        };
-        let evidence = json!({"class": proof, "source": "scripted harness"});
-        if proves {
-            observe_effect(&mut effect, "succeeded", proof, "scripted harness", now);
-            set_obligation(&mut effect, "satisfied");
-            determine(
-                &mut record,
-                "acknowledged",
-                evidence.clone(),
-                Some(proof),
-                now,
-                true,
-            );
+            run_attempts(&mut effect, &mut record, now, mutants)
         } else {
-            // Evidence that does not establish delivery: still awaiting evidence.
-            observe_effect(&mut effect, "pending", proof, "scripted harness", now);
-            record["deliveries"][0]["proof_class"] = json!(proof);
-            record["deliveries"][0]["evidence"] = evidence.clone();
+            true
+        };
+        if !sent {
+            // A non-repeatable submission whose attempt outcome is unknown is never retried
+            // automatically (CORE section 19.3); the delivery is ambiguous until reconciled.
+            let evidence =
+                json!({"class": "transport_error", "source": "scripted harness transport"});
+            observe_effect(
+                &mut effect,
+                "unknown",
+                "transport_error",
+                "scripted harness transport",
+                now,
+            );
+            determine(&mut record, "ambiguous", evidence.clone(), None, now, true);
+            drafts.push((
+                "execution.delivery.observed",
+                subject(id),
+                revision,
+                json!({"delivery_id": delivery_id, "delivery": "ambiguous", "evidence": evidence}),
+            ));
+        } else {
+            let proves = match proof {
+                "provider_ack_id" => true,
+                "echo" => {
+                    executor["adapter"]["echo_proves_delivery"]
+                        .as_bool()
+                        .unwrap_or(false)
+                        || mutants.on("echo-always-acknowledged")
+                }
+                "bytes_written" => mutants.on("bytes-written-acknowledged"),
+                _ => false,
+            };
+            let evidence = json!({"class": proof, "source": "scripted harness"});
+            if proves {
+                observe_effect(&mut effect, "succeeded", proof, "scripted harness", now);
+                set_obligation(&mut effect, "satisfied");
+                determine(
+                    &mut record,
+                    "acknowledged",
+                    evidence.clone(),
+                    Some(proof),
+                    now,
+                    true,
+                );
+            } else {
+                // Evidence that does not establish delivery: still awaiting evidence.
+                observe_effect(&mut effect, "pending", proof, "scripted harness", now);
+                record["deliveries"][0]["proof_class"] = json!(proof);
+                record["deliveries"][0]["evidence"] = evidence.clone();
+            }
+            drafts.push((
+                "execution.delivery.observed",
+                subject(id),
+                revision,
+                json!({"delivery_id": delivery_id, "delivery": record["delivery"], "proof_class": proof, "evidence": evidence}),
+            ));
         }
         if effect.is_object() {
             save_effect(tx, &delivery_id, id, &effect)?;
         }
-        drafts.push((
-            "execution.delivery.observed",
-            subject(id),
-            revision,
-            json!({"delivery_id": delivery_id, "delivery": record["delivery"], "proof_class": proof, "evidence": evidence}),
-        ));
     } else if let Some(found) = step["reconcile_finds"].as_str() {
         let resolved = match found {
             "delivered" => "delivered",
@@ -758,12 +1358,184 @@ fn step(
         ));
     } else if let Some(runtime) = step["runtime"].as_str() {
         record["runtime"] = json!(runtime);
-        let mut payload = json!({"runtime": runtime});
-        if let Some(action) = step.get("action_id") {
-            payload["action_id"] = action.clone();
-            payload["owner"] = step["owner"].clone();
+        drafts.push((
+            "execution.runtime.changed",
+            subject(id),
+            revision,
+            json!({"runtime": runtime}),
+        ));
+    } else if let Some(request) = step.get("request_action") {
+        push(
+            &mut record,
+            "actions",
+            json!({"action_id": request["action_id"], "owner": request["owner"], "state": "pending", "requested_at": now}),
+        );
+        record["runtime"] = json!("requires_action");
+        let mut payload = json!({"runtime": "requires_action"});
+        if !mutants.on("requires-action-without-identity") {
+            let detail = json!({"action_id": request["action_id"], "owner": request["owner"]});
+            record["runtime_detail"] = detail.clone();
+            payload["action_id"] = detail["action_id"].clone();
+            payload["owner"] = detail["owner"].clone();
         }
         drafts.push(("execution.runtime.changed", subject(id), revision, payload));
+    } else if let Some(proof) = step["steer_deliver"].as_str() {
+        if !deliver_steering(
+            tx,
+            id,
+            &mut record,
+            proof,
+            &generation,
+            now,
+            mutants,
+            revision,
+            &mut drafts,
+        )? {
+            return Ok(false);
+        }
+    } else if step.get("steer_behavior").is_some() {
+        let Some(entry) = record["steering"]
+            .as_array_mut()
+            .and_then(|list| list.iter_mut().rev().find(|s| s["request"] == "recorded"))
+        else {
+            return Ok(false);
+        };
+        let evidence = json!({"class": "harness_observation", "source": "scripted harness"});
+        entry["behavior"] = json!("observed");
+        entry["behavior_evidence"] = evidence.clone();
+        drafts.push((
+            "execution.steer.behavior.observed",
+            subject(id),
+            revision,
+            json!({"steer_id": entry["steer_id"], "evidence": evidence}),
+        ));
+    } else if let Some(probe) = step.get("workspace") {
+        if record["workspace"].is_object() {
+            let mut probe = probe.clone();
+            probe["probed_at"] = json!(now);
+            record["workspace"]["probe"] = probe;
+        }
+    } else if let Some(commit) = step["agent_reports_commit"].as_str() {
+        if record["workspace"].is_object() {
+            push(
+                &mut record["workspace"],
+                "annotations",
+                json!({"kind": "agent_reported_commit", "value": commit, "basis": "agent_report", "recorded_at": now}),
+            );
+        }
+    } else if let Some(usage) = step.get("usage") {
+        let mut observation = usage.clone();
+        observation["recorded_at"] = json!(now);
+        if !record["usage"].is_object() {
+            record["usage"] = json!({"observations": []});
+        }
+        push(&mut record["usage"], "observations", observation.clone());
+        if liability(&record) == "resolved" && record["budget"]["reservation"] == "reserved" {
+            record["budget"]["reservation"] = json!("settled");
+        }
+        drafts.push((
+            "execution.usage.observed",
+            subject(id),
+            revision,
+            observation,
+        ));
+    } else if let Some(delivery) = step.get("context_delivery") {
+        let binding = record["context"]["bindings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|b| b["binding_id"] == delivery["binding_id"])
+            .cloned()
+            .unwrap_or(Value::Null);
+        let boundary = delivery["boundary"].as_str().unwrap_or_default();
+        let supported = executor["adapter"]["context_boundaries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|b| b == boundary);
+        let after_transition = binding["obligation"] == "required_before_transition"
+            && record["transitions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|t| *t == binding["transition"]);
+        let outcome = if !supported {
+            "unavailable"
+        } else if after_transition && !mutants.on("no-late-state") {
+            "late"
+        } else {
+            match delivery["harness"].as_str() {
+                Some("acknowledged") => "acknowledged",
+                Some("accepted") => "delivered",
+                Some("queued") => "queued",
+                _ => "unknown",
+            }
+        };
+        let entry = json!({
+            "binding_id": delivery["binding_id"],
+            "digest": binding["packet"]["digest"],
+            "target": {"execution": subject(id)},
+            "boundary": boundary,
+            "outcome": outcome,
+            "recorded_at": now,
+        });
+        if record["context"].is_object() {
+            push(&mut record["context"], "deliveries", entry.clone());
+        }
+        drafts.push((
+            "execution.context.delivery.observed",
+            subject(id),
+            revision,
+            entry,
+        ));
+    } else if let Some(transition) = step["transition"].as_str() {
+        push(&mut record, "transitions", json!(transition));
+        drafts.push((
+            "execution.transition.observed",
+            subject(id),
+            revision,
+            json!({"transition": transition}),
+        ));
+    } else if let Some(count) = step["transport_errors"].as_i64() {
+        record["pending_transport_errors"] = json!(count);
+    } else if step.get("probe_status").is_some() {
+        let probe_id = format!(
+            "{id}.probe-{}",
+            count_prefixed(&record, "effects", ".probe-") + 1
+        );
+        let mut probe = new_effect(
+            &probe_id,
+            "execution.status_probe",
+            id,
+            &json!(crate::json::sha256_digest(probe_id.as_bytes())),
+            &record,
+            "read",
+            &record["operation_ref"],
+            Some(("result", "harness status", Value::Null)),
+            now,
+            "scripted executor status probe",
+        );
+        mark_dispatch(&mut probe, &generation, now);
+        if run_attempts(&mut probe, &mut record, now, mutants) {
+            observe_effect(
+                &mut probe,
+                "succeeded",
+                "harness_status",
+                "scripted harness",
+                now,
+            );
+            set_obligation(&mut probe, "satisfied");
+        } else {
+            observe_effect(
+                &mut probe,
+                "unknown",
+                "transport_error",
+                "scripted harness transport",
+                now,
+            );
+        }
+        save_effect(tx, &probe_id, id, &probe)?;
+        push(&mut record, "effects", json!(probe_id));
     } else if step.get("host_restart").is_some() {
         bump_generation(&mut record);
         record["runtime"] = json!("unknown");
@@ -790,11 +1562,129 @@ fn step(
     } else if step.get("stall").is_some() {
         return Ok(false);
     }
+    if !drafts.is_empty() {
+        record["last_observation_at"] = json!(now);
+    }
     save(tx, id, revision, &record)?;
     for draft in drafts {
         provider_event(tx, stream, now, draft)?;
     }
     Ok(true)
+}
+
+/// Deliver the oldest undispatched steering message. Returns false when none is waiting.
+#[allow(clippy::too_many_arguments)]
+fn deliver_steering(
+    tx: &Transaction,
+    id: &str,
+    record: &mut Value,
+    proof: &str,
+    generation: &Value,
+    now: &str,
+    mutants: &Mutants,
+    revision: i64,
+    drafts: &mut Vec<Draft>,
+) -> rusqlite::Result<bool> {
+    let Some(index) = record["steering"].as_array().and_then(|list| {
+        list.iter()
+            .position(|s| s["request"] == "recorded" && s["dispatched"] != true)
+    }) else {
+        return Ok(false);
+    };
+    let delivery_id = record["steering"][index]["delivery_id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let Some(mut effect) = load_effect(tx, &delivery_id)? else {
+        return Ok(false);
+    };
+    mark_dispatch(&mut effect, generation, now);
+    let sent = run_attempts(&mut effect, record, now, mutants);
+    let entry = &mut record["steering"][index];
+    entry["dispatched"] = json!(true);
+    let evidence = if sent {
+        json!({"class": proof, "source": "scripted harness"})
+    } else {
+        json!({"class": "transport_error", "source": "scripted harness transport"})
+    };
+    if !sent {
+        observe_effect(
+            &mut effect,
+            "unknown",
+            "transport_error",
+            "scripted harness transport",
+            now,
+        );
+        entry["delivery"] = json!("ambiguous");
+    } else if proof == "provider_ack_id" {
+        observe_effect(&mut effect, "succeeded", proof, "scripted harness", now);
+        set_obligation(&mut effect, "satisfied");
+        entry["delivery"] = json!("acknowledged");
+        entry["proof_class"] = json!(proof);
+        if mutants.on("steer-ack-implies-behavior") {
+            entry["behavior"] = json!("observed");
+            entry["behavior_evidence"] = evidence.clone();
+        }
+    } else {
+        observe_effect(&mut effect, "pending", proof, "scripted harness", now);
+        entry["proof_class"] = json!(proof);
+    }
+    entry["evidence"] = evidence.clone();
+    let payload = json!({"steer_id": entry["steer_id"], "delivery_id": delivery_id, "delivery": entry["delivery"], "evidence": evidence});
+    save_effect(tx, &delivery_id, id, &effect)?;
+    drafts.push((
+        "execution.steer.delivery.observed",
+        subject(id),
+        revision,
+        payload,
+    ));
+    Ok(true)
+}
+
+/// Send recorded responses to answered native action requests.
+fn dispatch_action_responses(
+    tx: &Transaction,
+    id: &str,
+    record: &mut Value,
+    generation: &Value,
+    now: &str,
+    mutants: &Mutants,
+) -> rusqlite::Result<()> {
+    let count = record["actions"].as_array().map_or(0, Vec::len);
+    for index in 0..count {
+        let action = record["actions"][index].clone();
+        let Some(effect_id) = action["response_effect"].as_str() else {
+            continue;
+        };
+        if action["dispatched"] == true {
+            continue;
+        }
+        let Some(mut effect) = load_effect(tx, effect_id)? else {
+            continue;
+        };
+        mark_dispatch(&mut effect, generation, now);
+        if run_attempts(&mut effect, record, now, mutants) {
+            observe_effect(
+                &mut effect,
+                "succeeded",
+                "provider_ack_id",
+                "scripted harness",
+                now,
+            );
+            set_obligation(&mut effect, "satisfied");
+        } else {
+            observe_effect(
+                &mut effect,
+                "unknown",
+                "transport_error",
+                "scripted harness transport",
+                now,
+            );
+        }
+        save_effect(tx, effect_id, id, &effect)?;
+        record["actions"][index]["dispatched"] = json!(true);
+    }
+    Ok(())
 }
 
 fn complete(
@@ -861,13 +1751,6 @@ fn timeouts(
     revision: i64,
     mut record: Value,
 ) -> rusqlite::Result<()> {
-    if record["admission"] != "admitted" {
-        return Ok(());
-    }
-    let submitted = record["submitted_at"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
     let passed: Vec<String> = record["timeouts_passed"]
         .as_array()
         .into_iter()
@@ -875,23 +1758,74 @@ fn timeouts(
         .filter_map(Value::as_str)
         .map(String::from)
         .collect();
-    let mut due = Vec::new();
-    for (name, applies) in [
-        (
-            "delivery",
-            !is_terminal(record["delivery"].as_str().unwrap_or_default()),
-        ),
-        ("execution_deadline", record["runtime"] != "exited"),
-    ] {
-        let Some(seconds) = record["timeouts"][name].as_i64() else {
-            continue;
-        };
-        if applies
-            && !passed.contains(&name.to_string())
-            && now >= add_seconds(&submitted, seconds).as_str()
-        {
-            due.push(name);
+    let due_at = |base: Option<&str>, name: &str| -> bool {
+        match (base, record["timeouts"][name].as_i64()) {
+            (Some(base), Some(seconds)) => {
+                !passed.iter().any(|p| p == name) && now >= add_seconds(base, seconds).as_str()
+            }
+            _ => false,
         }
+    };
+    if record["admission"] == "queued" {
+        if !due_at(record["submitted_at"].as_str(), "queue") {
+            return Ok(());
+        }
+        let revision = revision + 1;
+        push(&mut record, "timeouts_passed", json!("queue"));
+        record["admission"] = json!("refused");
+        record["reason"] = json!("queue_timeout");
+        record["alternative"] = json!("submit again when the executor can admit it");
+        if let Some(map) = record.as_object_mut() {
+            map.remove("queue_reason");
+        }
+        if record["budget"]["reservation"] == "reserved" {
+            record["budget"]["reservation"] = json!("released");
+        }
+        save(tx, id, revision, &record)?;
+        provider_event(
+            tx,
+            stream,
+            now,
+            (
+                "execution.timeout.passed",
+                subject(id),
+                revision,
+                json!({"timeout": "queue"}),
+            ),
+        )?;
+        return provider_event(
+            tx,
+            stream,
+            now,
+            (
+                "execution.admission.changed",
+                subject(id),
+                revision,
+                json!({"admission": "refused", "reason": "queue_timeout"}),
+            ),
+        );
+    }
+    if record["admission"] != "admitted" {
+        return Ok(());
+    }
+    let started = started_at(&record);
+    let mut due = Vec::new();
+    if !is_terminal(record["delivery"].as_str().unwrap_or_default())
+        && due_at(Some(&started), "delivery")
+    {
+        due.push("delivery");
+    }
+    if record["runtime"] != "exited" && due_at(Some(&started), "execution_deadline") {
+        due.push("execution_deadline");
+    }
+    if record["runtime"] != "exited" && due_at(record["last_observation_at"].as_str(), "inactivity")
+    {
+        due.push("inactivity");
+    }
+    if record["delivery"] == "ambiguous"
+        && due_at(record["ambiguous_since"].as_str(), "reconciliation")
+    {
+        due.push("reconciliation");
     }
     if due.is_empty() {
         return Ok(());
@@ -911,16 +1845,14 @@ fn timeouts(
             continue;
         }
         revision += 1;
-        if let Some(list) = record["timeouts_passed"].as_array_mut() {
-            list.push(json!(name));
-        }
+        push(&mut record, "timeouts_passed", json!(name));
         drafts.push((
             "execution.timeout.passed",
             subject(id),
             revision,
             json!({"timeout": name}),
         ));
-        if name == "delivery" && effect.is_object() {
+        if matches!(name, "delivery" | "reconciliation") && effect.is_object() {
             let open: Vec<Value> = effect["obligations"]
                 .as_array()
                 .into_iter()
@@ -937,42 +1869,71 @@ fn timeouts(
                     json!({"effect": delivery_id, "obligation": obligation["id"]}),
                 ));
             }
-            // The wait for delivery evidence ended without a known outcome (owner decision 3).
-            if record["delivery"] == "pending" && !mutants.on("pending-forever") {
-                let dispatched = !effect["dispatch"].is_null();
-                let (delivery, class) = if dispatched {
-                    ("ambiguous", "delivery_timeout")
-                } else {
-                    ("failed_before_delivery", "delivery_timeout_before_dispatch")
-                };
-                let evidence = json!({"class": class, "source": "delivery timeout passed"});
-                determine(&mut record, delivery, evidence.clone(), None, now, true);
-                observe_effect(
-                    &mut effect,
-                    status_for(delivery),
-                    class,
-                    "delivery timeout passed",
-                    now,
-                );
-                drafts.push((
-                    "execution.delivery.observed",
-                    subject(id),
-                    revision,
-                    json!({"delivery_id": delivery_id, "delivery": delivery, "evidence": evidence}),
-                ));
-            }
         }
-        if name == "execution_deadline"
-            && mutants.on("deadline-marks-effect-failed")
+        // The wait for delivery evidence ended without a known outcome (owner decision 3).
+        if name == "delivery"
             && effect.is_object()
+            && record["delivery"] == "pending"
+            && !mutants.on("pending-forever")
         {
+            let dispatched = !effect["dispatch"].is_null();
+            let (delivery, class) = if dispatched {
+                ("ambiguous", "delivery_timeout")
+            } else {
+                ("failed_before_delivery", "delivery_timeout_before_dispatch")
+            };
+            let evidence = json!({"class": class, "source": "delivery timeout passed"});
+            determine(&mut record, delivery, evidence.clone(), None, now, true);
+            observe_effect(
+                &mut effect,
+                status_for(delivery),
+                class,
+                "delivery timeout passed",
+                now,
+            );
+            drafts.push((
+                "execution.delivery.observed",
+                subject(id),
+                revision,
+                json!({"delivery_id": delivery_id, "delivery": delivery, "evidence": evidence}),
+            ));
+        }
+        if name == "reconciliation" && mutants.on("reconciliation-timeout-resolves") {
+            let evidence = json!({"class": "reconciliation_timeout", "source": "reconciliation timeout passed"});
+            determine(
+                &mut record,
+                "not_delivered",
+                evidence.clone(),
+                None,
+                now,
+                true,
+            );
             observe_effect(
                 &mut effect,
                 "failed",
-                "timeout",
-                "execution deadline passed",
+                "reconciliation_timeout",
+                "reconciliation timeout passed",
                 now,
             );
+        }
+        if name == "inactivity" && mutants.on("inactivity-marks-exited") {
+            record["runtime"] = json!("exited");
+            record["exit"] = json!("forced_termination");
+        }
+        if name == "execution_deadline" {
+            if mutants.on("deadline-marks-effect-failed") && effect.is_object() {
+                observe_effect(
+                    &mut effect,
+                    "failed",
+                    "timeout",
+                    "execution deadline passed",
+                    now,
+                );
+            }
+            if mutants.on("refunds-on-timeout") && record["budget"].is_object() {
+                record["budget"]["reservation"] = json!("released");
+                record["usage"]["liability_override"] = json!("resolved");
+            }
         }
     }
     if effect.is_object() {
@@ -1000,6 +1961,17 @@ fn public_delivery(delivery: &Value) -> Value {
         }
     }
     out
+}
+
+/// Remove executor-internal bookkeeping from listed entries.
+fn public_entries(list: &Value) -> Value {
+    let mut list = list.clone();
+    for entry in list.as_array_mut().into_iter().flatten() {
+        if let Some(map) = entry.as_object_mut() {
+            map.remove("dispatched");
+        }
+    }
+    list
 }
 
 /// `execution.inspect`.
@@ -1047,10 +2019,48 @@ pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<
         "host": record["host"],
         "next_cursor": cursor,
     });
-    for key in ["predecessor", "correlation", "finalized_by", "cancellation"] {
+    for key in [
+        "predecessor",
+        "correlation",
+        "finalized_by",
+        "cancellation",
+        "reason",
+        "alternative",
+        "queue_reason",
+        "runtime_detail",
+        "continuation",
+        "context",
+    ] {
         if let Some(value) = record.get(key) {
             result[key] = value.clone();
         }
+    }
+    if let Some(cancellation) = result
+        .get_mut("cancellation")
+        .and_then(Value::as_object_mut)
+    {
+        cancellation.remove("effect");
+    }
+    for key in ["steering", "actions"] {
+        if record[key].as_array().is_some_and(|list| !list.is_empty()) {
+            result[key] = public_entries(&record[key]);
+        }
+    }
+    if record["workspace"].is_object() {
+        result["workspace"] = json!({
+            "lease": record["workspace"]["lease"],
+            "checkpoints": record["workspace"]["checkpoints"],
+        });
+    }
+    if record["usage"].is_object() || record["budget"].is_object() {
+        let mut usage = json!({
+            "observations": record["usage"]["observations"].as_array().cloned().unwrap_or_default(),
+            "liability": record["usage"]["liability_override"].as_str().unwrap_or(liability(&record)),
+        });
+        if record["budget"].is_object() {
+            usage["budget"] = record["budget"].clone();
+        }
+        result["usage"] = usage;
     }
     tx.commit()?;
     Ok(Some(result))
@@ -1133,8 +2143,10 @@ pub fn effect(store: &mut Store, id: &str, mutants: &Mutants) -> rusqlite::Resul
     }
     Ok(Some(json!({
         "effect": effect["descriptor"],
+        "revision": effect["revision"].as_i64().unwrap_or(1),
         "status": status,
         "observations": effect["observations"],
+        "attempts": effect["attempts"].as_array().cloned().unwrap_or_default(),
         "obligations": effect["obligations"],
     })))
 }

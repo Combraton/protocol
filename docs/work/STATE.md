@@ -2,7 +2,7 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-14 (owner decisions D1–D5 on the Execution contract implemented).
+- **Updated:** 2026-09-14 (M3 step 5, optional Execution features, done).
 - **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
   - Current milestone: [M3 task](release-0.1/M3.md), the Execution profile.
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
@@ -20,12 +20,12 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
     - restart recovery with a write-ahead marker, fencing and revalidation;
     - negotiated Core-feature dependencies with older-participant compatibility;
     - `effect_refs` compatibility and authorized effect reads.
-- **Evidence (local macOS arm64):**
-  - fmt, clippy, build and test clean; check-fixtures 182;
-  - reference over stdio: 172 pass, 10 skipped; reference over the Unix socket: 182 pass;
-  - `check-mutants` on both: all as intended (201 stdio and 12 socket mutant-fixture results);
-  - independent: 151 pass, 10 skipped, 21 unsupported, and it passes the new compatibility fixtures;
-  - race regression 20/20 both ways.
+  - **Step 5:** optional features (steering, actions, controller lease, workspaces, usage and budgets, context bindings, discovery, continuation), capacity and context queueing, the remaining timeouts, retry classes with attempts, obligation abort, detach and reattach, and SCN-12 to SCN-15.
+- **Evidence at step 5 (local macOS arm64):**
+  - fmt, clippy, build, test and self-test clean; check-fixtures 204;
+  - reference over stdio: 192 pass, 12 skipped; reference over the Unix socket: 204 pass;
+  - `check-mutants` on both: all as intended (233 stdio and 15 socket mutant-fixture results);
+  - independent: 151 pass, 12 skipped, 41 unsupported (it does not claim Execution yet).
 
   CI: [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
 - **Owner decisions recorded:**
@@ -35,6 +35,6 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - M3 acceptance must keep effects/reconciliation, telemetry gaps, backpressure, fault injection, a controllable test clock, idle-expiry coverage, a deterministic concurrency regression where feasible, test controls outside the protocol, a scripted executor, independent checks and uploaded CI evidence.
 - **Open owner decisions:** none pending. Machine-readable feature-dependency advertising is an explicit M6 decision (CMP-5).
 - **Prompt disposition:** no active continuation prompt. The workspace M2 prompt is retired, and this file and the handoff are the entry points.
-- **Next action:** M3 step 5 (optional features, including executor-neutral discovery), then steps 6–9.
+- **Next action:** M3 step 6 (output telemetry with lost ranges; `core.events.backpressure` on both bindings), then steps 7–9.
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

@@ -24,7 +24,15 @@
       "core.grants",
       "core.events",
       "core.capabilities",
-      "core.effects"
+      "core.effects",
+      "execution.steering",
+      "execution.actions",
+      "execution.controller",
+      "execution.workspaces",
+      "execution.usage",
+      "execution.context",
+      "execution.discovery",
+      "execution.continuation"
     ],
     "test_controls": [
       "clock.file",
@@ -219,7 +227,35 @@
       "execution-selected-implicitly",
       "effect-refs-on-core-operations",
       "replay-effect-refs-differ",
-      "effect-visible-across-principals"
+      "effect-visible-across-principals",
+      "steer-claims-delivery",
+      "steer-unsupported-accepted",
+      "steer-ack-implies-behavior",
+      "global-action-namespace",
+      "requires-action-without-identity",
+      "actions-lost-on-restart",
+      "stale-controller-accepted",
+      "agent-commit-as-receipt",
+      "incomplete-checkpoint-complete",
+      "admits-unenforceable-ceiling",
+      "refunds-on-timeout",
+      "required-binding-admitted",
+      "digest-mismatch-satisfies",
+      "no-late-state",
+      "detected-offered-as-usable",
+      "discovery-unknown-as-yes",
+      "fresh-labeled-resumed",
+      "non-repeatable-retried",
+      "idempotent-retry-new-key",
+      "read-never-retried",
+      "abort-marks-effect-failed",
+      "capacity-ignored",
+      "inactivity-marks-exited",
+      "reconciliation-timeout-resolves",
+      "cancels-on-disconnect",
+      "respawn-on-restart",
+      "feature-operations-ungated",
+      "feature-fields-accepted"
     ]
   }
 }

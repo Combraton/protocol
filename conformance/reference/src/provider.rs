@@ -118,6 +118,36 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "execution.steer",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.respond_action",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.controller.claim",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.workspace.checkpoint",
+        profile: "execution",
+        command: true,
+    },
+    Operation {
+        name: "execution.discovery.list",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
+        name: "core.effects.abort_obligation",
+        profile: "core",
+        command: true,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -165,7 +195,7 @@ const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "execution",
         majors: &[1],
-        features: &[],
+        features: &EXECUTION_FEATURES,
         depends_on: &["core"],
         requires_core_features: &["core.events", "core.capabilities", "core.effects"],
     },
@@ -177,6 +207,35 @@ const SUPPORTED: &[SupportedProfile] = &[
         requires_core_features: &[],
     },
 ];
+/// Optional `execution/1` features (EXECUTION section 11).
+const EXECUTION_FEATURES: [&str; 8] = [
+    "execution.steering",
+    "execution.actions",
+    "execution.controller",
+    "execution.workspaces",
+    "execution.usage",
+    "execution.context",
+    "execution.discovery",
+    "execution.continuation",
+];
+
+/// Submit payload members whose meaning belongs to an optional feature.
+const FEATURE_FIELDS: [(&str, &str); 4] = [
+    ("workspace", "execution.workspaces"),
+    ("budget", "execution.usage"),
+    ("context_bindings", "execution.context"),
+    ("continuation", "execution.continuation"),
+];
+
+/// Execution commands that change what an execution does; they carry the controller epoch.
+const CONTROLLED_COMMANDS: [&str; 5] = [
+    "execution.submit",
+    "execution.cancel",
+    "execution.steer",
+    "execution.respond_action",
+    "execution.workspace.checkpoint",
+];
+
 const DECLARED_UNSUPPORTED: &[&str] = &["coordination", "remote-trust"];
 
 pub struct Reject {
@@ -430,29 +489,26 @@ impl Provider {
             if operation.command || !self.mutants.on("requires-commands-only") {
                 self.check_requires(&params)?;
             }
-            let feature = if operation.name.starts_with("core.grant.") {
-                Some("core.grants")
-            } else if operation.name.starts_with("core.events.") {
-                Some("core.events")
-            } else if operation.name == "core.capabilities" {
-                Some("core.capabilities")
-            } else if operation.name.starts_with("core.effects.") {
-                Some("core.effects")
-            } else {
-                None
+            let feature = match operation.name {
+                name if name.starts_with("core.grant.") => Some("core.grants"),
+                name if name.starts_with("core.events.") => Some("core.events"),
+                "core.capabilities" => Some("core.capabilities"),
+                name if name.starts_with("core.effects.") => Some("core.effects"),
+                _ if self.mutants.on("feature-operations-ungated") => None,
+                "execution.steer" => Some("execution.steering"),
+                "execution.respond_action" => Some("execution.actions"),
+                "execution.controller.claim" => Some("execution.controller"),
+                "execution.workspace.checkpoint" => Some("execution.workspaces"),
+                "execution.discovery.list" => Some("execution.discovery"),
+                _ => None,
             };
-            if let Some(feature) = feature {
-                let negotiated = self
-                    .selected
-                    .as_ref()
-                    .and_then(|selected| selected.get("core"))
-                    .is_some_and(|features| features.iter().any(|f| f == feature));
-                if !negotiated {
-                    return Err(reject(
-                        "unsupported_required_feature",
-                        json!({"features": [feature]}),
-                    ));
-                }
+            if let Some(feature) = feature
+                && !self.feature_negotiated(feature)
+            {
+                return Err(reject(
+                    "unsupported_required_feature",
+                    json!({"features": [feature]}),
+                ));
             }
         }
 
@@ -670,6 +726,25 @@ impl Provider {
                     "execution.cancel" => {
                         crate::execution::cancel(tx, &subject_id, sequence, &context)?
                     }
+                    "execution.steer" => {
+                        crate::features::steer(tx, &subject_id, &payload, sequence, &context)?
+                    }
+                    "execution.respond_action" => crate::features::respond_action(
+                        tx,
+                        &subject_id,
+                        &payload,
+                        sequence,
+                        &context,
+                    )?,
+                    "execution.controller.claim" => {
+                        crate::features::claim_controller(tx, &subject_id, &principal)?
+                    }
+                    "execution.workspace.checkpoint" => {
+                        crate::features::checkpoint(tx, &subject_id, &context)?
+                    }
+                    "core.effects.abort_obligation" => {
+                        crate::features::abort_obligation(tx, &subject_id, &payload, &context)?
+                    }
                     _ => {
                         let (revision, outcome, events) = apply_change(
                             tx,
@@ -843,6 +918,15 @@ impl Provider {
             "core.effects.get" => {
                 self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
             }
+            "core.effects.abort_obligation" => {
+                let execution =
+                    self.effect_execution(params["subject"]["id"].as_str().unwrap_or_default())?;
+                let id = execution.unwrap_or_else(|| "-unresolved".to_string());
+                return Ok(Some(vec![(
+                    "core.effects.abort_obligation".to_string(),
+                    json!({"kind": crate::execution::KIND, "id": id}),
+                )]));
+            }
             "execution.reconcile" => match params["payload"]["delivery_id"].as_str() {
                 Some(delivery) => self.effect_execution(delivery)?,
                 None => self
@@ -871,6 +955,15 @@ impl Provider {
 
     fn effect_execution(&self, effect: &str) -> Result<Option<String>, Reject> {
         self.store.effect_execution(effect).map_err(storage)
+    }
+
+    /// Whether a profile feature was negotiated in this session.
+    fn feature_negotiated(&self, feature: &str) -> bool {
+        let profile = feature.split('.').next().unwrap_or_default();
+        self.selected
+            .as_ref()
+            .and_then(|selected| selected.get(profile))
+            .is_some_and(|features| features.iter().any(|f| f == feature))
     }
 
     fn grants_negotiated(&self) -> bool {
@@ -1292,6 +1385,16 @@ impl Provider {
         {
             self.validate_issue(&params["payload"])?;
         }
+        if operation.name == "execution.submit" && !self.mutants.on("feature-fields-accepted") {
+            for (field, feature) in FEATURE_FIELDS {
+                if params["payload"].get(field).is_some() && !self.feature_negotiated(feature) {
+                    return invalid(
+                        &format!("/payload/{field}"),
+                        &format!("feature {feature} was not negotiated"),
+                    );
+                }
+            }
+        }
         let extensions = params.get("extensions").and_then(Value::as_object);
         for entry in params
             .get("requires")
@@ -1422,7 +1525,82 @@ impl Provider {
                 return Err(reject("unknown_authority_epoch", json!({})));
             }
         }
-        self.check_preconditions_only(params)
+        if CONTROLLED_COMMANDS.contains(&operation) && !self.mutants.on("stale-controller-accepted")
+        {
+            self.check_controller_epoch(params)?;
+        }
+        self.check_preconditions_only(params)?;
+        self.check_targets(operation, params)
+    }
+
+    /// Controller lease (EXECUTION section 11, EXE-13): once a controller has claimed the host,
+    /// mutating execution commands must carry its current epoch. Observers are unaffected.
+    fn check_controller_epoch(&self, params: &Value) -> Result<(), Reject> {
+        let host = crate::execution::host_id(&self.identity.executor);
+        let current = self
+            .store
+            .revision(crate::execution::CONTROLLER_KIND, host)
+            .map_err(storage)?;
+        let asserted = params.get("authority_epoch").and_then(Value::as_i64);
+        if current == 0 && asserted.is_none() {
+            return Ok(());
+        }
+        let asserted = asserted.unwrap_or(0);
+        if asserted < current {
+            let controller = json!({"kind": crate::execution::CONTROLLER_KIND, "id": host});
+            let details = if self.may_read(&controller, params)? {
+                json!({"current_epoch": current})
+            } else {
+                json!({})
+            };
+            return Err(reject("stale_authority_epoch", details));
+        }
+        if asserted > current {
+            return Err(reject("unknown_authority_epoch", json!({})));
+        }
+        Ok(())
+    }
+
+    /// Targets a feature command acts on must exist (EXECUTION section 11, CORE section 19.4).
+    fn check_targets(&self, operation: &str, params: &Value) -> Result<(), Reject> {
+        let id = params["subject"]["id"].as_str().unwrap_or_default();
+        let reader = self.store.reader().map_err(storage)?;
+        let record = crate::execution::load(&reader, id)
+            .map_err(storage)?
+            .map(|(_, record)| record);
+        let found = match operation {
+            "execution.cancel" | "execution.steer" => record.is_some(),
+            "execution.workspace.checkpoint" => {
+                record.is_some_and(|record| record["workspace"].is_object())
+            }
+            "execution.respond_action" => crate::features::action_owner(
+                &reader,
+                id,
+                params["payload"]["action_id"].as_str().unwrap_or_default(),
+                self.mutants.on("global-action-namespace"),
+            )
+            .map_err(storage)?
+            .is_some(),
+            "execution.controller.claim" => {
+                id == crate::execution::host_id(&self.identity.executor)
+            }
+            "core.effects.abort_obligation" => self
+                .store
+                .effect_record(id)
+                .map_err(storage)?
+                .is_some_and(|effect| {
+                    crate::features::obligation_waiting(
+                        &effect,
+                        params["payload"]["obligation"].as_str().unwrap_or_default(),
+                    )
+                }),
+            _ => true,
+        };
+        if found {
+            Ok(())
+        } else {
+            Err(reject("not_found", json!({})))
+        }
     }
 
     /// Whether the principal may read `subject` in this command's authorization context (CORE section 7).
@@ -1572,6 +1750,10 @@ impl Provider {
                 )
                 .map_err(storage)
             }
+            "execution.discovery.list" => Ok(crate::features::discovery(
+                &self.identity.executor,
+                &self.mutants,
+            )),
             "core.effects.get" => {
                 let id = params["payload"]["effect"].as_str().unwrap_or_default();
                 crate::execution::effect(&mut self.store, id, &self.mutants)
@@ -1965,13 +2147,24 @@ impl Provider {
                             || (record["issuer"] == self.identity.principal.as_str()
                                 && !self.mutants.on("grant-events-holder-only"))
                     })
-        } else if kind == crate::execution::KIND {
+        } else if kind == crate::execution::KIND || kind == crate::execution::CONTROLLER_KIND {
             covers
                 && grant["rights"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .any(|right| right == "execution.read")
+        } else if kind == "core.effect" {
+            // An effect is visible exactly when its target execution is (CORE section 19.2).
+            let id = subject["id"].as_str().unwrap_or_default();
+            match self.store.effect_execution(id).map_err(storage)? {
+                Some(execution) => self.visible(
+                    &json!({"kind": crate::execution::KIND, "id": execution}),
+                    &None,
+                    &Some(grant.clone()),
+                )?,
+                None => false,
+            }
         } else if kind == "core.capabilities" {
             (covers || self.mutants.on("capability-events-ignore-resources"))
                 && (test_read || !self.mutants.on("capability-events-need-test-read"))
@@ -2007,6 +2200,9 @@ impl Provider {
         for (kind, id, revision, value) in self.store.all_subjects().map_err(storage)? {
             let state = if kind == AUTHORITY_KIND {
                 json!({"epoch": revision})
+            } else if kind == crate::execution::CONTROLLER_KIND {
+                let record: Value = serde_json::from_str(&value).unwrap_or(Value::Null);
+                json!({"epoch": revision, "controller": record["controller"]})
             } else if kind == crate::execution::KIND {
                 let record: Value = serde_json::from_str(&value).unwrap_or(Value::Null);
                 json!({
@@ -2236,7 +2432,9 @@ impl Provider {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         });
-        self.tick();
+        if !(idle && self.mutants.on("executor-ticks-only-on-requests")) {
+            self.tick();
+        }
         let mut frames = Vec::new();
         let mut subscriptions = std::mem::take(&mut self.subscriptions);
         subscriptions.retain(|subscription| {
@@ -2304,6 +2502,16 @@ impl Provider {
         subscriptions.retain(|subscription| !too_large.contains(&subscription.id));
         self.subscriptions = subscriptions;
         frames
+    }
+}
+
+impl Drop for Provider {
+    fn drop(&mut self) {
+        // Detaching is not cancellation (EXE-22); only the mutant cancels on disconnect.
+        if self.mutants.on("cancels-on-disconnect") || self.mutants.on("cancels-on-session-close") {
+            let now = self.identity.clock.now();
+            let _ = crate::execution::cancel_on_disconnect(&mut self.store, &now);
+        }
     }
 }
 

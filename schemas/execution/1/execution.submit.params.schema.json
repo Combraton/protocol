@@ -68,6 +68,38 @@
         "correlation": {
           "type": "object",
           "maxProperties": 64
+        },
+        "workspace": {
+          "$ref": "common.schema.json#/$defs/workspace_request"
+        },
+        "budget": {
+          "$ref": "common.schema.json#/$defs/budget_request"
+        },
+        "context_bindings": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "common.schema.json#/$defs/context_binding_request"
+          }
+        },
+        "continuation": {
+          "type": "object",
+          "required": [
+            "of",
+            "mode"
+          ],
+          "properties": {
+            "of": {
+              "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+            },
+            "mode": {
+              "enum": [
+                "resume",
+                "fork"
+              ]
+            }
+          },
+          "unevaluatedProperties": false
         }
       },
       "unevaluatedProperties": false

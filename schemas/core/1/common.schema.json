@@ -745,6 +745,9 @@
         },
         "operation_ref": {
           "$ref": "#/$defs/identifier"
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/identifier"
         }
       },
       "unevaluatedProperties": false
@@ -803,6 +806,35 @@
             "overdue",
             "aborted"
           ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "effect_attempt": {
+      "type": "object",
+      "required": [
+        "attempt",
+        "outcome",
+        "recorded_at"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "idempotency_key": {
+          "$ref": "#/$defs/identifier"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "failed",
+            "unknown"
+          ]
+        },
+        "recorded_at": {
+          "$ref": "#/$defs/instant"
         }
       },
       "unevaluatedProperties": false

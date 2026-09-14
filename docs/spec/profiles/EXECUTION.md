@@ -95,8 +95,10 @@ A minimal executor implements these. *Candidate* names.
 |---|---|---|
 | `execution.submit` | command | Creates the execution (precondition revision 0). Payload: `brief` (digest and media type, or an inline bounded brief), `adapter` requirements, `restrictions` with required enforcement levels (§10), `timeouts` (§8), optional `predecessor`, `correlation`, `budget` (§12) and `context_bindings` (§13). Outcome: execution reference and the admission observation. |
 | `execution.inspect` | query | Current axes, receipts, open obligations and an events cursor for this execution. Bounded: large output and transcripts are never inlined (PIO-I §7). |
-| `execution.cancel` | command | Records a cancellation request and returns a **request receipt** (`cancel_requested`). The outcome is observed later as `cancelled`, `refused`, `not_supported` or `unknown` (EXE-8). |
+| `execution.cancel` | command | Records a cancellation request and its forwarding effect, and returns a **request receipt** (`cancel_requested`). The outcome is observed later as `cancelled`, `refused`, `not_supported` or `unknown` (EXE-8). |
 | `execution.reconcile` | query | Given a `command_id` or `delivery_id`, returns the scoped observations the executor holds and any open obligations. It MUST NOT submit, resubmit or restart anything (EXE-10). |
+
+Commands that act on an existing execution (`execution.cancel` and the feature commands in §11) get `not_found` when the execution does not exist.
 
 **Watching** uses Core subscriptions with `kinds: ["execution.execution"]` (CORE §16). Executor observations appear no later than the provider's next request or idle re-check. Execution events are ordinary Core events; Core cursors, gaps, epochs, filtering and idle-lapse rules apply unchanged (EXE-7).
 
@@ -108,6 +110,9 @@ A minimal executor implements these. *Candidate* names.
 - A **required restriction** whose enforcement level exceeds what the adapter advertises is `refused` with reason `enforcement_unavailable` and, where one exists, an actionable `alternative`. It is never admitted with weaker enforcement (EXE-2).
 - **Missing capability information is `unknown`, and `unknown` is not `supported`** (CORE §17, EXE-11).
 - If canonical persistence fails, no external invocation is authorized (PIO-I §3). The caller sees `unavailable`; nothing is bound.
+- **Order.** Refusals come first: restriction enforcement, adapter predicates, then the budget (§12). An execution that is not refused is `queued` when a `required_before_start` context binding is unsatisfied (`queue_reason: "context_binding_unsatisfied"`, §13) or when the executor is at capacity (`queue_reason: "capacity"`). Otherwise it is `admitted`.
+- **Queued work.** A queued execution has no delivery and no effect. An execution queued for capacity is admitted, oldest first, when capacity frees; the admission is a provider-origin `execution.admission.changed` event naming the new `delivery_id`. When its `queue` timeout passes, it is `refused` with reason `queue_timeout`.
+- **Outcome shape.** `admitted` carries `delivery_id`; `queued` carries `queue_reason`; `refused` carries `reason` and, where one exists, `alternative`. `execution.inspect` repeats `queue_reason`, `reason` and `alternative`.
 
 ## 6. Completion receipts
 
@@ -124,6 +129,7 @@ A minimal executor implements these. *Candidate* names.
 ## 7. Cancellation and fencing
 
 - `execution.cancel` commits the request first, then forwards it through the harness's supported mechanism, then observes the outcome.
+- **Forwarding effect.** The command records effect `<execution>.cancel-<n>` of kind `execution.cancel_forwarding`, retry class `idempotent_key` with the effect ID as its key, and an open obligation for the outcome. Its ID is in the acknowledgment's `effect_refs`. A forwarding attempt whose outcome is unknown is retried with the same key (CORE §19.3); if no attempt completes, the outcome is `unknown`.
 - A lost cancel acknowledgment is recovered by retransmitting the same command, which returns the same receipt through Core deduplication (EXE-8).
 - Escalation to process termination requires verified host ownership and generation; a process number alone is insufficient (PIO §8).
 - Cancellation, a stopped process and reconciled external effects are separate observations. Outstanding external effects survive cancellation, timeout and abandonment as open obligations (CORE §19).
@@ -154,15 +160,15 @@ Owner decision, 2026-09-14. After a restart, an accepted execution whose deliver
 
 ## 8. Timeouts
 
-Five distinct timeouts, each with its own event when it passes (EXE-19):
+Five distinct timeouts, each with its own `execution.timeout.passed` event when it passes (EXE-19). Each passes at most once.
 
-| Timeout | Closes |
-|---|---|
-| `queue` | Waiting for admission |
-| `delivery` | Waiting for delivery evidence |
-| `execution_deadline` | The permitted wall-clock execution window |
-| `inactivity` | Waiting for any runtime observation |
-| `reconciliation` | Waiting for an open obligation to be resolved |
+| Timeout | Closes | Counted from | When it passes |
+|---|---|---|---|
+| `queue` | Waiting for admission | Submission | A still-queued execution is `refused` with reason `queue_timeout` |
+| `delivery` | Waiting for delivery evidence | Admission | The evidence wait ends (below); open obligations of the delivery become `overdue` |
+| `execution_deadline` | The permitted wall-clock execution window | Admission | Nothing else changes: runtime, effects and liability stay as observed |
+| `inactivity` | Waiting for any runtime observation | The latest executor observation | Runtime and exit stay as observed |
+| `reconciliation` | Waiting for an ambiguous delivery to be resolved | The moment delivery became `ambiguous` | Delivery stays `ambiguous`; open obligations become `overdue` |
 
 When the `delivery` timeout passes, the evidence wait ends: a `pending` delivery becomes `ambiguous` if dispatch began, or `failed_before_delivery` if it provably did not (§3.1). A timeout closes a permitted wait or triggers a control action. It never proves that remote work ended, never refunds unresolved liability (§12), and never marks an effect as not having happened (CORE §19).
 
@@ -174,7 +180,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 
 | Type | Payload |
 |---|---|
-| `execution.admission.changed` | `{ "admission", "reason"?, "alternative"? }` |
+| `execution.admission.changed` | `{ "admission", "reason"?, "queue_reason"?, "delivery_id"? }`; `delivery_id` when a queued execution is admitted |
 | `execution.delivery.observed` | `{ "delivery_id", "delivery", "proof_class", "evidence" }` |
 | `execution.delivery.reconciled` | `{ "delivery_id", "outcome": "delivered" \| "not_delivered" \| "unknown", "delivery", "evidence" }`; `delivery` is the resulting current determination |
 | `execution.recovery.decided` | `{ "delivery_id", "decision", "reason", "host" }` (§7.1) |
@@ -187,6 +193,15 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.timeout.passed` | `{ "timeout" }` |
 | `execution.host.changed` | `{ "host" }`, when the host generation changes |
 | `core.effect.obligation.overdue` | `{ "effect", "obligation" }`, on the execution subject whose effect it is |
+| `execution.steer.requested` | `{ "steer_id", "request": "recorded" \| "not_supported" }` (§11.1) |
+| `execution.steer.delivery.observed` | `{ "steer_id", "delivery_id", "delivery", "evidence" }` |
+| `execution.steer.behavior.observed` | `{ "steer_id", "evidence" }` |
+| `execution.action.answered` | `{ "action_id", "response_effect" }` (§11.2) |
+| `execution.controller.claimed` | `{ "epoch", "controller" }`, on subject `{ "kind": "execution.controller", "id": <host id> }` (§11.3) |
+| `execution.workspace.checkpointed` | `{ "checkpoint_id", "complete" }` (§11.4) |
+| `execution.usage.observed` | `{ "invocation_id", "basis", "measure"?, "amount"?, "recorded_at" }` (§12) |
+| `execution.context.delivery.observed` | The delivery observation of §13 |
+| `execution.transition.observed` | `{ "transition" }`: a named runtime transition that context bindings can depend on |
 
 `origin` is `command` for events caused by a caller command, and `provider` for observations from the harness or host (CORE §16.2). Provider-origin events never carry a `command_id`.
 
@@ -211,9 +226,67 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.output` | Output telemetry, spooled separately from semantic events (§14). | OBS-7, TRN-4 |
 | `execution.continuation` | Native resume and fork where supported. Without native support, a continuation is labeled `fresh_continuation`, never `resumed`. | EXE-23 |
 
+**Negotiation.** Each feature is an `execution/1` feature name. An operation of a feature that was not negotiated is refused at step 3 with `unsupported_required_feature` naming the feature. A submit payload member that belongs to a feature that was not negotiated (`workspace`, `budget`, `context_bindings`, `continuation`) is `invalid_envelope` at that member's path, as for Core's `grant` member.
+
+**Rights.** Under a grant, each feature command needs the right named after its operation on the subject it acts on: `execution.steer`, `execution.respond_action` and `execution.workspace.checkpoint` on the execution; `execution.controller.claim` on the controller subject. `execution.discovery.list` needs right `execution.discovery.list` on `{ "kind": "execution.discovery", "id": "installations" }`. Submit and read rights do not cover them.
+
+The shapes below are *candidate* names for Protocol 0.1.
+
+### 11.1 Steering
+
+- `execution.steer` (command) on an execution, payload `{ "message": { digest, media_type } }`.
+- **Live steering.** The outcome is `{ steer_id, request: "recorded", delivery_id }`. The command records effect `delivery_id` of kind `execution.steering_delivery` (retry class `non_repeatable`) with an open evidence obligation.
+- **Without live steering.** The outcome is `{ steer_id, request: "not_supported", alternative }`, with no effect. The request is still recorded.
+- **Three facts.** `execution.inspect` lists `steering` entries: `{ steer_id, request, recorded_at, delivery_id?, delivery, proof_class?, evidence?, behavior, behavior_evidence?, alternative? }`.
+  - `delivery` is `pending` until evidence arrives, `acknowledged` with a correlated acknowledgment, or `ambiguous` when the attempt's outcome is unknown.
+  - `behavior` is `not_observed` until the executor observes behavior attributable to the message. An acknowledgment is not observed behavior, and neither proves comprehension.
+
+### 11.2 Native actions
+
+- A harness action request sets runtime `requires_action`. `execution.inspect` then carries `runtime_detail: { action_id, owner }`, and lists `actions`: `{ action_id, owner, state: "pending" | "answered", requested_at, answered_at?, response_effect? }`.
+- `execution.respond_action` (command) on an execution, payload `{ action_id, response: { digest, media_type } }`.
+  - The action ID belongs to that execution. An ID that is not a pending action of this execution, including one pending in another execution or already answered, is `not_found` and authorizes nothing.
+  - The outcome is `{ action_id, state: "answered", response_effect }`. The command records effect `<execution>.response-<n>` of kind `execution.action_response` (`non_repeatable`).
+- A pending action survives an executor restart under the same ID (SCN-12).
+
+### 11.3 Controller lease
+
+- `execution.controller.claim` (command) on subject `{ "kind": "execution.controller", "id": <host id> }` with precondition revision equal to the current epoch. It advances the epoch by one and returns `{ epoch }`. A host ID the executor does not own is `not_found`.
+- Once a host has a controller epoch, the mutating execution commands on its executions (`execution.submit`, `execution.cancel`, `execution.steer`, `execution.respond_action`, `execution.workspace.checkpoint`) carry `authority_epoch` (CORE §8):
+  - lower than the current epoch, or absent: `stale_authority_epoch`, with `current_epoch` when the caller may read the controller subject;
+  - higher: `unknown_authority_epoch`.
+- A reconnecting controller claims again, which advances the epoch. Queries and subscriptions need no epoch.
+
+### 11.4 Workspaces
+
+- Submit member `workspace: { repository, base, permitted_paths?, permitted_effects?, cleanup: "retain" | "remove" }`.
+- Admission records the lease `{ lease_id, repository, base, writer, lease_epoch, permitted_paths?, permitted_effects?, cleanup }`; `writer` is the submitting principal.
+- `execution.workspace.checkpoint` (command) on an execution with a lease records what the executor probed itself: `{ checkpoint_id, lease_epoch, recorded_at, probed_at?, head?, coverage: { tracked, dirty, untracked }, complete, dirty_paths?, untracked_paths?, annotations }`.
+  - Each coverage area is `probed` or `not_probed`. `complete` is true only when every area was probed. `head`, `dirty_paths` and `untracked_paths` appear only for probed areas.
+  - A commit the agent reports is an annotation `{ kind: "agent_reported_commit", value, basis: "agent_report", recorded_at }`, never the checkpoint's `head`.
+- An execution without a lease is `not_found` for checkpoints.
+
+### 11.5 Discovery
+
+- `execution.discovery.list` (query), payload `{}`, returns `installations`: `{ installation_id, harness, version?, detected, adapter_recognized, version_supported, authentication, reachable, last_verified?, usable }`.
+- `adapter_recognized`, `version_supported` and `reachable` are `yes`, `no` or `unknown`; `authentication` is `authenticated`, `unauthenticated` or `unknown`.
+- `usable` is true only when the installation is detected, every fact is positive and `last_verified` is present. Unknown is never reported as positive.
+
+### 11.6 Continuation
+
+- Submit member `continuation: { of, mode: "resume" | "fork" }`. The label is decided at admission and appears in the submit outcome and `execution.inspect`: `{ of, requested, label }`.
+- `label` is `resumed` or `forked` only when the adapter predicate `adapter.resume` or `adapter.fork` is `supported`; otherwise `fresh_continuation`. A caller that needs native resume requires the predicate (§5).
+
 ## 12. Usage and liability
 
 Usage is recorded once per invocation with its basis (§11, `execution.usage`). Admission considers settled consumption, active reservations and unresolved liability. A reservation is released only with durable evidence that the invocation was never dispatched and can no longer be dispatched under its identity; a crash, timeout or lease expiry is not such evidence (PIO-I §5).
+
+- **Budget request.** Submit member `budget: { pool, ceiling: "hard" | "soft", amount? }` names a budget pool the executor defines. `amount` defaults to 1, in the pool's measure.
+- **Admission.** An unknown pool is refused with `budget_unavailable`. A `hard` ceiling on a measure the adapter cannot enforce is refused with `enforcement_unavailable` and an alternative. If the pool's reserved and settled amounts plus this amount exceed its limit, the execution is refused with `budget_exhausted`.
+- **Reservation.** `not_reserved` for refused work; `reserved` from admission or queueing; `settled` once every invocation's usage is `observed` or `enforced_bound`; `released` only when the delivery is `failed_before_delivery` or queued work is refused. Settled amounts still count against the pool.
+- **Observations and liability.** `execution.inspect` carries `usage: { observations: [ { invocation_id, basis, measure?, amount?, recorded_at } ], liability, budget? }`.
+  - `liability` is `none` with no observations; `resolved` when each invocation's latest basis is `observed` or `enforced_bound`; otherwise `unresolved`.
+  - A passed timeout changes neither the reservation nor the liability.
 
 ## 13. Context bindings and delivery observations
 
@@ -222,6 +295,12 @@ The Context profile is M4. M3 defines only the binding and the delivery observat
 - **Binding at submit:** packet or update reference, exact digest, obligation (`advisory`, `required_before_start`, `required_before_transition` with the transition named), and the authority that selected it.
 - **Admission:** an execution whose `required_before_start` binding is unsatisfied is not admitted as ready. Advisory bindings add no startup barrier, and a missing advisory item stays visible as a gap (EXE-17).
 - **Delivery observation:** exact digest, target execution and native session, boundary (initial prompt, supported turn steering, explicit context request), and outcome: `queued`, `delivered`, `acknowledged`, `late`, `unavailable` or `unknown`. A packet arriving after its dependent boundary is `late` (EXE-18). No observation proves comprehension.
+- **Binding shape.** Submit member `context_bindings: [ { binding_id, packet: { ref, digest }, obligation, transition?, selected_by } ]`; `transition` is required for `required_before_transition`.
+- **Binding state.** A binding is `satisfied` when the executor holds the packet with that exact reference and digest. Otherwise it is `gap` for an advisory binding and `unsatisfied` for a required one. `execution.inspect` carries `context: { bindings, deliveries }` with each binding's `state`.
+- **Observation record.** `{ binding_id, digest, target: { execution, native_session? }, boundary, outcome, recorded_at }`.
+  - `unavailable` when the adapter does not support the boundary.
+  - `late` when a `required_before_transition` binding's packet arrives after that transition was observed (`execution.transition.observed`).
+  - Otherwise the harness's report: `acknowledged`, `delivered`, `queued`, or `unknown` when the handoff's outcome is unknown.
 
 ## 14. Output telemetry and backpressure
 
@@ -240,6 +319,7 @@ Execution fixtures need harness behavior, faults and time that ordinary operatio
 
 - **Scripted executor.**
   - The reference executor drives a scripted fake harness selected by launch configuration: acknowledge, echo only, write bytes only, crash after write, never exit, return late, refuse cancellation, request an action, exceed an output spool.
+  - Step 5 vocabulary (launch-configuration schema `executor`): `wait_for` a steer, cancellation or answered action; `steer_deliver`, `steer_behavior`; `request_action`; `workspace` probe results and `agent_reports_commit`; `usage`; `context_delivery` and `transition`; `transport_errors`, which makes the next effect attempts end with unknown outcomes; `probe_status`, a read-class status probe. Executor settings: `capacity`, `host_id`, `budget_pools`, `context_packets`, `installations`, and adapter `steering`, `enforced_bounds` and `context_boundaries`.
   - The script vocabulary is normative **only for the conformance tests that use it** (owner decision Q4). A production executor may satisfy it through a test adapter; it does not need a production scripting engine.
   - Real harness adapters are PIO's work and PIO's evidence.
 - **Controllable clock.**

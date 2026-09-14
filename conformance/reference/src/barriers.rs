@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 pub const RECHECK_AFTER_AUTHORIZATION: &str = "subscription.recheck.after_authorization";
 pub const LOCK_CONTENDED: &str = "processing.lock.contended";
+/// Signal emitted after a Unix-socket session has closed and its provider state was released.
+pub const SESSION_CLOSED: &str = "session.closed";
 const WATCHDOG: Duration = Duration::from_secs(30);
 
 struct Barriers {

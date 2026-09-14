@@ -1367,6 +1367,13 @@ class Executor:
             self._xevent(st, "execution.result.changed", {"result": "returned"})
 
     def _step_exit(self, st, x, exit_value, now):
+        # The scripted harness process exits: its observed runtime state is
+        # exited, and the exit value is the process outcome. Evaluation stays
+        # untouched (EXE-5). Changed after the first run (G-EXIT-RUNTIME).
+        if x["runtime"] != "exited":
+            x.pop("runtime_detail", None)
+            x["runtime"] = "exited"
+            self._xevent(st, "execution.runtime.changed", {"runtime": "exited"})
         x["exit"] = dict(exit_value)
         self._xevent(st, "execution.exit.observed", {"exit": dict(exit_value)})
 
@@ -1495,9 +1502,13 @@ class Executor:
             discard = len(spool) - self.spool_bytes
             loss = {"from": start, "to": start + discard, "bytes": discard, "reason": "spool_limit",
                     "coverage": "incomplete"}
-            if lost and lost[-1]["reason"] == "spool_limit" and lost[-1]["to"] == start:
-                lost[-1]["to"] += discard  # adjacent discards coalesce
-                lost[-1]["bytes"] += discard
+            # Adjacent discards coalesce into one range: adjacency is by offset,
+            # whatever other losses were declared in between (EXECUTION 14.1).
+            # Changed after the first run (G-COALESCE-ADJACENT).
+            adjacent = next((r for r in lost if r["reason"] == "spool_limit" and r["to"] == start), None)
+            if adjacent is not None:
+                adjacent["to"] += discard
+                adjacent["bytes"] += discard
             else:
                 lost.append(dict(loss))
             start += discard

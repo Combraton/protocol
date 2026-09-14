@@ -202,6 +202,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.usage.observed` | `{ "invocation_id", "basis", "measure"?, "amount"?, "recorded_at" }` (§12) |
 | `execution.context.delivery.observed` | The delivery observation of §13 |
 | `execution.transition.observed` | `{ "transition" }`: a named runtime transition that context bindings can depend on |
+| `execution.output.lost` | A lost range (§14.1) |
 
 `origin` is `command` for events caused by a caller command, and `provider` for observations from the harness or host (CORE §16.2). Provider-origin events never carry a `command_id`.
 
@@ -313,12 +314,27 @@ The Context profile is M4. M3 defines only the binding and the delivery observat
   - recovery is by reconnecting from the consumer's last durably processed cursor, with retention gaps reported explicitly.
 - **Separate reporting.** The telemetry policy and the semantic-event policy are negotiated and reported separately.
 
+### 14.1 Output read (`execution.output`)
+
+- **Spool.** The executor keeps up to a declared number of output bytes per execution. Offsets count every byte the executor received, from 0. When the spool is full, the oldest bytes are discarded.
+- `execution.output.read` (query, *candidate*), payload `{ execution, offset?, max_bytes? }`, returns `{ execution, offset, data_base64, next_offset, end_offset, lost_ranges, coverage, policy }`.
+  - `offset` is where the returned data starts: the requested offset, or the oldest retained byte if that offset was discarded.
+  - `data_base64` holds at most `max_bytes` bytes. `next_offset` follows them; `end_offset` is the total received.
+  - `policy` is `{ spool_bytes, overflow: "discard_oldest" }`: the telemetry policy, reported separately from the semantic-event policy (CORE §16.5).
+  - `coverage` is `incomplete` whenever any lost range exists.
+- **Lost ranges.** Each is `{ from, to, bytes?, reason, coverage: "incomplete" }`.
+  - `spool_limit`: bytes the executor received and discarded, with `from`, `to` and `bytes` always present. Adjacent discards are coalesced into one range; coalescing is declared by the range itself.
+  - `harness_dropped` or `capture_unavailable`: bytes that never reached the spool, at offset `from` = `to`, with `bytes` only when the harness reported the count.
+- **Loss is a semantic fact.** Every loss also appends `execution.output.lost` with that loss's range. Semantic events are never dropped or coalesced.
+- Under a grant, reading output needs `execution.read` on the execution.
+
 ## 15. Conformance and test controls
 
 Execution fixtures need harness behavior, faults and time that ordinary operations cannot produce on demand. All such control stays outside the production protocol, extending CORE §13.1 ([decision 007](../../decisions/007-execution-test-controls.md), accepted with refinements).
 
 - **Scripted executor.**
   - The reference executor drives a scripted fake harness selected by launch configuration: acknowledge, echo only, write bytes only, crash after write, never exit, return late, refuse cancellation, request an action, exceed an output spool.
+  - Step 6 vocabulary: `output` (`text`, or `repeat` and `bytes`), `output_lost` (`reason`, optional `bytes`), `runtime_burst` (that many runtime observations at once), and executor setting `output_spool_bytes`.
   - Step 5 vocabulary (launch-configuration schema `executor`): `wait_for` a steer, cancellation or answered action; `steer_deliver`, `steer_behavior`; `request_action`; `workspace` probe results and `agent_reports_commit`; `usage`; `context_delivery` and `transition`; `transport_errors`, which makes the next effect attempts end with unknown outcomes; `probe_status`, a read-class status probe. Executor settings: `capacity`, `host_id`, `budget_pools`, `context_packets`, `installations`, and adapter `steering`, `enforced_bounds` and `context_boundaries`.
   - The script vocabulary is normative **only for the conformance tests that use it** (owner decision Q4). A production executor may satisfy it through a test adapter; it does not need a production scripting engine.
   - Real harness adapters are PIO's work and PIO's evidence.

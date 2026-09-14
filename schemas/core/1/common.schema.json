@@ -159,6 +159,18 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 1024
+        },
+        "max_pending_notification_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "Present only in core.negotiate results when core.events.backpressure was negotiated."
+        },
+        "backpressure_notice_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600000,
+          "description": "Present only in core.negotiate results when core.events.backpressure was negotiated."
         }
       },
       "unevaluatedProperties": false

@@ -21,6 +21,9 @@ pub struct Limits {
     pub max_string_bytes: i64,
     pub max_array_items: i64,
     pub max_depth: i64,
+    /// Declared only to sessions that negotiate `core.events.backpressure` (CORE section 16.5).
+    pub max_pending_notification_bytes: i64,
+    pub backpressure_notice_ms: i64,
 }
 
 impl Limits {
@@ -143,6 +146,11 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "execution.output.read",
+        profile: "execution",
+        command: false,
+    },
+    Operation {
         name: "core.effects.abort_obligation",
         profile: "core",
         command: true,
@@ -188,6 +196,7 @@ const SUPPORTED: &[SupportedProfile] = &[
             "core.events",
             "core.capabilities",
             "core.effects",
+            "core.events.backpressure",
         ],
         depends_on: &[],
         requires_core_features: &[],
@@ -208,7 +217,7 @@ const SUPPORTED: &[SupportedProfile] = &[
     },
 ];
 /// Optional `execution/1` features (EXECUTION section 11).
-const EXECUTION_FEATURES: [&str; 8] = [
+const EXECUTION_FEATURES: [&str; 9] = [
     "execution.steering",
     "execution.actions",
     "execution.controller",
@@ -217,6 +226,7 @@ const EXECUTION_FEATURES: [&str; 8] = [
     "execution.context",
     "execution.discovery",
     "execution.continuation",
+    "execution.output",
 ];
 
 /// Submit payload members whose meaning belongs to an optional feature.
@@ -378,6 +388,34 @@ impl Provider {
         self.selected.is_some()
     }
 
+    /// Bytes of produced but unwritten output a connection may hold (CORE section 16.5).
+    pub fn pending_output_bound(&self) -> usize {
+        self.limits.max_pending_notification_bytes.max(1) as usize
+    }
+
+    pub fn backpressure_notice_ms(&self) -> u64 {
+        self.limits.backpressure_notice_ms.max(0) as u64
+    }
+
+    pub fn backpressure_negotiated(&self) -> bool {
+        self.feature_negotiated("core.events.backpressure")
+    }
+
+    /// End every subscription of this session with `reason`; returns the final notifications.
+    pub fn end_subscriptions(&mut self, reason: &str) -> Vec<Value> {
+        let subscriptions = std::mem::take(&mut self.subscriptions);
+        subscriptions
+            .iter()
+            .map(|subscription| {
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "core.events.notify",
+                    "params": {"subscription": subscription.id, "items": [], "next_cursor": self.cursor(subscription.position, false).unwrap_or_default(), "ended": {"reason": reason}},
+                })
+            })
+            .collect()
+    }
+
     /// Handle one request. `id` is the validated JSON-RPC id.
     pub fn handle(&mut self, id: Value, method: &str, params: Value) -> Value {
         let _guard = match PROCESSING.try_lock() {
@@ -500,6 +538,7 @@ impl Provider {
                 "execution.controller.claim" => Some("execution.controller"),
                 "execution.workspace.checkpoint" => Some("execution.workspaces"),
                 "execution.discovery.list" => Some("execution.discovery"),
+                "execution.output.read" => Some("execution.output"),
                 _ => None,
             };
             if let Some(feature) = feature
@@ -1750,6 +1789,18 @@ impl Provider {
                 )
                 .map_err(storage)
             }
+            "execution.output.read" => {
+                let payload = &params["payload"];
+                crate::execution::read_output(
+                    &mut self.store,
+                    payload["execution"].as_str().unwrap_or_default(),
+                    payload["offset"].as_u64().unwrap_or(0),
+                    payload["max_bytes"].as_u64().unwrap_or(65_536) as usize,
+                    &self.identity.executor,
+                )
+                .map_err(storage)?
+                .ok_or_else(|| reject("not_found", json!({})))
+            }
             "execution.discovery.list" => Ok(crate::features::discovery(
                 &self.identity.executor,
                 &self.mutants,
@@ -2000,10 +2051,16 @@ impl Provider {
         self.caller_frame_limit = payload["receive_limits"]["max_frame_bytes"]
             .as_u64()
             .map_or(1_048_576, |limit| limit as usize);
+        let mut limits = self.limits.to_json();
+        if self.backpressure_negotiated() {
+            limits["max_pending_notification_bytes"] =
+                json!(self.limits.max_pending_notification_bytes);
+            limits["backpressure_notice_ms"] = json!(self.limits.backpressure_notice_ms);
+        }
         Ok(json!({
             "selected": selected_json,
             "unselected": unselected,
-            "limits": self.limits.to_json(),
+            "limits": limits,
             "dedupe_window": self.window_json()?,
         }))
     }
@@ -2426,7 +2483,17 @@ impl Provider {
     ///
     /// The re-authorization and the event read run under the processing lock, so no command
     /// can commit between them: an item committed after a revocation is never delivered.
-    pub fn drain_notifications(&mut self, idle: bool) -> Vec<Value> {
+    ///
+    /// `room` bounds the bytes of item-carrying notifications produced by this call: `Some((room,
+    /// whole))` stops producing once the next notification would not fit, and `whole` lets the
+    /// first notification exceed `room` when nothing else is pending. Returns the notifications
+    /// and whether one was withheld for lack of room; a withheld notification's items stay
+    /// undelivered and are produced again later (CORE section 16.5, backpressure).
+    pub fn drain_notifications(
+        &mut self,
+        idle: bool,
+        room: Option<(usize, bool)>,
+    ) -> (Vec<Value>, bool) {
         let _guard = (!self.mutants.on("recheck-outside-lock")).then(|| {
             PROCESSING
                 .lock()
@@ -2460,7 +2527,12 @@ impl Provider {
             false
         });
         let mut too_large = Vec::new();
+        let mut produced = 0;
+        let mut withheld = false;
         for subscription in &mut subscriptions {
+            if withheld {
+                break;
+            }
             let mut take = 100;
             while let Ok((items, position, _)) = self.collect_items(
                 subscription.position,
@@ -2494,6 +2566,14 @@ impl Provider {
                     too_large.push(subscription.id.clone());
                     break;
                 }
+                if let Some((room, whole)) = room {
+                    let size = crate::json::encode_frame(&frame).len();
+                    if produced + size > room && !(produced == 0 && whole) {
+                        withheld = true;
+                        break;
+                    }
+                    produced += size;
+                }
                 subscription.position = position;
                 frames.push(frame);
                 take = 100;
@@ -2501,7 +2581,7 @@ impl Provider {
         }
         subscriptions.retain(|subscription| !too_large.contains(&subscription.id));
         self.subscriptions = subscriptions;
-        frames
+        (frames, withheld)
     }
 }
 

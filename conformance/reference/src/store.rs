@@ -47,6 +47,8 @@ impl Store {
              CREATE TABLE IF NOT EXISTS meta_text (key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS effects (
                id TEXT PRIMARY KEY, execution TEXT NOT NULL, record TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS outputs (
+               execution TEXT PRIMARY KEY, record TEXT NOT NULL);
              INSERT OR IGNORE INTO meta VALUES ('stream_epoch', 1), ('discarded_epoch', 0), ('discarded_sequence', 0), ('capability_revision', 0);
              INSERT OR IGNORE INTO meta VALUES ('dedupe_oldest', 1), ('dedupe_current', 1), ('operation_seq', 0);",
         )?;

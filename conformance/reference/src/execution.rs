@@ -1496,6 +1496,43 @@ fn step(
             revision,
             json!({"transition": transition}),
         ));
+    } else if let Some(output) = step.get("output") {
+        let mut bytes = output["text"]
+            .as_str()
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec();
+        if let (Some(unit), Some(count)) = (output["repeat"].as_str(), output["bytes"].as_u64()) {
+            bytes.extend(unit.bytes().cycle().take(count as usize));
+        }
+        let spool = executor["output_spool_bytes"].as_u64().unwrap_or(65_536) as usize;
+        append_output(tx, id, &bytes, spool, mutants, revision, &mut drafts)?;
+    } else if let Some(lost) = step.get("output_lost") {
+        let mut output = load_output(tx, id)?;
+        let end = output["end"].clone();
+        let mut range =
+            json!({"from": end, "to": end, "reason": lost["reason"], "coverage": "incomplete"});
+        if let Some(bytes) = lost.get("bytes") {
+            range["bytes"] = bytes.clone();
+        }
+        push(&mut output, "lost_ranges", range.clone());
+        save_output(tx, id, &output)?;
+        drafts.push(("execution.output.lost", subject(id), revision, range));
+    } else if let Some(count) = step["runtime_burst"].as_u64() {
+        for index in 0..count {
+            let runtime = if index % 2 == 0 {
+                "quiescent"
+            } else {
+                "active"
+            };
+            record["runtime"] = json!(runtime);
+            drafts.push((
+                "execution.runtime.changed",
+                subject(id),
+                revision,
+                json!({"runtime": runtime}),
+            ));
+        }
     } else if let Some(count) = step["transport_errors"].as_i64() {
         record["pending_transport_errors"] = json!(count);
     } else if step.get("probe_status").is_some() {
@@ -1570,6 +1607,109 @@ fn step(
         provider_event(tx, stream, now, draft)?;
     }
     Ok(true)
+}
+
+fn load_output(tx: &Transaction, id: &str) -> rusqlite::Result<Value> {
+    let record: Option<String> = tx
+        .query_row("SELECT record FROM outputs WHERE execution=?1", [id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    Ok(record
+        .and_then(|r| serde_json::from_str(&r).ok())
+        .unwrap_or_else(|| json!({"base": 0, "end": 0, "data": "", "lost_ranges": []})))
+}
+
+fn save_output(tx: &Transaction, id: &str, output: &Value) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO outputs VALUES (?1, ?2) ON CONFLICT (execution) DO UPDATE SET record=excluded.record",
+        params![id, output.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Append harness output to the execution's bounded spool. Bytes the spool cannot keep are
+/// discarded oldest first, and every discard is a declared lost range with its byte count and a
+/// semantic event (OBS-7). Adjacent spool discards are coalesced into one range.
+fn append_output(
+    tx: &Transaction,
+    id: &str,
+    bytes: &[u8],
+    spool: usize,
+    mutants: &Mutants,
+    revision: i64,
+    drafts: &mut Vec<Draft>,
+) -> rusqlite::Result<()> {
+    let mut output = load_output(tx, id)?;
+    let mut data = hex::decode(output["data"].as_str().unwrap_or_default()).unwrap_or_default();
+    data.extend_from_slice(bytes);
+    let base = output["base"].as_u64().unwrap_or(0);
+    output["end"] = json!(output["end"].as_u64().unwrap_or(0) + bytes.len() as u64);
+    if data.len() > spool {
+        let discarded = (data.len() - spool) as u64;
+        data.drain(..discarded as usize);
+        let (from, to) = (base, base + discarded);
+        output["base"] = json!(to);
+        if !mutants.on("output-dropped-silently") {
+            let mut range = json!({"from": from, "to": to, "bytes": discarded, "reason": "spool_limit", "coverage": "incomplete"});
+            if mutants.on("lost-range-without-bytes") {
+                range.as_object_mut().map(|m| m.remove("bytes"));
+            }
+            let ranges = output["lost_ranges"].as_array_mut();
+            match ranges.and_then(|list| {
+                list.iter_mut()
+                    .find(|r| r["reason"] == "spool_limit" && r["to"] == from)
+            }) {
+                Some(last) if last["reason"] == "spool_limit" && last["to"] == from => {
+                    last["to"] = json!(to);
+                    if let Some(total) = last["bytes"].as_u64() {
+                        last["bytes"] = json!(total + discarded);
+                    }
+                }
+                _ => push(&mut output, "lost_ranges", range.clone()),
+            }
+            drafts.push(("execution.output.lost", subject(id), revision, range));
+        }
+    }
+    output["data"] = json!(hex::encode(&data));
+    save_output(tx, id, &output)
+}
+
+/// `execution.output.read`: a bounded read of the output spool by byte offset, with every
+/// declared lost range (EXECUTION section 14).
+pub fn read_output(
+    store: &mut Store,
+    id: &str,
+    offset: u64,
+    max_bytes: usize,
+    executor: &Value,
+) -> rusqlite::Result<Option<Value>> {
+    let tx = store.transaction()?;
+    if load(&tx, id)?.is_none() {
+        return Ok(None);
+    }
+    let output = load_output(&tx, id)?;
+    tx.commit()?;
+    let data = hex::decode(output["data"].as_str().unwrap_or_default()).unwrap_or_default();
+    let base = output["base"].as_u64().unwrap_or(0);
+    let end = output["end"].as_u64().unwrap_or(0);
+    let start = offset.clamp(base, end);
+    let from = (start - base) as usize;
+    let slice = &data[from..(from + max_bytes).min(data.len())];
+    let lost = output["lost_ranges"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(Some(json!({
+        "execution": subject(id),
+        "offset": start,
+        "data_base64": crate::json::base64(slice),
+        "next_offset": start + slice.len() as u64,
+        "end_offset": end,
+        "lost_ranges": lost,
+        "coverage": if lost.is_empty() { "complete" } else { "incomplete" },
+        "policy": {"spool_bytes": executor["output_spool_bytes"].as_u64().unwrap_or(65_536), "overflow": "discard_oldest"},
+    })))
 }
 
 /// Deliver the oldest undispatched steering message. Returns false when none is waiting.

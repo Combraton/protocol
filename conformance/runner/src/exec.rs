@@ -464,6 +464,15 @@ impl State<'_> {
                 Ok(())
             }
             "await_any" => self.await_any(step),
+            "pause_reading" => {
+                self.session()?.pause_reading();
+                Ok(())
+            }
+            "resume_reading" => {
+                self.session()?.resume_reading();
+                Ok(())
+            }
+            "collect_until_close" => self.collect_until_close(step),
             other => Err(Harness(format!("unknown step {other:?}"))),
         }
     }
@@ -627,6 +636,114 @@ impl State<'_> {
             }
         }
         self.note("await_barrier", json!({"name": name}));
+        Ok(())
+    }
+
+    /// Read everything a connection still delivers until it closes (TRN-4). The named
+    /// subscription's notifications must carry contiguous event sequences, only the last may end
+    /// it, and `expect_last` is matched against that last notification's params. Captures the
+    /// last `next_cursor` (`capture_cursor`) and the sequence after the last event
+    /// (`capture_next_sequence`). Responses to pending requests are buffered; others are noted.
+    fn collect_until_close(&mut self, step: &Value) -> Result<(), StepError> {
+        let bound = duration(step, Duration::from_millis(10_000));
+        let deadline = Instant::now() + bound;
+        let subscription = self.render(&step["subscription"])?;
+        let mut notifications: Vec<Value> = self
+            .notifications
+            .entry(self.active.clone())
+            .or_default()
+            .drain(..)
+            .collect();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let received = self.session()?.receive(remaining);
+            let bytes = match received {
+                Received::Frame(bytes) => bytes,
+                Received::Closed => break,
+                Received::Timeout => {
+                    return Err(Timeout(format!(
+                        "connection was not closed within {} ms",
+                        bound.as_millis()
+                    )));
+                }
+            };
+            let frame = strict::parse(&bytes).map_err(|e| {
+                Fail(format!(
+                    "participant sent a frame outside the value domain: {e}"
+                ))
+            })?;
+            if frame.get("id").is_none() && frame.get("method").is_some() {
+                self.ctx.schemas.check_notification(&frame).map_err(Fail)?;
+                notifications.push(frame);
+            } else if !self.buffer_if_pending(&frame) {
+                self.note("collected_response", json!({"id": frame.get("id")}));
+            }
+        }
+        let name = self.active.clone();
+        if let Some(session) = self.sessions.remove(&name) {
+            self.transcript.extend(session.finish());
+        }
+        let mine: Vec<&Value> = notifications
+            .iter()
+            .filter(|frame| frame["params"]["subscription"] == subscription)
+            .collect();
+        let mut previous: Option<(i64, i64)> = None;
+        let mut events = 0;
+        for (index, frame) in mine.iter().enumerate() {
+            if frame["params"].get("ended").is_some() && index + 1 != mine.len() {
+                return Err(Fail(format!(
+                    "notification {index} ended the subscription but more followed"
+                )));
+            }
+            if let Some(ended) = frame["params"].get("ended")
+                && step["forbid_ended"] == true
+            {
+                return Err(Fail(format!(
+                    "params/ended: the subscription was ended with {ended}"
+                )));
+            }
+            for item in frame["params"]["items"].as_array().into_iter().flatten() {
+                let Some(event) = item.get("event") else {
+                    previous = None;
+                    continue;
+                };
+                let position = (
+                    event["epoch"].as_i64().unwrap_or_default(),
+                    event["sequence"].as_i64().unwrap_or_default(),
+                );
+                if let Some((epoch, sequence)) = previous
+                    && epoch == position.0
+                    && position.1 != sequence + 1
+                {
+                    return Err(Fail(format!(
+                        "subscription skipped from sequence {sequence} to {}",
+                        position.1
+                    )));
+                }
+                previous = Some(position);
+                events += 1;
+            }
+        }
+        self.note(
+            "collect_until_close",
+            json!({"notifications": mine.len(), "events": events}),
+        );
+        if let Some(pattern) = step.get("expect_last") {
+            let last = mine
+                .last()
+                .ok_or_else(|| Fail("no notification for the subscription before close".into()))?;
+            matches(pattern, last.get("params"), &self.vars, "params").map_err(Fail)?;
+        }
+        // Without a complete notification, the consumer's last durable cursor is unchanged.
+        if let (Some(name), Some(last)) = (step["capture_cursor"].as_str(), mine.last()) {
+            self.vars
+                .insert(name.to_string(), last["params"]["next_cursor"].clone());
+        }
+        if let Some(name) = step["capture_next_sequence"].as_str() {
+            let (_, sequence) =
+                previous.ok_or_else(|| Fail("no event before close to resume after".into()))?;
+            self.vars.insert(name.to_string(), json!(sequence + 1));
+        }
         Ok(())
     }
 

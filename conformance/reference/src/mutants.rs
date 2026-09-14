@@ -5,6 +5,30 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "output-dropped-silently",
+        "discards spooled output without declaring a lost range",
+    ),
+    (
+        "lost-range-without-bytes",
+        "declares a spool discard without its known byte count",
+    ),
+    (
+        "consumer-too-slow-to-older-consumers",
+        "sends consumer_too_slow to a session that did not negotiate core.events.backpressure",
+    ),
+    (
+        "notice-waits-indefinitely",
+        "waits without bound for a non-reading consumer to accept the ending notice",
+    ),
+    (
+        "unbounded-pending-output",
+        "keeps queueing output for a consumer that stopped reading",
+    ),
+    (
+        "semantic-events-dropped-under-pressure",
+        "drops notifications instead of closing a connection whose pending output is over its bound",
+    ),
+    (
         "cancels-on-session-close",
         "cancels running executions when one socket session closes while the provider keeps running",
     ),

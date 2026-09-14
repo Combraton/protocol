@@ -81,6 +81,16 @@
         "retain_last": {
           "type": "integer",
           "minimum": 0
+        },
+        "max_pending_notification_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-connection bound on produced but unwritten output (default 8 MiB)."
+        },
+        "backpressure_notice_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bound on waiting for room and for the ending notice (default 1000)."
         }
       },
       "additionalProperties": false
@@ -343,6 +353,11 @@
             },
             "additionalProperties": false
           }
+        },
+        "output_spool_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Bytes of output the executor keeps per execution (default 65536)."
         }
       },
       "additionalProperties": false
@@ -579,6 +594,47 @@
           },
           "probe_status": {
             "const": true
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "repeat": {
+                "type": "string",
+                "minLength": 1
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "output_lost": {
+            "type": "object",
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "harness_dropped",
+                  "capture_unavailable"
+                ]
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "runtime_burst": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Emit this many alternating runtime observations at once."
           }
         },
         "additionalProperties": false

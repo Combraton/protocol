@@ -32,7 +32,9 @@
       "execution.usage",
       "execution.context",
       "execution.discovery",
-      "execution.continuation"
+      "execution.continuation",
+      "core.events.backpressure",
+      "execution.output"
     ],
     "test_controls": [
       "clock.file",
@@ -40,7 +42,9 @@
     ],
     "test_barriers": [
       "subscription.recheck.after_authorization",
-      "session.closed"
+      "session.closed",
+      "backpressure.limit.reached",
+      "backpressure.connection.closed"
     ]
   },
   "launch": {
@@ -73,7 +77,13 @@
       "clock-file-ignored",
       "clock-file-start-unchecked",
       "executor-ticks-only-on-requests",
-      "cancels-on-session-close"
+      "cancels-on-session-close",
+      "output-dropped-silently",
+      "lost-range-without-bytes",
+      "consumer-too-slow-to-older-consumers",
+      "notice-waits-indefinitely",
+      "unbounded-pending-output",
+      "semantic-events-dropped-under-pressure"
     ]
   }
 }

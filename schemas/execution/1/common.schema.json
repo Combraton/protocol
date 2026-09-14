@@ -989,6 +989,43 @@
         }
       },
       "unevaluatedProperties": false
+    },
+    "lost_range": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "reason",
+        "coverage"
+      ],
+      "properties": {
+        "from": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "to": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reason": {
+          "enum": [
+            "spool_limit",
+            "harness_dropped",
+            "capture_unavailable"
+          ]
+        },
+        "coverage": {
+          "const": "incomplete"
+        }
+      },
+      "unevaluatedProperties": false
     }
   }
 }

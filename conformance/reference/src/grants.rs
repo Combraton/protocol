@@ -38,7 +38,7 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "execution.discovery.list".to_string(),
             serde_json::json!({"kind": "execution.discovery", "id": "installations"}),
         )]),
-        "execution.inspect" => Some(vec![(
+        "execution.inspect" | "execution.output.read" => Some(vec![(
             "execution.read".to_string(),
             serde_json::json!({"kind": crate::execution::KIND, "id": params["payload"]["execution"]}),
         )]),

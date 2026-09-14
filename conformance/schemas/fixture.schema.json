@@ -1114,6 +1114,85 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "pause_reading"
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step"
+            ],
+            "properties": {
+              "step": {
+                "const": "resume_reading"
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "subscription"
+            ],
+            "properties": {
+              "step": {
+                "const": "collect_until_close"
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "subscription": {
+                "description": "Subscription ID or a $var template."
+              },
+              "expect_last": {
+                "description": "Pattern for the params of the subscription's last notification before close."
+              },
+              "capture_cursor": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,31}$"
+              },
+              "capture_next_sequence": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,31}$"
+              },
+              "forbid_ended": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       }

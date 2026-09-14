@@ -6,6 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -88,6 +89,7 @@ pub struct Session {
     writer: Option<Box<dyn Write + Send>>,
     stream: Option<UnixStream>,
     events: Receiver<Event>,
+    gate: ReadGate,
     closed: bool,
     started: Instant,
     label: String,
@@ -145,12 +147,22 @@ fn spawn(launch: &Launch, stdout: Stdio) -> Result<(Child, Vec<String>), String>
     Ok((child, argv))
 }
 
-fn frame_reader(mut input: impl Read + Send + 'static) -> Receiver<Event> {
+/// Whether the runner is reading a connection; paused reading models a slow consumer (TRN-4).
+type ReadGate = Arc<(Mutex<bool>, Condvar)>;
+
+fn frame_reader(mut input: impl Read + Send + 'static, gate: ReadGate) -> Receiver<Event> {
     let (sender, events) = channel();
     thread::spawn(move || {
         let mut buffer = Vec::new();
         let mut chunk = [0u8; 65_536];
         loop {
+            {
+                let (paused, resumed) = &*gate;
+                let mut paused = paused.lock().unwrap_or_else(|e| e.into_inner());
+                while *paused {
+                    paused = resumed.wait(paused).unwrap_or_else(|e| e.into_inner());
+                }
+            }
             match input.read(&mut chunk) {
                 Ok(0) | Err(_) => {
                     let _ = sender.send(Event::Eof);
@@ -234,11 +246,13 @@ impl Session {
             .stdin
             .take()
             .map(|stdin| Box::new(stdin) as Box<dyn Write + Send>);
+        let gate: ReadGate = Arc::new((Mutex::new(false), Condvar::new()));
         let mut session = Self {
             child: Some(child),
             writer: stdin,
             stream: None,
-            events: frame_reader(stdout),
+            events: frame_reader(stdout, gate.clone()),
+            gate,
             closed: false,
             started,
             label: "main".into(),
@@ -254,11 +268,13 @@ impl Session {
             .map_err(|e| format!("cannot connect to {}: {e}", path.display()))?;
         let reader = stream.try_clone().map_err(|e| e.to_string())?;
         let writer = stream.try_clone().map_err(|e| e.to_string())?;
+        let gate: ReadGate = Arc::new((Mutex::new(false), Condvar::new()));
         let mut session = Self {
             child: None,
             writer: Some(Box::new(writer)),
             stream: Some(stream),
-            events: frame_reader(reader),
+            events: frame_reader(reader, gate.clone()),
+            gate,
             closed: false,
             started,
             label: label.to_string(),
@@ -311,6 +327,29 @@ impl Session {
         }
     }
 
+    /// Stop reading from the connection, so its buffers fill (runner step `pause_reading`).
+    pub fn pause_reading(&mut self) {
+        self.set_paused(true);
+    }
+
+    pub fn resume_reading(&mut self) {
+        self.set_paused(false);
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        let (state, resumed) = &*self.gate;
+        *state.lock().unwrap_or_else(|e| e.into_inner()) = paused;
+        resumed.notify_all();
+        self.note(
+            if paused {
+                "pause_reading"
+            } else {
+                "resume_reading"
+            },
+            &json!({}),
+        );
+    }
+
     pub fn close_input(&mut self) {
         self.note("close_input", &json!({}));
         self.writer = None;
@@ -361,6 +400,7 @@ impl Session {
 
     /// Close the connection (and stop an owned stdio process); return the transcript.
     pub fn finish(mut self) -> Vec<Value> {
+        self.set_paused(false);
         self.writer = None;
         if let Some(stream) = &self.stream {
             let _ = stream.shutdown(Shutdown::Both);

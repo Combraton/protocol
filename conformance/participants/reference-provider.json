@@ -32,11 +32,17 @@
       "execution.usage",
       "execution.context",
       "execution.discovery",
-      "execution.continuation"
+      "execution.continuation",
+      "core.events.backpressure",
+      "execution.output"
     ],
     "test_controls": [
       "clock.file",
       "executor.script"
+    ],
+    "test_barriers": [
+      "backpressure.limit.reached",
+      "backpressure.connection.closed"
     ]
   },
   "launch": {
@@ -255,7 +261,13 @@
       "cancels-on-disconnect",
       "respawn-on-restart",
       "feature-operations-ungated",
-      "feature-fields-accepted"
+      "feature-fields-accepted",
+      "output-dropped-silently",
+      "lost-range-without-bytes",
+      "consumer-too-slow-to-older-consumers",
+      "notice-waits-indefinitely",
+      "unbounded-pending-output",
+      "semantic-events-dropped-under-pressure"
     ]
   }
 }

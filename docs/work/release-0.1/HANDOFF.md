@@ -6,8 +6,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-13T20:30Z.
-- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 is complete on branch `release-0.1/m2` pending CI and owner review ([M2 task](M2.md)). Both implementations pass the suite.
+- **Checkpoint:** 2026-09-14, after the owner-requested M2 close-out pass.
+- **Status:** M0 and M1 merged (PR #2, `f42d21a`). M2 is complete on branch `release-0.1/m2`, including the close-out pass ([M2 task](M2.md)). It awaits owner acceptance in PR #3. Both implementations pass the suite.
 
 ## Goal, decisions and constraints
 
@@ -35,7 +35,10 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 | `561939a`, `341b363` | Independent Python provider extended to grants, events and capabilities; merged |
 | `6c64ae4` | Section E resolutions: spec, schema, reference, runner, 22 new and 4 revised fixtures |
 | `572cd65` | Merge of the independent third pass (section F of its divergence log) |
-| next commit | Section F resolutions: spec, reference, 9 new and 2 revised fixtures, 20 mutants |
+| `eabfd8e` | Section F resolutions: spec, reference, 9 new and 2 revised fixtures, 20 mutants |
+| `9571ed9` | PR #3 recorded |
+| `8530c26` | Close-out pass: idle revocation race fix, capability revision fix, issue check order, reference-only cursor test, peer-user check, distinct outcomes, CI artifacts |
+| next commit | Close-out records: M2 close-out table, M3 acceptance criteria, state, handoff |
 
 ## What exists on `release-0.1/m2`
 
@@ -46,43 +49,51 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - §18 credentials.
 - **STREAM:** stdio and Unix-socket forms.
 - **Suite:**
-  - 153 fixtures; 143 reference mutants.
+  - 155 fixtures; 147 reference mutants.
   - The runner enforces the caller's receive limit on every received frame and notification-after-response ordering.
   - It supports `any_of`, fresh data directories and `$repeat` values.
   - New launch key: `events.unvouched_last`.
 
 ## Evidence
 
-Local run on macOS arm64 of the working tree committed as the section F resolution, all exit 0:
+**CI, Conformance run 34821316336 at `8530c26`.** Success on Ubuntu and macOS, plus the cross-check job. Its artifacts `conformance-results-ubuntu-latest` and `conformance-results-macos-latest` were downloaded and inspected. On both OSes:
 
-| Command | Result |
+| Result | Outcome |
 |---|---|
-| `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
-| `cargo build --workspace --locked`; `cargo test --workspace --locked` | passed |
-| `./target/debug/combraton-conformance self-test` | 31 vectors ok |
-| `./target/debug/combraton-conformance check-fixtures` | 153 ok |
-| `run` and `check-mutants` with `reference-provider.json` | 153 pass; every declared mutant killed |
-| `run` and `check-mutants` with `reference-provider-unix.json` | 153 pass; every declared mutant killed |
-| `run` with `independent-python-core.json` | 0 not passing (socket fixtures not applicable) |
-| `python3 scripts/check_docs.py` | 0 errors |
+| Reference, stdio | 148 pass, 7 skipped (socket fixtures) |
+| Reference, Unix socket | 155 pass |
+| Independent Python, stdio | 148 pass, 7 skipped |
+| `check-mutants`, stdio and socket | all declared mutants killed (`mutants.json`) |
+| Peer-user check | `pass`: root client (uid 0) closed with 0 bytes; same-user control answered |
+| Peer-user check with `skip-peer-check` | `pass`: root client answered, so the check detects the missing rule |
 
-- **CI:** `6c64ae4` failed only the independent step, as expected. At `eabfd8e`, Conformance run 34777724435 succeeded on Ubuntu and macOS, including the cross-checks, and Documentation run 34777724430 succeeded.
-- **Kill reasons.** The kill reasons of 11 new mutants were inspected one by one; each fails its fixture at the intended step.
+**Local (macOS arm64), all exit 0 except as noted:**
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build --workspace --locked`, `cargo test --workspace --locked`: the latter includes the capability-revision unit test, which fails against the old digest, and the reference cursor test;
+- `self-test`, `check-fixtures` (155);
+- `run` and `check-mutants` for both reference participants, and `run` for the independent participant;
+- `python3 scripts/check_docs.py`;
+- `peer_user_check.py`: exit 77 `unsupported`, because this host has no passwordless `sudo`.
 
 **Independence notes:**
-- The second pass found a disclosure bug in the spec: grant records and subject values leaked through events. It also found that notifications could exceed the caller's receive limit, a bug the reference shared.
-- The third pass found that this fix was unguarded against the original leak, along with 20 other unguarded requirements. All now have fixtures and mutants.
-- The 9 new fixtures pass on both implementations.
+- The second pass found a disclosure bug and a receive-limit bug.
+- The third found 21 unguarded requirements, all now guarded.
+- The close-out pass found two real reference bugs, both fixed: the idle re-check race and the capability digest.
 
 ## What remains uncertain
 
+- **Concurrency.** Ordering under concurrent revocation rests on the processing lock and code review. The race cannot be forced deterministically.
+- **Idle grant expiry during a session.** No portable fixture observes it, because the launch clock is fixed. A controllable test clock is an M3 acceptance criterion.
+- **Peer-user check.** It exercises only root as the other user, and hosts without passwordless `sudo` report `unsupported`.
+- **Reference-only evidence.** Capability revision on an evidence-source change, and cursors past the head, are tested only by reference tests. Portable fixtures cannot force them.
 - **Single implementation:** the Unix-socket binding and credentials.
-- **Unguarded, documented:**
-  - a cursor past the current head (unreachable without constructing a cursor);
-  - capability revision on evidence-source change;
-  - the issue check order, where only `details.path` differs;
-  - rejection of a different peer user on the socket (needs a second OS account).
-- **Deferred:** effects, telemetry lost ranges, backpressure, pipelined requests and fault injection (M3); highest-common-major selection (M6).
+- **Deferred to M3 acceptance:**
+  - effects and reconciliation;
+  - telemetry lost ranges;
+  - backpressure;
+  - fault injection;
+  - pipelined requests.
+
+  Highest-common-major selection is deferred to M6.
 
 ## Active resources
 
@@ -94,5 +105,5 @@ None. Conformance runs spawn short-lived providers in temporary directories.
 
 ## Next action
 
-1. Owner review of [PR #3](https://github.com/Combraton/protocol/pull/3). Address comments; do not merge without authorization.
-2. Detail M3 ([draft](M3.md)) as a task.
+1. Owner acceptance of [PR #3](https://github.com/Combraton/protocol/pull/3). Do not merge without authorization.
+2. After acceptance, start M3 in a separate PR per [M3](M3.md), with its explicit acceptance criteria.

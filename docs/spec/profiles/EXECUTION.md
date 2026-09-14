@@ -85,7 +85,10 @@ A minimal executor implements these. *Candidate* names.
 - **Conflict:** the same `completion_id` with different content is rejected and retained as a conflict observation.
 - **Old attempt:** a result from a superseded claim or host generation is retained under its original identity, but it cannot finalize the current execution or its successor.
 - Receipt durability, publication elsewhere, effect reconciliation and external verification are separate facts. Publication never implies acceptance.
-- *Open (M3 decision):* whether completion submission from a host is a public operation (`execution.complete`) or internal to an executor, observable only through events. The draft treats it as internal. Conformance then drives duplicates, conflicts and late old attempts through the scripted executor (§15).
+- **Submission is internal to each executor in Protocol 0.1** (owner decision Q1, 2026-09-14). No public `execution.complete` operation exists.
+  - Every completion outcome MUST be observable through `execution.inspect` and `execution.completion.recorded` events: recorded, duplicate, conflict and superseded attempt.
+  - An executor MUST NOT require a PIO-specific host, library or storage format to produce or expose receipts.
+  - Conformance drives duplicates, conflicts and late old attempts through the scripted executor (§15).
 
 ## 7. Cancellation and fencing
 
@@ -145,7 +148,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.workspaces` | Workspace lease descriptor: repository, base, writer identity, lease epoch, permitted paths and effects, cleanup policy. `execution.workspace.checkpoint` records coverage the executor probed itself, including dirty and untracked state. Agent-reported commit IDs are annotations, not receipts. | EXE-15 |
 | `execution.usage` | Usage observations with a basis of `observed`, `estimated`, `unknown` or `enforced_bound`. Liability for an unknown outcome is unresolved and is not refunded by a timeout. A hard ceiling the adapter cannot enforce is refused at admission. | EXE-16 |
 | `execution.context` | Context bindings at submit and delivery observations for packets and updates (§13). | EXE-17, EXE-18 |
-| `execution.discovery` | Separate discovery facts: detected, adapter recognized, version supported, authentication known or unknown, reachable, last verified. Detection is never offered as usable capability. | EXE-12 |
+| `execution.discovery` | Optional, executor-neutral (owner decision Q2). `execution.discovery.list` (*candidate*) returns installations and endpoints with separate facts: detected, adapter recognized, version supported, authentication known or unknown, reachable, last verified. Detection is never offered as usable capability. Schemas plus positive and adversarial fixtures use scripted installations. Probing real installations is PIO work. | EXE-12 |
 | `execution.output` | Output telemetry, spooled separately from semantic events (§14). | OBS-7, TRN-4 |
 | `execution.continuation` | Native resume and fork where supported. Without native support, a continuation is labeled `fresh_continuation`, never `resumed`. | EXE-23 |
 
@@ -163,22 +166,33 @@ The Context profile is M4. M3 defines only the binding and the delivery observat
 
 ## 14. Output telemetry and backpressure
 
-- Output chunks travel in a telemetry channel separate from semantic events, read with `execution.output.read` (*candidate*) using byte-offset cursors.
-- **Telemetry loss is explicit:** a lost range records `from` and `to` offsets, the byte count where known, the reason, and its effect on evidence coverage (OBS-7).
-- **Semantic events are never dropped.** A subscriber that cannot keep up is ended with `"ended": { "reason": "consumer_too_slow" }` (a new CORE §16.5 reason). It resumes from its cursor; no semantic event is skipped.
-- Telemetry may be coalesced only with declared lost ranges (TRN-4).
-- The two policies are negotiated and reported separately.
+- **Separate channel.** Output chunks travel in a telemetry channel separate from semantic events, read with `execution.output.read` (*candidate*) using byte-offset cursors.
+- **Explicit telemetry loss.** A lost range records `from` and `to` offsets, the byte count where known, the reason, and its effect on evidence coverage (OBS-7). Telemetry may be coalesced or discarded only with declared lost ranges.
+- **Semantic events are never dropped from the stream.** Backpressure ends a *delivery connection*; it never skips an event (TRN-4). The rules are in CORE §16.5 "Backpressure" (proposed M3 draft):
+  - memory and pending notification bytes are bounded per connection;
+  - an ending notice `consumer_too_slow` is attempted only for consumers that negotiated `core.events.backpressure`, and only within a bounded write time;
+  - the connection is then closed;
+  - recovery is by reconnecting from the consumer's last durably processed cursor, with retention gaps reported explicitly.
+- **Separate reporting.** The telemetry policy and the semantic-event policy are negotiated and reported separately.
 
 ## 15. Conformance and test controls
 
-Execution fixtures need harness behavior, faults and time that ordinary operations cannot produce on demand. All such control stays outside the production protocol, extending CORE §13.1 ([decision 007](../../decisions/007-execution-test-controls.md), proposed):
+Execution fixtures need harness behavior, faults and time that ordinary operations cannot produce on demand. All such control stays outside the production protocol, extending CORE §13.1 ([decision 007](../../decisions/007-execution-test-controls.md), accepted with refinements).
 
-- **Scripted executor.** The reference executor drives a scripted fake harness selected by launch configuration: acknowledge, echo only, write bytes only, crash after write, never exit, return late, refuse cancellation, request an action, exceed an output spool. The script is test environment. Real harness adapters are PIO's work and PIO's evidence.
-- **Controllable clock.** Launch configuration can name a clock file that the runner rewrites. The provider reads its clock from it, which makes timeouts and grant expiry observable during a session.
+- **Scripted executor.**
+  - The reference executor drives a scripted fake harness selected by launch configuration: acknowledge, echo only, write bytes only, crash after write, never exit, return late, refuse cancellation, request an action, exceed an output spool.
+  - The script vocabulary is normative **only for the conformance tests that use it** (owner decision Q4). A production executor may satisfy it through a test adapter; it does not need a production scripting engine.
+  - Real harness adapters are PIO's work and PIO's evidence.
+- **Controllable clock.**
+  - Launch configuration can name a clock file that the runner replaces atomically. The provider takes its protocol-visible time from it: expiry, timeouts, deadlines, `recorded_at`.
+  - Virtual time never moves backward. A missing or malformed file at start refuses the launch; during a run, the provider keeps its last good instant.
+  - Real-time watchdogs in the runner and in any barrier stay independent of it, so a frozen clock cannot hang a suite.
 - **Process faults.** The runner kills the provider at points the script or a barrier reaches, then restarts it over the same data directory.
-- **Barriers, implementation-specific.** A participant may declare named pause points. The runner waits for a point to be reached and releases it, producing a deterministic interleaving for concurrency regressions. Fixtures that use barriers apply only to participants declaring those names; others report `unsupported`.
+- **Barriers, implementation-specific.**
+  - A participant may declare named pause points. The runner waits for a point to be reached, synchronizes on explicit provider signals, and releases it. That gives a deterministic interleaving for concurrency regressions, with bounded failure handling instead of sleeps.
+  - Fixtures that use barriers apply only to participants declaring those names. Others report `unsupported`, recorded as a coverage limit and never as a pass.
 
-No execution operation, method name, event type or error is reserved for testing.
+No execution operation, method name, event type or error is reserved for testing. A provider launched without a conformance launch configuration exposes none of these controls.
 
 ## 16. What execution does not establish
 

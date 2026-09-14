@@ -6,7 +6,7 @@ Use one small file per meaningful decision. Include title, status (proposed/acce
 
 ## Index
 
-Records 001–005 were accepted by the owner on 2026-09-13 for the Protocol 0.1 release ([tracking issue #1](https://github.com/Combraton/protocol/issues/1)); decision 006 settles the Unix-socket credential. Decision 007 is proposed for M3.
+Records 001–005 were accepted by the owner on 2026-09-13 for the Protocol 0.1 release ([tracking issue #1](https://github.com/Combraton/protocol/issues/1)); decision 006 settles the Unix-socket credential. Decision 007 was accepted with refinements on 2026-09-14 for M3.
 
 | Record | Status | Subject |
 |---|---|---|
@@ -16,6 +16,6 @@ Records 001–005 were accepted by the owner on 2026-09-13 for the Protocol 0.1 
 | [004](004-local-stream-binding.md) | accepted | Bounded newline-delimited JSON-RPC over stdio and Unix sockets; close on frame-level failure |
 | [005](005-deduplication-generations.md) | accepted | Command intent digest, binding on acceptance, deduplication generations instead of clocks |
 | [006](006-unix-socket-principal-credential.md) | accepted | Unix-socket placement and peer check, `ccred1` credential files and `core.authenticate` |
-| [007](007-execution-test-controls.md) | proposed | Execution test controls outside the protocol: scripted executor, clock file, process kills, barriers, pipelined sends |
+| [007](007-execution-test-controls.md) | accepted with refinements | Execution test controls outside the protocol: scripted executor, clock file, process kills, barriers, pipelined sends |
 
 Wire/compatibility decisions belong in Protocol; cross-system authority changes belong in Combraton. Link the owning decision instead of maintaining independent copies. An experiment result does not silently select a product direction. Keep ordinary local choices lightweight and record material selections in their implementation PR.

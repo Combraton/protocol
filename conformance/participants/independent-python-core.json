@@ -2,7 +2,7 @@
   "format": "combraton-conformance-participant/1",
   "name": "combraton-independent-python-core",
   "version": "0.1.0-dev.0",
-  "description": "Independent spec-only Core provider in Python (standard library only; not a product). Written from the published documents and schemas without reading the reference provider. See conformance/independent/python-core/README.md.",
+  "description": "Independent spec-only Core and Execution provider in Python (standard library only; not a product). Written from the published documents and schemas without reading the reference provider. See conformance/independent/python-core/README.md.",
   "role": "provider",
   "binding": "stdio",
   "claims": {
@@ -14,12 +14,31 @@
       {
         "name": "core-test",
         "major": 1
+      },
+      {
+        "name": "execution",
+        "major": 1
       }
     ],
     "features": [
       "core.grants",
       "core.events",
-      "core.capabilities"
+      "core.capabilities",
+      "core.effects",
+      "execution.steering",
+      "execution.actions",
+      "execution.controller",
+      "execution.workspaces",
+      "execution.usage",
+      "execution.context",
+      "execution.discovery",
+      "execution.continuation",
+      "execution.output"
+    ],
+    "test_controls": [
+      "clock.file",
+      "executor.script",
+      "store.faults"
     ]
   },
   "launch": {

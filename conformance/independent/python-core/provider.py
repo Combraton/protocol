@@ -10,7 +10,9 @@ of the Protocol 0.1 conformance fixtures. Not a product.
 Speaks the stdio form of stream/1 (STREAM 1-5) and implements core/1 plus the
 conformance-only core-test/1 profile (CORE 13), including the M2 Core
 features core.grants (CORE 15), core.events (CORE 16) and core.capabilities
-(CORE 17). Standard library only.
+(CORE 17), the M3 Core feature core.effects (CORE 19) and execution/1
+(docs/spec/profiles/EXECUTION.md) over a scripted executor, with the clock
+file and store faults of decision 007. Standard library only.
 """
 
 from __future__ import annotations
@@ -20,26 +22,37 @@ import os
 import sqlite3
 import sys
 import threading
-import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import clock as C  # noqa: E402
 import envelope as E  # noqa: E402
 import events as EV  # noqa: E402
+import execution_envelope as XE  # noqa: E402
 import grants as G  # noqa: E402
 import valuedomain as V  # noqa: E402
+from errors import ProtocolError, denied  # noqa: E402
+from executor import Executor, ExecutorConfigError, parse_executor_config  # noqa: E402
 from state import Store  # noqa: E402
 
 PROVIDER = {"name": "combraton-independent-python-core", "version": "0.1.0-dev.0"}
 MIB = 1048576
 
-CORE_FEATURES = ["core.digest-sha512", "core.grants", "core.events", "core.capabilities"]
+CORE_FEATURES = ["core.digest-sha512", "core.grants", "core.events", "core.capabilities", "core.effects"]
+EXECUTION_FEATURES = ["execution.steering", "execution.actions", "execution.controller", "execution.workspaces",
+                      "execution.usage", "execution.context", "execution.discovery", "execution.continuation",
+                      "execution.output"]
+# EXECUTION 1: the Core features execution/1 requires. Published only in that
+# document; core.describe keeps depends_on: ["core"].
+EXECUTION_REQUIRED_CORE_FEATURES = ["core.events", "core.capabilities", "core.effects"]
 SUPPORTED_PROFILES = {
     "core": {"majors": [1], "features": CORE_FEATURES, "depends_on": []},
     "core-test": {"majors": [1], "features": [], "depends_on": ["core"]},
+    "execution": {"majors": [1], "features": EXECUTION_FEATURES, "depends_on": ["core"]},
 }
+IDLE_RECHECK_SECONDS = 0.1  # real time, never the virtual clock (decision 007)
 DECLARED_UNSUPPORTED = [
     {"name": "coordination", "reason": "not_in_release"},
     {"name": "remote-trust", "reason": "not_in_release"},
@@ -65,9 +78,12 @@ DEFAULT_PROVIDER_ID = "conformance-provider"  # conformance README, launch confi
 KNOWN_CAPABILITIES = ("core-test.writes",)
 OPERATION_CAPABILITIES = {"core-test.subject.put": ("core-test.writes",)}
 AUTHORITY_SCOPE = "core-test"
-TRACKED_SCOPES = (AUTHORITY_SCOPE,)  # CORE 15.3: the authority scopes this provider tracks
 # CORE 16.6: profile subject kinds and the read right a grant needs to see them.
-PROFILE_READ_RIGHTS = {"core-test.subject": "core-test.read", "core-test.authority": "core-test.read"}
+# EXECUTION 11 "base rights": execution.read covers execution events; the
+# controller subject follows the same right (G-CONTROLLER-VISIBILITY).
+PROFILE_READ_RIGHTS = {"core-test.subject": "core-test.read", "core-test.authority": "core-test.read",
+                       XE.EXECUTION_KIND: "execution.read", XE.CONTROLLER_KIND: "execution.read"}
+ALL_EXECUTIONS = {"kind": XE.EXECUTION_KIND, "id": None}  # coverage needs a kind-wide resource
 CAPABILITIES_KIND = "core.capabilities"
 NOTIFY_CHUNK = 100
 
@@ -95,18 +111,6 @@ def log(*parts) -> None:
     print("[independent-python-core]", *parts, file=sys.stderr, flush=True)
 
 
-class ProtocolError(Exception):
-    def __init__(self, code: str, details: dict | None = None, message: str | None = None):
-        super().__init__(message or code)
-        self.code = code
-        self.details = details if details is not None else {}
-        self.message = message or code.replace("_", " ")
-
-
-def denied(reason: str) -> ProtocolError:
-    return ProtocolError("permission_denied", {"reason": reason})
-
-
 def error_object(rid, code: str, details: dict | None = None, message: str | None = None) -> dict:
     return {
         "jsonrpc": "2.0",
@@ -126,7 +130,7 @@ class ConfigError(Exception):
 
 
 CONFIG_KEYS = {"format", "principal", "authority_principals", "provider_id", "limits", "dedupe",
-               "events", "capabilities", "clock"}
+               "events", "capabilities", "clock", "executor", "faults", "test_barriers"}
 
 
 def _short_string(value, what: str) -> str:
@@ -207,11 +211,41 @@ def load_config(path: str) -> dict:
             raise ConfigError(f"capability {name} status must be supported, unsupported or unknown")
 
     clock = cfg.get("clock", {})
-    if not isinstance(clock, dict) or set(clock) - {"fixed"}:
-        raise ConfigError("clock must be an object with fixed")
+    if not isinstance(clock, dict) or set(clock) - {"fixed", "file"} or len(clock) > 1:
+        raise ConfigError("clock must be an object with one of fixed and file")
     fixed = clock.get("fixed")
     if fixed is not None and (not isinstance(fixed, str) or not E.INSTANT.fullmatch(fixed)):
         raise ConfigError("clock.fixed must be an instant YYYY-MM-DDTHH:MM:SSZ")
+    clock_file = clock.get("file")
+    if clock_file is not None and (not isinstance(clock_file, str) or not clock_file):
+        raise ConfigError("clock.file must be a path")
+
+    try:
+        executor = parse_executor_config(cfg.get("executor", {}))
+    except ExecutorConfigError as exc:
+        raise ConfigError(str(exc)) from None
+    except (TypeError, AttributeError, ValueError) as exc:
+        raise ConfigError(f"executor configuration is malformed: {exc!r}") from None
+
+    faults = cfg.get("faults", {})
+    parsed_faults = {"commit_unavailable": {}, "response_internal_error": {}}
+    if not isinstance(faults, dict) or set(faults) - set(parsed_faults):
+        raise ConfigError("faults must be an object with commit_unavailable and/or response_internal_error")
+    for kind, entries in faults.items():
+        if not isinstance(entries, list):
+            raise ConfigError(f"faults.{kind} must be an array")
+        for entry in entries:
+            if (not isinstance(entry, dict) or set(entry) != {"operation", "times"}
+                    or not isinstance(entry["operation"], str) or not E.is_int(entry["times"]) or entry["times"] < 1):
+                raise ConfigError(f"faults.{kind} entries are {{operation, times >= 1}}")
+            parsed_faults[kind][entry["operation"]] = parsed_faults[kind].get(entry["operation"], 0) + entry["times"]
+
+    barriers = cfg.get("test_barriers")
+    if barriers is not None:
+        # This implementation declares no barriers or signals (decision 007
+        # section 4); a launch that enables one cannot be honoured.
+        if not isinstance(barriers, dict) or barriers.get("enabled"):
+            raise ConfigError("test_barriers: this provider implements no barriers")
 
     return {
         "principal": principal,
@@ -228,6 +262,9 @@ def load_config(path: str) -> dict:
         "retain_last": retain_last,
         "capabilities": capabilities,
         "clock": fixed,
+        "clock_file": clock_file,
+        "executor": executor,
+        "faults": parsed_faults,
     }
 
 
@@ -247,6 +284,9 @@ class Session:
 
     def feature_selected(self, feature: str) -> bool:
         return any(feature in p["features"] for p in self.selected.values())
+
+    def features(self) -> set:
+        return {f for p in self.selected.values() for f in p["features"]}
 
     def digest_algorithms(self) -> list[str]:
         algorithms = ["sha256"]
@@ -276,6 +316,10 @@ class Auth:
             return self._holder_or_issuer(subject["id"])
         if kind == CAPABILITIES_KIND:
             return G.grant_covers(self.grant, subject)
+        if kind == XE.EFFECT_KIND:
+            # CORE 19.4: an effect subject is visible exactly when its target is.
+            row = self.provider.store.get_json(XE.EFFECT_KIND, subject["id"])
+            return row is not None and self.grant_shows(row[1]["descriptor"]["target"])
         right = PROFILE_READ_RIGHTS.get(kind)
         return right is not None and right in self.grant["rights"] and G.grant_covers(self.grant, subject)
 
@@ -299,48 +343,85 @@ class Auth:
         return subject["kind"] == E.GRANT_KIND and self._holder_or_issuer(subject["id"])
 
 
+def _core_validator(validator):
+    """M1/M2 validators take whether the grant field is allowed."""
+    return lambda env, method, features: validator(env, method, "core.grants" in features)
+
+
 class Provider:
-    def __init__(self, config: dict, store: Store):
+    def __init__(self, config: dict, store: Store, clock: C.Clock):
         self.principal = config["principal"]
         self.scope = config["scope"]
         self.authorities = config["authorities"]
         self.is_authority = self.principal in self.authorities
         self.provider_id = config["provider_id"]
         self.limits = config["limits"]
-        self.fixed_clock = config["clock"]
+        self.clock = clock
         self.store = store
         self.session = Session()
+        self.executor = Executor(self, config["executor"])
+        self.faults = {kind: dict(entries) for kind, entries in config["faults"].items()}
+        # One lock serializes request processing and the idle re-check.
+        self.lock = threading.RLock()
+        x = self.executor
+        cv = _core_validator
         self.ops = {
             # operation: (profile, feature, kind, validator, handler)
-            "core.describe": ("core", None, "query", E.describe_params, self.op_describe),
-            "core.negotiate": ("core", None, "query", E.negotiate_params, self.op_negotiate),
-            "core.authenticate": ("core", None, "query", E.authenticate_params, self.op_authenticate),
-            "core.grant.issue": ("core", "core.grants", "command", E.grant_issue_params, self.op_grant_issue),
-            "core.grant.revoke": ("core", "core.grants", "command", E.grant_revoke_params, self.op_grant_revoke),
-            "core.grant.get": ("core", "core.grants", "query", E.grant_get_params, self.op_grant_get),
-            "core.events.read": ("core", "core.events", "query", E.events_read_params, self.op_events_read),
-            "core.events.subscribe": ("core", "core.events", "query", E.events_subscribe_params, self.op_events_subscribe),
-            "core.events.unsubscribe": ("core", "core.events", "query", E.events_unsubscribe_params, self.op_events_unsubscribe),
-            "core.capabilities": ("core", "core.capabilities", "query", E.capabilities_params, self.op_capabilities),
-            "core-test.authority.claim": ("core-test", None, "command", E.claim_params, self.op_claim),
-            "core-test.subject.put": ("core-test", None, "command", E.put_params, self.op_put),
-            "core-test.subject.get": ("core-test", None, "query", E.subject_query_params, self.op_get),
-            "core-test.subject.applied_count": ("core-test", None, "query", E.subject_query_params, self.op_applied_count),
+            "core.describe": ("core", None, "query", cv(E.describe_params), self.op_describe),
+            "core.negotiate": ("core", None, "query", cv(E.negotiate_params), self.op_negotiate),
+            "core.authenticate": ("core", None, "query", cv(E.authenticate_params), self.op_authenticate),
+            "core.grant.issue": ("core", "core.grants", "command", cv(E.grant_issue_params), self.op_grant_issue),
+            "core.grant.revoke": ("core", "core.grants", "command", cv(E.grant_revoke_params), self.op_grant_revoke),
+            "core.grant.get": ("core", "core.grants", "query", cv(E.grant_get_params), self.op_grant_get),
+            "core.events.read": ("core", "core.events", "query", cv(E.events_read_params), self.op_events_read),
+            "core.events.subscribe": ("core", "core.events", "query", cv(E.events_subscribe_params), self.op_events_subscribe),
+            "core.events.unsubscribe": ("core", "core.events", "query", cv(E.events_unsubscribe_params), self.op_events_unsubscribe),
+            "core.capabilities": ("core", "core.capabilities", "query", cv(E.capabilities_params), self.op_capabilities),
+            "core.effects.get": ("core", "core.effects", "query", XE.effects_get_params, x.op_effects_get),
+            "core.effects.abort_obligation": ("core", "core.effects", "command", XE.effects_abort_params,
+                                              x.op_abort_obligation),
+            "core-test.authority.claim": ("core-test", None, "command", cv(E.claim_params), self.op_claim),
+            "core-test.subject.put": ("core-test", None, "command", cv(E.put_params), self.op_put),
+            "core-test.subject.get": ("core-test", None, "query", cv(E.subject_query_params), self.op_get),
+            "core-test.subject.applied_count": ("core-test", None, "query", cv(E.subject_query_params), self.op_applied_count),
+            "execution.submit": ("execution", None, "command", XE.submit_params, x.op_submit),
+            "execution.inspect": ("execution", None, "query", XE.inspect_params, x.op_inspect),
+            "execution.cancel": ("execution", None, "command", XE.cancel_params, x.op_cancel),
+            "execution.reconcile": ("execution", None, "query", XE.reconcile_params, x.op_reconcile),
+            "execution.steer": ("execution", "execution.steering", "command", XE.steer_params, x.op_steer),
+            "execution.respond_action": ("execution", "execution.actions", "command", XE.respond_action_params,
+                                         x.op_respond_action),
+            "execution.controller.claim": ("execution", "execution.controller", "command", XE.controller_claim_params,
+                                           x.op_claim),
+            "execution.workspace.checkpoint": ("execution", "execution.workspaces", "command", XE.checkpoint_params,
+                                               x.op_checkpoint),
+            "execution.discovery.list": ("execution", "execution.discovery", "query", XE.discovery_params,
+                                         x.op_discovery),
+            "execution.output.read": ("execution", "execution.output", "query", XE.output_read_params,
+                                      x.op_output_read),
         }
 
     # ------------------------------------------------------------- clock
     def now(self) -> str:
-        """The provider clock (CORE 15.2): the launch configuration's fixed
-        instant, or the system clock in UTC at second precision."""
-        return self.fixed_clock or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        """The provider clock (CORE 15.2): the fixed instant, the clock file's
+        instant as read for this unit of work, or the system clock."""
+        return self.clock.now()
+
+    def tracked_scopes(self) -> tuple:
+        # CORE 15.3: the authority scopes this provider tracks.
+        return (AUTHORITY_SCOPE, self.executor.controller_scope)
 
     def epoch_of(self, scope: str) -> int | None:
-        # The only authority scope this provider tracks is core-test. A binding
-        # to any other scope is refused at issue (CORE 15.3); None never
-        # equals a bound epoch.
-        if scope not in TRACKED_SCOPES:
-            return None
-        return self.store.revision(E.AUTHORITY_SUBJECT["kind"], E.AUTHORITY_SUBJECT["id"])
+        # A binding to an untracked scope is refused at issue (CORE 15.3);
+        # None never equals a bound epoch.
+        if scope == AUTHORITY_SCOPE:
+            return self.store.revision(E.AUTHORITY_SUBJECT["kind"], E.AUTHORITY_SUBJECT["id"])
+        if scope == self.executor.controller_scope:
+            return self.executor.controller_epoch()
+        return None
+
+    def head_cursor(self) -> str:
+        return EV.encode_cursor(self.store, self.store.head())
 
     # ------------------------------------------------------------ output
     def write_frame(self, obj: dict) -> None:
@@ -354,6 +435,22 @@ class Provider:
 
     # ------------------------------------------------------------- frames
     def handle_frame(self, frame: bytes) -> None:
+        with self.lock:
+            self.clock.refresh()
+            self._handle_frame(frame)
+
+    def idle_recheck(self) -> None:
+        """Executor observations and deadlines advance without a request
+        (EXECUTION 4 "Watching", CORE 19.4). Only a tick that committed
+        something is followed by notification delivery; an expiry alone is
+        reported at the next request, as CORE 16.5 allows on stdio
+        (G-IDLE-RECHECK)."""
+        with self.lock:
+            self.clock.refresh()
+            if self.executor.tick(allow_crash=True):
+                self.deliver_notifications()
+
+    def _handle_frame(self, frame: bytes) -> None:
         try:
             text = frame.decode("utf-8")
         except UnicodeDecodeError:
@@ -389,6 +486,10 @@ class Provider:
             return
         self.session.request_id = rid
         try:
+            # Script steps and timeouts due by now are visible to this request
+            # ("no later than the provider's next request"). A scripted crash
+            # never happens here, only between requests.
+            self.executor.tick(allow_crash=False)
             result = self.dispatch(msg["method"], msg["params"])
             response = {"jsonrpc": "2.0", "id": rid, "result": result}
         except ProtocolError as exc:
@@ -401,6 +502,14 @@ class Provider:
         # CORE 16.5: notifications for events a command caused go out after
         # that command's response; a new subscription's backlog after its own.
         self.deliver_notifications()
+        # The executor acts on what the request committed (dispatch after the
+        # submit's transaction, forwarding after a cancel's) and then reports.
+        try:
+            if self.executor.tick(allow_crash=True):
+                self.deliver_notifications()
+        except Exception as exc:
+            log("executor tick failed:", repr(exc))
+            self.store.rollback()
 
     # ---------------------------------------------------------- CORE 10
     def dispatch(self, method: str, params: dict) -> dict:
@@ -422,7 +531,7 @@ class Provider:
         # so that step 3 can name the feature (E-FEATURE-OP-STEP).
         self.check_limits(params)
         try:
-            validator(params, method, s.feature_selected("core.grants"))
+            validator(params, method, s.features())
         except E.Invalid as exc:
             raise ProtocolError("invalid_envelope", {"path": exc.path, "reason": exc.reason}) from None
         # Step 3: every requires entry negotiated and understood; the
@@ -506,16 +615,22 @@ class Provider:
             # Step 7, first part: capabilities the operation depends on
             # (CORE 17.2). The handler checks the epoch, then preconditions.
             self.check_capabilities(method)
-            # Step 8: state change, events and the command record in one
-            # owner transaction.
-            revision, outcome, changes = handler(env, auth)
+            # Step 8: state change, events, effect records and the command
+            # record in one owner transaction. Effect descriptors name the
+            # command's operation_ref, so it is allocated first.
+            operation_ref = st.next_operation_ref()
+            if method.startswith("execution.") or method.startswith("core.effects."):
+                revision, outcome, changes, effect_refs = handler(env, auth, operation_ref)
+            else:
+                revision, outcome, changes = handler(env, auth)
+                effect_refs = []  # CORE 11: M1 and M2 operations record no effects
             ack = {
                 "command_id": env["command_id"],
                 "command_digest": env["command_digest"],
-                "operation_ref": st.next_operation_ref(),
+                "operation_ref": operation_ref,
                 "subject": env["subject"],
                 "revision": revision,
-                "effect_refs": [],
+                "effect_refs": effect_refs,
             }
             recorded_at = self.now()
             for event_type, subject, event_revision, payload in changes:
@@ -532,19 +647,60 @@ class Provider:
                 })
             st.bind(self.scope, env["command_id"], generation, env["command_digest"],
                     V.canonical(ack), V.canonical(outcome))
+            if self._take_fault("commit_unavailable", method):
+                # Injected store fault (decision 007): the owner transaction
+                # rolls back, so nothing is bound (CORE 12 unavailable).
+                log("injected fault: commit_unavailable for", method)
+                raise ProtocolError("unavailable")
             try:
                 st.commit()
             except sqlite3.Error as exc:
                 log("commit failed:", repr(exc))
                 raise ProtocolError("unavailable") from None
+            if self._take_fault("response_internal_error", method):
+                # Committed; the caller learns nothing about the outcome.
+                log("injected fault: response_internal_error for", method)
+                raise ProtocolError("internal_error")
             return {"acknowledgment": ack, "outcome": outcome, "replay": False}
         except BaseException:
             st.rollback()
             raise
 
+    def _take_fault(self, kind: str, method: str) -> bool:
+        remaining = self.faults[kind].get(method, 0)
+        if remaining <= 0:
+            return False
+        self.faults[kind][method] = remaining - 1
+        return True
+
     # ------------------------------------------------------ CORE 15.5 (step 6)
+    def _effect_target(self, effect_id: str) -> dict:
+        row = self.store.get_json(XE.EFFECT_KIND, effect_id)
+        return row[1]["descriptor"]["target"] if row is not None else ALL_EXECUTIONS
+
     def authorize(self, method: str, env: dict) -> Auth:
         payload = env["payload"]
+        # EXECUTION 11 "base rights" and "Rights": each command's right on the
+        # subject it acts on; execution.read for reads and effects.
+        if method in ("execution.submit", "execution.cancel", "execution.steer", "execution.respond_action",
+                      "execution.workspace.checkpoint", "execution.controller.claim"):
+            return self.authorize_under(env, [(method, env["subject"])])
+        if method in ("execution.inspect", "execution.output.read"):
+            return self.authorize_under(env, [("execution.read", {"kind": XE.EXECUTION_KIND, "id": payload["execution"]})])
+        if method == "execution.reconcile":
+            # The executions a reconcile finds are unknown before the lookup;
+            # the result shows only those the grant covers (G-RECONCILE-AUTH).
+            return self.authorize_under(env, [("execution.read", None)])
+        if method == "execution.discovery.list":
+            return self.authorize_under(env, [("execution.discovery.list",
+                                               {"kind": "execution.discovery", "id": "installations"})])
+        if method == "core.effects.get":
+            # CORE 19.2: read authority on the effect's target; a missing
+            # effect is refused exactly like one the grant does not cover.
+            return self.authorize_under(env, [("execution.read", self._effect_target(payload["effect"]))])
+        if method == "core.effects.abort_obligation":
+            return self.authorize_under(env, [("core.effects.abort_obligation",
+                                               self._effect_target(env["subject"]["id"]))])
         if method == "core-test.subject.put":
             needs = [("core-test.write", env["subject"])]
             needs += [("core-test.read", p["subject"]) for p in env["preconditions"] if p["subject"] != env["subject"]]
@@ -600,7 +756,7 @@ class Provider:
         # CORE 15.3: a binding to an authority scope the provider does not
         # track, "checked with audience and expires_at at step 6". A later
         # epoch of a tracked scope is accepted (F-ISSUE-CHECK-ORDER).
-        if "authority_binding" in terms and terms["authority_binding"]["scope"] not in TRACKED_SCOPES:
+        if "authority_binding" in terms and terms["authority_binding"]["scope"] not in self.tracked_scopes():
             raise ProtocolError("invalid_envelope", {"path": "/payload/authority_binding/scope",
                                                      "reason": "not an authority scope this provider tracks"})
         if "parent" not in terms:
@@ -747,6 +903,7 @@ class Provider:
         unselected: list[dict] = []
         selected: dict[str, dict] = {}
         optional_feature_misses: dict[str, list[dict]] = {}
+        feature_refused: set[str] = set()
         for name in order:
             p = requested.get(name)
             if p is None:  # Core is included implicitly (CORE 4.2)
@@ -766,6 +923,7 @@ class Provider:
             missing = [f for f in p["required_features"] if f not in support["features"]]
             if missing:
                 sink.extend({"profile": name, "feature": f, "reason": "unknown_feature"} for f in missing)
+                feature_refused.add(name)
                 continue
             features = list(p["required_features"])
             misses = []
@@ -789,6 +947,18 @@ class Provider:
                     sink = refusals if (p is None or p["required"] or name == "core") else unselected
                     sink.append({"profile": name, "reason": "dependency_not_selected"})
                     changed = True
+        # EXECUTION 1: execution/1 needs Core features core.events,
+        # core.capabilities and core.effects selected in this session; one
+        # item per missing feature. Its own missing required features, if
+        # any, are listed too (G-NEG-EXEC-ITEMS).
+        p = requested.get("execution")
+        if p is not None and ("execution" in selected or "execution" in feature_refused):
+            core_features = selected.get("core", {"features": []})["features"]
+            absent = [f for f in EXECUTION_REQUIRED_CORE_FEATURES if f not in core_features]
+            if absent:
+                selected.pop("execution", None)
+                sink = refusals if p["required"] else unselected
+                sink.extend({"profile": "execution", "feature": f, "reason": "dependency_not_selected"} for f in absent)
         for name in selected:
             unselected.extend(optional_feature_misses.get(name, []))
         if refusals:
@@ -1008,13 +1178,15 @@ def serve(provider: Provider) -> None:
             del buf[: nl + 1]
             scanned = 0
             if len(frame) > provider.session.recv_limit:
-                fatal("frame_too_large", "frame exceeds the frame limit")
+                with provider.lock:
+                    fatal("frame_too_large", "frame exceeds the frame limit")
             provider.handle_frame(frame)
             continue
         scanned = len(buf)
         limit = provider.session.recv_limit
         if len(buf) > limit:
-            fatal("frame_too_large", "frame exceeds the frame limit")
+            with provider.lock:
+                fatal("frame_too_large", "frame exceeds the frame limit")
         # STREAM 1.5: never buffer more than limit + 1 bytes of an unfinished frame.
         chunk = os.read(0, max(1, min(65536, limit + 1 - len(buf))))
         if not chunk:
@@ -1025,7 +1197,7 @@ def serve(provider: Provider) -> None:
         buf += chunk
 
 
-def capability_predicates(config: dict) -> list:
+def capability_predicates(config: dict, adapter_predicates: list) -> list:
     """The snapshot observed at this start (CORE 17.1). Without a configured
     status, core-test.writes is supported on the evidence that this start
     committed a write transaction to the store. No observed_at: an instant
@@ -1033,10 +1205,26 @@ def capability_predicates(config: dict) -> list:
     (E-CAP-EVIDENCE)."""
     status = config["capabilities"].get("core-test.writes")
     if status is None:
-        return [{"name": "core-test.writes", "status": "supported",
-                 "evidence": {"source": "store write transaction committed at provider start"}}]
-    return [{"name": "core-test.writes", "status": status,
-             "evidence": {"source": "conformance launch configuration"}}]
+        writes = [{"name": "core-test.writes", "status": "supported",
+                   "evidence": {"source": "store write transaction committed at provider start"}}]
+    else:
+        writes = [{"name": "core-test.writes", "status": status,
+                   "evidence": {"source": "conformance launch configuration"}}]
+    # EXECUTION 10: adapter predicates reuse CORE 17. Only predicates the
+    # scripted adapter reports are listed; an unlisted one is unknown.
+    return writes + adapter_predicates
+
+
+def idle_loop(provider: "Provider") -> None:
+    import time
+    while True:
+        time.sleep(IDLE_RECHECK_SECONDS)
+        try:
+            provider.idle_recheck()
+        except Exception as exc:  # never let the re-check thread die silently
+            log("idle re-check failed:", repr(exc))
+            with provider.lock:
+                provider.store.rollback()
 
 
 def main(argv: list[str]) -> int:
@@ -1057,16 +1245,19 @@ def main(argv: list[str]) -> int:
 
     try:
         config = load_config(args.config)
-    except (OSError, ConfigError) as exc:
+        # Decision 007 section 2: a missing or malformed clock file refuses
+        # the start with a nonzero exit.
+        clock = C.Clock(fixed=config["clock"], path=config["clock_file"])
+    except (OSError, ConfigError, C.ClockError) as exc:
         log("configuration error:", exc)
         return 2
     store = Store(args.data_dir)
-    provider = Provider(config, store)
+    provider = Provider(config, store, clock)
     # Start-time environment, in this order (E-START-ORDER): deduplication
     # window, stream epoch, event retention, capability snapshot.
     store.apply_generation_config(config["advance"], config["retain"])
     store.apply_event_config(config["new_epoch"], config["unvouched_last"], config["retain_last"])
-    predicates = capability_predicates(config)
+    predicates = capability_predicates(config, provider.executor.adapter_predicates())
 
     def capability_event(revision: int) -> dict:
         # CORE 17.3: provider-origin, so no operation_ref or command_id.
@@ -1081,7 +1272,14 @@ def main(argv: list[str]) -> int:
         }
 
     store.apply_capabilities(predicates, capability_event)
+    # EXECUTION 7.1: restart recovery, before any request. A new stream epoch
+    # at this start means the journal's continuity cannot be vouched for.
+    provider.executor.recover(journal_intact=not config["new_epoch"])
+    threading.Thread(target=idle_loop, args=(provider,), daemon=True).start()
     serve(provider)
+    # End of input: take the lock so no idle re-check is mid-transaction when
+    # the process exits.
+    provider.lock.acquire()
     return 0
 
 

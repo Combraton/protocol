@@ -6,8 +6,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-14, M3 step 7 (acceptance re-check) done.
-- **Status:** M0, M1 and M2 merged. M3 in progress on `release-0.1/m3` ([M3 task](M3.md)).
+- **Checkpoint:** 2026-09-14, M3 close-out; presented for owner acceptance.
+- **Status:** M0, M1 and M2 merged. M3 complete on `release-0.1/m3` and awaiting owner acceptance ([M3 task](M3.md)); not merged.
 
 ## Goal, decisions and constraints
 
@@ -74,6 +74,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
     - **reference:** `conformance/reference/src/outbox.rs`, output spool in `execution.rs`, six new mutants;
     - **runner:** `pause_reading`, `resume_reading`, `collect_until_close`;
     - **fixtures:** five new, on both bindings.
+  - **Step 8:** independent provider extended by a spec-only helper (branch `release-0.1/m3-independent`, fast-forwarded into `release-0.1/m3`); resolution record [M3-DIVERGENCES](M3-DIVERGENCES.md); EXECUTION §15.1 conventions.
   - **Step 7:** launch-configuration store faults (`faults`, control `store.faults`), two fault fixtures, EXE-20 mutant, acceptance evidence table in [M3](M3.md#acceptance-evidence-step-7-re-check).
 
 ## Evidence
@@ -84,24 +85,15 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **Owner decisions D1–D5:** issue #1 checkpoint and PR #4 checks.
 - **M3 step 5:** PR #4 checks on `d8aa553` passed on Ubuntu and macOS.
 - **M3 step 6:** PR #4 checks on `ce40da9`.
-- **M3 step 7, local on macOS arm64:**
-
-| Check | Result |
-|---|---|
-| `cargo fmt --check`, `cargo clippy -D warnings`, `cargo build --locked`, `cargo test --locked`, `self-test` | clean |
-| `check-fixtures` | 211 fixtures, 138 matrix IDs, ok |
-| `run` reference stdio | 199 pass, 12 skipped (Unix-socket fixtures) |
-| `run` reference Unix socket | 211 pass |
-| `check-mutants` | 244 stdio and 22 socket results, all as intended |
-| `run` independent Python | 151 pass, 12 skipped, 48 unsupported |
-| `python3 scripts/check_docs.py` | 0 errors |
+- **M3 steps 7 and 8:** PR #4 checks on `d81e49b` and `ad91182` passed on Ubuntu and macOS.
+- **M3 close-out, local on macOS arm64:** the table in [M3 status](M3.md#status): reference stdio 200 pass and 12 skipped, Unix socket 212 pass, mutants 246 and 22 all as intended, independent 196 pass with 4 unsupported and 12 skipped.
 
 - **CI:** [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
 
 ## What remains uncertain
 
 - **Deferred decision.** Machine-readable feature-dependency advertising is an explicit M6 decision (CMP-5).
-- **Independent implementation:** it does not yet claim `execution/1`, `core.effects`, the clock file or the executor script. Those fixtures are recorded as unsupported until the M3 spec-only pass.
+- **Independent implementation:** it passes every applicable fixture. It does not implement the Unix socket, `core.events.backpressure`, barriers or signals, so those fixtures are skipped or unsupported for it.
 - **Execution authorization under grants:** covered for effect reads, recovery revalidation and feature rights; submit and cancel denials are exercised only indirectly.
 - **Session-close evidence on the socket binding** uses the reference-specific signal `session.closed`; other socket participants report that fixture as unsupported.
 - **Backpressure evidence is reference-specific in its synchronization.** The four slow-consumer fixtures wait for the reference's `backpressure.*` signals; participants without them report coverage limits. The wait for room reuses `backpressure_notice_ms` as its bound (CORE §16.5).
@@ -110,7 +102,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## Active resources
 
-None.
+- Local worktree `.worktrees/independent-m3` (branch `release-0.1/m3-independent`, fully merged, not pushed) may be removed.
 
 ## State and prompt disposition
 
@@ -118,5 +110,6 @@ None.
 
 ## Next action
 
-1. M3 step 8: a spec-only helper extends the independent Python provider in worktree `.worktrees/independent-m3` (branch `release-0.1/m3-independent`), under the read rules in its README; its divergences are then resolved as in M2, and the two clock-file coverage limits are resolved or dispositioned.
-2. Step 9: close-out and owner review.
+1. Owner review and acceptance of M3 (draft PR #4). Do not merge without it.
+2. Owner question: the runtime value of a refused execution (M3-DIVERGENCES G5-REFUSED-RUNTIME).
+3. After acceptance: M4 per [PLAN](PLAN.md).

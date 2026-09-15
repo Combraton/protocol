@@ -1,80 +1,67 @@
 # Consumer handoff — Protocol 0.1 (draft for M6)
 
-What the PIO and CBR sessions pin, negotiate and run once Protocol 0.1 is
-released. **Draft:** exact tags and checksums are filled in by the release
-record ([M6](M6.md) A6). Until a release exists, consumers pin nothing;
-real PIO adapters, the real CBR memory engine and the Combraton
-implementation stay outside this milestone and outside this repository's
-scope.
+What the PIO and CBR sessions pin, negotiate and run once the owner accepts a Protocol 0.1 release candidate. **Draft:** the release commit, tag and checksums are filled in from the release record ([M6](M6.md) A6) at acceptance.
+- **Until then, pin nothing.** A release candidate under review is not a release.
+- **Out of scope here:** real PIO adapters, the real CBR memory engine and the Combraton implementation stay outside this milestone and this repository.
 
 ## What to pin
 
-- **The release:** the Protocol 0.1 tag (created only on the owner's
-  authorization) or, failing that, an exact `main` commit. Never a branch.
-- **Schemas:** the `schemas/<profile>/<major>/` trees for the profiles
-  below, verified against the release record's per-file SHA-256 checksums.
-- **Fixtures and runner:** the `conformance/fixtures/**` set and runner
-  version from the same tag, so a consumer's conformance run is
-  reproducible against the fixture inventory the release names.
-- **The compatibility contract:** integer profile majors with named
-  features on the wire (U11). A consumer requests majors and features at
-  `core.negotiate` and relies only on what negotiation selected — never on
-  a provider "probably" supporting a feature. Feature dependencies are
-  published per the CMP-5 decision (M6-Q1).
+- **Only the accepted release.** Pin the commit the owner accepts, reached through the Protocol 0.1 tag created on the owner's authorization.
+  - Any other `main` commit, branch or later merge is not equivalent to the accepted release, even when the files you use look unchanged.
+  - The release record names the accepted commit.
+- **Schemas.** The `schemas/<profile>/<major>/` trees for the profiles you implement or call, verified against the release record's per-file SHA-256 checksums.
+- **Fixtures and runner.** The `conformance/fixtures/**` set and runner from the same commit, verified against the release record's inventory, so your conformance run is reproducible.
+- **The compatibility contract.** Integer profile majors with named features on the wire (U11).
+  - Request majors and features at `core.negotiate`, and rely only on what negotiation selected.
+  - For in-session dependencies, `core.feature_dependencies` (CMP-5) reports what negotiation enforces. When a provider answers `method_not_found`, it predates the query: use the requirements in the profile documents you pinned and request them at negotiation anyway. A fallback never drops a required feature.
 
-## Who needs which profiles
+## Who implements what, and who calls what
 
-| Consumer | Profiles (major 1) | Features to request | Role |
+A consumer implements (serves) a profile only when other participants call it for that profile. Calling a provider, publishing to an Evidence service or reading packets does not make a consumer a provider of those profiles.
+
+### Implements / serves
+
+| Consumer | Serves (major 1) | Features | Notes |
 |---|---|---|---|
-| **PIO** (kernel / executor adapters) | `core`, `execution`, `evidence`, `context` | `execution.context_revalidation`; `context.claims` + `execution.claim_revalidation` where claim-carrying packets gate work; socket sessions authenticate per U12 | Executor and evidence producer |
-| **CBR** (memory engine) | `core`, `knowledge`, `context`, `evidence`; `verification` where receipts are consumed | `context.claims` for packet preparation; knowledge operations for claims, facets, ancestry, conflicts and history | Knowledge and context provider or client |
+| **PIO** (kernel and executor adapters) | `core`, `execution` | Its Execution features, for example `execution.context`, `execution.context_revalidation`, and `execution.claim_revalidation` (which requires `execution.context_revalidation`) where claim-carrying packets gate work | **Optional:** `execution.evidence_outputs`, when it publishes outputs as Evidence references. PIO does not serve `context/1`, `knowledge/1` or `evidence/1` by consuming them. |
+| **CBR** (memory engine) | `core`, `knowledge`, `context` | `context.claims` and the obligation features it supports | **Optional:** `evidence/1`, when CBR hosts its own packet and support bytes (a standalone provider MAY serve Evidence for its own packets, CONTEXT §1); `verification/1`, only if CBR records or issues receipts. CBR does not serve `execution/1`. |
 
-Required versus optional requests follow each consumer's own uselessness
-test: mark a profile `required` only when the session is useless without it
-(CORE §4.2), so older or narrower providers degrade predictably
-(`dependency_not_selected`, unselected optional profiles) instead of
-failing opaquely.
+### Calls / consumes
+
+| Consumer | Calls (major 1) | Negotiated at | Required or optional |
+|---|---|---|---|
+| **PIO** | `context` with the obligation features its bindings use, and `context.claims` when it enforces claim boundaries | the Context provider a binding names, for example CBR | **Optional integration.** PIO runs without CBR: work without context bindings needs no Context provider, and a binding names whichever Context provider the caller chose. |
+| **PIO** | `evidence` | the Evidence provider a packet or output reference names | Optional; needed to fetch packet bytes or publish outputs |
+| **CBR** | `execution` | a PIO-backed executor | **Optional integration**, for PIO-backed investigations: CBR is an Execution client and never an execution provider |
+| **CBR** | `evidence` | Evidence providers named by support citations it reads | Optional |
+| **CBR** | `verification` | a verifier that holds the receipts it cites | Optional; only when receipts are consumed |
+
+**Required versus optional requests.** Each consumer applies its own uselessness test: mark a profile `required` only when the session is useless without it (CORE §4.2). Older or narrower providers then degrade predictably, through `dependency_not_selected` or unselected optional profiles, instead of failing opaquely.
 
 ## Running conformance
 
-From the pinned checkout (macOS or Linux):
+From the pinned release checkout (macOS or Linux):
 
-1. `cargo run -p check-fixtures` — fixture and matrix inventory matches the
-   release record.
-2. `python3 scripts/check_docs.py` — document integrity.
-3. The runner against the reference participants, stdio and Unix socket,
-   as CI does — this validates the pinned toolchain itself.
-4. The same runner against the consumer's own participant in its role
-   (provider under test over stdio or socket). A consumer implementation
-   claims only the fixtures it passes; skipped and unsupported outcomes are
-   reported, never folded into passes.
-5. `check-mutants` applies to implementations vendoring the reference; a
-   fresh consumer implementation instead relies on the fixture set plus its
-   own tests.
+1. **Inventory:** `python3 scripts/release_inventory.py --verify`. Schemas and fixtures must match the release record's checksums.
+2. **Documents:** `python3 scripts/check_docs.py`.
+3. **Toolchain:** build, then run the runner against the reference participants over stdio and the Unix socket, as CI does. This validates the pinned toolchain itself.
+4. **Your implementation:** run the same runner against your own participant descriptor, in the role you serve.
+   - Claim only the fixtures you pass.
+   - Report skipped and unsupported outcomes; never fold them into passes.
+   - A client-only consumer, such as a kernel that calls Context and Evidence, instead runs the third-party composition fixtures with its own client descriptor (`conformance/thirdparty/`, added in M6 step 4).
+5. **Mutants:** `check-mutants` applies to implementations that vendor the reference. A fresh implementation relies on the fixture set plus its own tests.
 
 ## What Protocol 0.1 does not guarantee
 
-- **No truth:** a claim's content, an ancestry declaration's honesty and an
-  evaluator's correctness are never established — only recorded, classified
-  and checked structurally.
-- **No semantics beyond structure:** conflict and comparability are
-  structural; semantic equivalence is out of scope.
-- **No memory or retrieval quality:** CBR's own evaluation plans own that.
-- **No real-adapter evidence:** every Execution evidence path in 0.1 is
-  scripted; adapter fidelity is PIO's gate, not the protocol's.
-- **No Coordination, no Remote trust:** unsupported in 0.1; receipts are
-  unsigned; offline verification is deferred.
-- **No fairness bound** among released executions; no Windows support (U4).
-- **Bounded interoperability evidence:** mixed-implementation coverage is
-  exactly the S-A/S-B topology recorded in [M6](M6.md); everything listed
-  there as remainder is untested across implementations.
-- **Temporal reconstruction** views are deferred (M5-Q8); history offers
-  immutable records with explicit links and recorded order instead.
+- **No truth.** A claim's content, an ancestry declaration's honesty and an evaluator's correctness are never established. They are only recorded, classified and checked structurally.
+- **No semantics beyond structure.** Conflict and comparability are structural; semantic equivalence is out of scope.
+- **No memory or retrieval quality.** CBR's own evaluation plans own that.
+- **No real-adapter evidence.** Every Execution evidence path in 0.1 is scripted. Adapter fidelity is PIO's gate, not the protocol's.
+- **No Coordination and no Remote trust.** Both are unsupported in 0.1. Receipts are unsigned, and offline verification is deferred.
+- **No fairness bound** among released executions, and no Windows support (U4).
+- **Bounded interoperability evidence.** Mixed-implementation coverage is exactly the S-A and S-B topology recorded in [M6](M6.md). Everything listed there as remainder is untested across implementations.
+- **No temporal reconstruction.** Those views are deferred (M5-Q8). History offers immutable records with explicit links and recorded order instead.
 
 ## When something is missing
 
-A contract gap found while building a consumer costs a versioned revision
-of the protocol (a new feature or major), never an in-place change: closed
-objects (decision 002) make silent widening a compatibility break by
-design. File it on the protocol repository with the fixture that
-demonstrates the need.
+A contract gap found while building a consumer costs a versioned revision of the protocol (a new feature or major), never an in-place change. Closed objects (decision 002) make silent widening a compatibility break by design. File the gap on the protocol repository with the fixture that demonstrates the need.

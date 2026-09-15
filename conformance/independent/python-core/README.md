@@ -4,16 +4,17 @@
 
 `combraton-independent-python-core` `0.1.0-dev.0` is a second implementation of the Core provider and of an executor. It speaks the stdio form of the stream binding and implements `core/1` together with the conformance-only `core-test/1` profile, including the Core features `core.grants` (CORE §15), `core.events` (§16), `core.capabilities` (§17) and `core.effects` (§19), and `core.authenticate` as a stdio session answers it (§18). Since the M3 pass it also implements `execution/1` (EXECUTION §1–§14) over the scripted executor of decision 007, with the clock file and store faults. Since the M4 pass it implements `evidence/1` with `evidence.manifests` and `evidence.retention_control` over a scripted store, `context/1` with its six features over scripted preparation (packets sealed as Evidence artifacts in its own store), and `execution.context_revalidation` for a single provider. Its value is that it was written **from the published documents only**, without reading the reference provider. Where the documents leave a question open, it records the question instead of copying the reference's answer.
 
-It was written in six spec-only passes:
+It was written in seven spec-only passes:
 
 1. the Core command path (M1 fixtures, base `f42d21a`);
 2. the three M2 features (base `3b32037`);
 3. bringing those features level with the resolved documents (base `6c64ae4`);
 4. Core effects, `execution/1` and the test controls (M3, base `d81e49b`);
 5. realignment with the resolution of that pass's findings (base `ad91182`), a final alignment (base `c3e79d6`), the acceptance corrections C1–C3 (base `2d8402a`), and exit causal order (base `25f9c0b`);
-6. `evidence/1`, `context/1` and `execution.context_revalidation` (M4, base `39e9dc8`).
+6. `evidence/1`, `context/1` and `execution.context_revalidation` (M4, base `39e9dc8`);
+7. realignment with the resolution of that pass's findings (base `8500948`).
 
-The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) and, in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md). The third to sixth passes read the documents before the fixtures.
+The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to seventh passes read the documents before the fixtures.
 
 ## What it was written from
 
@@ -23,7 +24,7 @@ Allowed and read:
 - `docs/decisions/007-execution-test-controls.md`, `docs/work/release-0.1/M3.md` and `docs/work/release-0.1/MATRIX.md` (fourth pass); `docs/work/release-0.1/M4.md` and the M4 rows of the matrix (sixth pass)
 - `schemas/**`
 - `conformance/README.md` (including its launch configuration section), `docs/VERIFICATION.md`, `conformance/schemas/fixture.schema.json`, `conformance/schemas/launch-config.schema.json`
-- `docs/work/release-0.1/M2-DIVERGENCES.md` (second to fifth passes) and `docs/work/release-0.1/M3-DIVERGENCES.md` (fifth pass)
+- `docs/work/release-0.1/M2-DIVERGENCES.md` (second to fifth passes), `docs/work/release-0.1/M3-DIVERGENCES.md` (fifth and sixth passes) and `docs/work/release-0.1/M4-DIVERGENCES.md` (seventh pass)
 - `conformance/fixtures/**`, `conformance/vectors/encoding.json`
 - `conformance/participants/*.json`, used only as format examples for the descriptor
 - the transcripts and manifests the runner wrote for this implementation
@@ -158,6 +159,15 @@ The sixth pass, against the documents at `39e9dc8`, adds `evidence/1`, `context/
 
 Fourteen of the first run's failures were points the documents leave open or where this implementation misread them; sixteen changes followed, each marked in H.3 as fixture-informed or as a fixed misreading. Three of those changes follow fixtures that sit uneasily with the text (H3-CTX-SATISFACTION, H3-LIVE-ITEMS, H3-AUTHORITY-ENTRIES). The three remaining failures are `evidence.chunk-retransmission-and-conflicts`, `evidence.partial-upload-then-append-then-seal` and `evidence.purge-requires-release-authority-for-holds`. The runner requires retry `no` for `upload_offset_mismatch`, `upload_incomplete` and `hold_active`, where CORE §12 and EVIDENCE §6 give `after_reconcile` (H-RETRY-RUNNER). This implementation follows the documents, so `run` exits 1. The eight `composition.*` fixtures need the Unix-socket binding and are skipped, so peers, fetch grants, evidence outputs and investigation executions are not implemented.
 
+The Protocol session resolved those findings at `8500948` (M4-DIVERGENCES): the runner's retry classes were fixed, and the documents now state what the fixtures relied on. Checks decide item satisfaction, holds expire, and the other points are listed there. The seventh pass wrote its change list from that record and the document diff before opening the changed fixtures (DIVERGENCES H.7):
+
+| Run (base `8500948`, 249 fixtures) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Sixth-pass code, before the changes | 222 | 3 | 0 | 0 | 4 | 20 |
+| After the changes, and one repeat | 225 | 0 | 0 | 0 | 4 | 20 |
+
+Every applicable fixture passes and `run` exits 0. Nothing was changed after reading the fixtures. H.7 lists the points still open, none of them failing a fixture.
+
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 
 ## Limits
@@ -166,7 +176,7 @@ Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows w
 - One principal per process, taken from the launch configuration. Cross-principal behavior (grants held by others, per-principal deduplication) is exercised across restarts over the same data directory, never concurrently.
 - Grants: provider-held records only (no bearer tokens). The tracked authority scopes are `core-test` and `execution.controller:<host id>`. Rights are defined for `core-test`, `core.events.read`, `core.effects.abort_obligation` and the Execution operations.
 - Events: one stream per data directory with a random ID. Retention, new epochs and unvouched events happen only through the launch configuration. Subscriptions live only as long as the session; they are re-authorized after every request and end with a final notification when their grant stops authorizing or an item cannot fit the caller's receive limit. An expiry alone is reported at the next request. `core.events.backpressure` is not implemented. It therefore makes no backpressure guarantee (CORE §16.5): the stdio writer blocks when the caller stops reading, with no room deadline and no closure (DIVERGENCES G.7, G.8).
-- Evidence: one scripted store in the data directory; integrity failures and unavailability come only from the launch configuration and are observed at reads, never recorded. Packets citing a purged artifact are not tracked in loss records.
+- Evidence: one scripted store in the data directory; integrity failures and unavailability come only from the launch configuration and are observed at reads, never recorded. Availability `partial` is never produced.
 - Context: scripted preparation only, standalone (packets sealed in this provider's own store). No investigation executions, no separate evidence provider.
 - Revalidation: packets are held only through `executor.context_packets`; `fetch` grants cannot be used, so a binding with `fetch` and no held packet reports `provider_unreachable`, and a `fetch.context` member makes `packet.current` `unavailable`.
 - Capabilities: `core-test.writes` and the configured adapter predicates; only `core-test.subject.put` depends on a capability. Statuses change only between starts.

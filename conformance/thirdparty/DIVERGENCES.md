@@ -178,3 +178,19 @@ Nothing failed in those runs. Three interface questions were left for the owner:
 - **TP-6.** The interface now says clients are not durable, and restart recovery is not claimed. Nothing to implement.
 - **TP-17.** Kernel fixture version 2 exercises the kernel's own hash: `packet.r-3.1` is served altered under its sealed digest (`evidence_store.serve_altered_bytes`), and `w-altered` must be `unsatisfied` and withheld.
 - **Basis.** Interface and fixture version 2.
+
+### TP-22: runs at `010bc13` (kernel fixture version 2)
+- **Normal run.** `run: 2 fixtures (2 pass), 0 not passing`.
+  - `w-altered` is recorded `unsatisfied` and withheld, with reason `fetched packet bytes do not match the reference digest`: the kernel's own hash decided it.
+  - `w-tampered` is recorded `unsatisfied` with reason `packet bytes refused: artifact_digest_mismatch`.
+  - The other records are unchanged from TP-15 and TP-16.
+- **Mutants**, each with the failing step (0-based) and reason:
+
+| Mutant | Outcome | Failing step and reason | Cause, from the client log |
+|---|---|---|---|
+| `minimal-executor=ignores-required-boundary` | `fail` | 55: `expected error not_found, received success` for `evidence.inspect` of `dispatch.w-altered` | Honest checks, then dispatch of every due item: `w-req` (`stale`), `w-tampered` and `w-altered` (`unsatisfied`) were all dispatched. Version 2 checks `dispatch.w-altered` before the steps that caught this mutant in version 1. |
+| `minimal-executor=trusts-advertised-digest` | `fail` | 54: `result/data_base64(json)/decision: expected "withhold", found "dispatch"` for `check.w-altered.1` | Without its own hash, the kernel took the altered bytes served under the sealed digest as held: `check.w-altered.1` state `current`, and `dispatch.w-altered` was published. `w-tampered` was still `unsatisfied`, because the provider refused that fetch. |
+| `minimal-publisher=uploads-bytes-differing-from-digest` | `fail` | 5: `client "publisher" exited with status 1; 0 is required` | The seal of `tp-contract` was refused with `content_digest_mismatch`. |
+
+- No client stderr log contains a credential (`ccred1`).
+- **Unresolved.** Nothing.

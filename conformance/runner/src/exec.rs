@@ -58,6 +58,8 @@ pub struct Context<'a> {
     pub schemas: &'a Schemas,
     pub repo: &'a Path,
     pub mutant: Option<&'a str>,
+    /// A mutant of one client implementation: (implementation, mutant).
+    pub client_mutant: Option<(&'a str, &'a str)>,
     pub work_dir: PathBuf,
 }
 
@@ -88,6 +90,8 @@ struct State<'a> {
     participants: BTreeMap<String, Named>,
     /// The named participant each session is connected to.
     session_participant: BTreeMap<String, String>,
+    /// Client-only implementations launched by `start_client`, by name.
+    clients: BTreeMap<String, Process>,
 }
 
 /// One separately running participant: its own process, data directory, configuration and socket.
@@ -261,6 +265,7 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         clock_value: None,
         participants: BTreeMap::new(),
         session_participant: BTreeMap::new(),
+        clients: BTreeMap::new(),
     };
     // Named participants' sockets and principals' credentials are known before any starts, so
     // participants that reach each other can be configured in any order.
@@ -357,6 +362,11 @@ impl State<'_> {
         {
             process.kill();
         }
+        for (_, mut client) in std::mem::take(&mut self.clients) {
+            if client.stop(Duration::from_millis(3000)).is_none() {
+                client.kill();
+            }
+        }
         for (_, mut named) in std::mem::take(&mut self.participants) {
             if named.process.stop(Duration::from_millis(3000)).is_none() {
                 named.process.kill();
@@ -429,6 +439,9 @@ impl State<'_> {
             "start" => self.start(step),
             "stop" => self.stop(),
             "start_participant" => self.start_participant(step),
+            "start_client" => self.start_client(step),
+            "stop_client" => self.stop_client(step),
+            "await_client_exit" => self.await_client_exit(step),
             "stop_participant" => self.stop_participant(step, false),
             "kill_participant" => self.stop_participant(step, true),
             "describe" => {
@@ -1007,6 +1020,9 @@ impl State<'_> {
             std::fs::create_dir_all(&controls).map_err(|e| Harness(e.to_string()))?;
             let file = controls.join("clock");
             write_atomic(&file, instant.as_bytes())?;
+            // Clients read the same controlled clock (M6 third-party compositions).
+            self.vars
+                .insert("clock_file".into(), json!(file.display().to_string()));
             self.clock_value = Some(instant);
             config["clock"] = json!({"file": file.display().to_string()});
         } else if let Some(raw) = config["clock"]["controlled_raw"].as_str().map(String::from) {
@@ -1130,6 +1146,111 @@ impl State<'_> {
             self.authenticate_session(&principal)?;
         }
         Ok(())
+    }
+
+    /// Launch a client-only implementation (M6-Q2) from `conformance/thirdparty/<implementation>/`
+    /// with a rendered configuration. It runs until its standard input closes or it exits.
+    fn start_client(&mut self, step: &Value) -> Result<(), StepError> {
+        let name = step["name"]
+            .as_str()
+            .ok_or_else(|| Harness("start_client needs a name".into()))?
+            .to_string();
+        let implementation = step["implementation"]
+            .as_str()
+            .ok_or_else(|| Harness("start_client needs an implementation".into()))?
+            .to_string();
+        if self.clients.contains_key(&name) {
+            return Err(Harness(format!("client {name:?} is already running")));
+        }
+        let path = self
+            .ctx
+            .repo
+            .join("conformance/thirdparty")
+            .join(&implementation)
+            .join("participant.json");
+        let descriptor = Descriptor::load_client(&path).map_err(Harness)?;
+        let config = self.render(&step["config"])?;
+        let directory = self.ctx.work_dir.join("clients").join(&name);
+        std::fs::create_dir_all(directory.join("data")).map_err(|e| Harness(e.to_string()))?;
+        let config_file = directory.join("config.json");
+        std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())
+            .map_err(|e| Harness(e.to_string()))?;
+        let mutant = self
+            .ctx
+            .client_mutant
+            .filter(|(target, _)| *target == implementation)
+            .map(|(_, mutant)| mutant);
+        let data_dir = directory.join("data");
+        let launch = Launch {
+            descriptor: &descriptor,
+            repo: self.ctx.repo,
+            data_dir: &data_dir,
+            config_file: &config_file,
+            socket_path: None,
+            stderr_file: directory.join("stderr.log"),
+            mutant,
+        };
+        let process = Process::spawn(&launch).map_err(Harness)?;
+        self.note(
+            "start_client",
+            json!({"name": name, "implementation": implementation, "argv": process.argv, "mutant": mutant}),
+        );
+        self.clients.insert(name, process);
+        Ok(())
+    }
+
+    /// End a client's input and require the exit status (default 0).
+    fn stop_client(&mut self, step: &Value) -> Result<(), StepError> {
+        let name = step["name"].as_str().unwrap_or_default().to_string();
+        let mut client = self
+            .clients
+            .remove(&name)
+            .ok_or_else(|| Harness(format!("no running client {name:?}")))?;
+        let expected = step["exit_code"].as_i64().unwrap_or(0);
+        self.note("stop_client", json!({"name": name}));
+        match client.stop(Duration::from_millis(5000)) {
+            Some(code) if i64::from(code) == expected => Ok(()),
+            Some(code) => Err(Fail(format!(
+                "client {name:?} exited with status {code}; {expected} is required"
+            ))),
+            None => {
+                client.kill();
+                Err(Fail(format!(
+                    "client {name:?} did not exit after its input ended"
+                )))
+            }
+        }
+    }
+
+    /// Wait for a client that ends by itself, and require its exit status (default 0).
+    fn await_client_exit(&mut self, step: &Value) -> Result<(), StepError> {
+        let name = step["name"].as_str().unwrap_or_default().to_string();
+        let expected = step["exit_code"].as_i64().unwrap_or(0);
+        let bound = step["within_ms"].as_u64().unwrap_or(10_000);
+        let deadline = Instant::now() + Duration::from_millis(bound);
+        loop {
+            let client = self
+                .clients
+                .get_mut(&name)
+                .ok_or_else(|| Harness(format!("no running client {name:?}")))?;
+            if let Some(code) = client.exited() {
+                self.clients.remove(&name);
+                self.note("client_exit", json!({"name": name, "code": code}));
+                return if i64::from(code) == expected {
+                    Ok(())
+                } else {
+                    Err(Fail(format!(
+                        "client {name:?} exited with status {code}; {expected} is required"
+                    )))
+                };
+            }
+            if Instant::now() > deadline {
+                return Err(Timeout(format!(
+                    "client {name:?} did not exit within {bound} ms"
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Launch a named participant as its own process with its own data directory, configuration

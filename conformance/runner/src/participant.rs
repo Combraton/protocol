@@ -28,6 +28,16 @@ pub struct Descriptor {
 
 impl Descriptor {
     pub fn load(path: &Path) -> Result<Self, String> {
+        Self::load_role(path, "provider")
+    }
+
+    /// A client-only implementation (M6-Q2): it serves nothing and reaches providers named in its
+    /// configuration. Composition fixtures launch it with `start_client`.
+    pub fn load_client(path: &Path) -> Result<Self, String> {
+        Self::load_role(path, "client")
+    }
+
+    fn load_role(path: &Path, role: &str) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let raw = crate::strict::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         if raw["format"] != "combraton-conformance-participant/1" {
@@ -36,8 +46,11 @@ impl Descriptor {
                 path.display()
             ));
         }
-        if !matches!(raw["binding"].as_str(), Some("stdio" | "unix")) || raw["role"] != "provider" {
-            return Err("participants must be providers with binding stdio or unix".into());
+        if !matches!(raw["binding"].as_str(), Some("stdio" | "unix")) || raw["role"] != role {
+            return Err(format!(
+                "{}: expected a {role} descriptor with binding stdio or unix",
+                path.display()
+            ));
         }
         let strings = |value: &Value| -> Vec<String> {
             value

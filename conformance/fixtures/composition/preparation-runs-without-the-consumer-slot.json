@@ -9,7 +9,7 @@
     "CTX-19"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4",
+    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation",
     "docs/spec/profiles/CONTEXT.md#4-jobs-subscribers-and-cancellation"
   ],
   "role": "provider",

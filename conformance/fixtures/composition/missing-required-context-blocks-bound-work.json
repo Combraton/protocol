@@ -8,7 +8,7 @@
     "CTX-7"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4",
+    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation",
     "docs/spec/profiles/CONTEXT.md#5-results-and-packets",
     "docs/spec/profiles/CONTEXT.md#9-provider-unavailability"
   ],

@@ -11,7 +11,7 @@
     "docs/spec/profiles/CORE.md#43-corefeature_dependencies-query-m6-q1",
     "docs/spec/profiles/CORE.md#42-corenegotiate-query",
     "docs/spec/profiles/EXECUTION.md#1-dependencies-and-negotiation",
-    "docs/spec/profiles/EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5"
+    "docs/spec/profiles/EXECUTION.md#133-claim-revalidation-executionclaim_revalidation"
   ],
   "role": "provider",
   "profiles": [

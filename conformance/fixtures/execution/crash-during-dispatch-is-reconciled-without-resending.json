@@ -12,7 +12,7 @@
   "spec_refs": [
     "docs/spec/profiles/EXECUTION.md#3-status-axes",
     "docs/spec/profiles/EXECUTION.md#71-restart-recovery",
-    "docs/spec/profiles/CORE.md#19-effects-and-obligations-proposed-m3-draft"
+    "docs/spec/profiles/CORE.md#19-effects-and-obligations"
   ],
   "role": "provider",
   "profiles": [

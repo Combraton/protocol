@@ -9,8 +9,8 @@
     "CMP-9"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets-proposed-m5",
-    "docs/spec/profiles/EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5"
+    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets",
+    "docs/spec/profiles/EXECUTION.md#133-claim-revalidation-executionclaim_revalidation"
   ],
   "role": "provider",
   "profiles": [

@@ -1,8 +1,8 @@
-# Core profile `core/1` — release draft
+# Core profile `core/1` — release candidate
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are accepted M2 drafts (§18 by decision 006). §19 effects and obligations is a proposed M3 draft.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: Protocol 0.1 release candidate.** The command path was accepted with M1, §15–§18 with M2 (§18 by decision 006), §19 with M3, and §4.3 `core.feature_dependencies` is the M6 addition (owner decision M6-Q1). Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
-This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions and capability snapshots are specified in §15–§18 (milestone M2). Effect reconciliation is Core too; §19 is a proposed M3 draft.
+This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and credentials are specified in §15–§18 (milestone M2). Effect reconciliation is Core too (§19, milestone M3).
 
 Wire encoding, digests and transport are defined separately:
 
@@ -385,7 +385,7 @@ No protocol operation or method name is reserved for testing. Product endpoints 
 - A revision orders changes to one subject at one provider; it is not a global clock.
 - Negotiated support for a feature says the provider implements it. It does not say the underlying system, such as a harness, can enforce it. Those limits are profile-specific capability facts.
 
-## 15. Principals and grants (proposed M2 draft)
+## 15. Principals and grants
 
 Owner decision U3 (release plan §6): grants are **provider-held records referenced by ID**. Bearer tokens that carry their own authority are deferred with Remote trust. This section is negotiated as the Core feature `core.grants`.
 
@@ -486,7 +486,7 @@ A replay of an already-bound command skips step 6 (§10), so revocation does not
 
 A grant is authorization at one provider. It is not identity proof, is not transferable to another provider, and is not a promise that an underlying system will enforce the same limits. Execution profiles report enforcement levels separately. An expired or revoked grant does not mean nothing happened under it.
 
-## 16. Events and subscriptions (proposed M2 draft)
+## 16. Events and subscriptions
 
 Every provider records what it committed as an ordered, durable **event stream**. Callers read it with opaque cursors or subscribe to it on a connection. This section is negotiated as the Core feature `core.events`. Matrix rows: CORE-2, OBS-1 to OBS-6, OBS-8.
 
@@ -575,7 +575,7 @@ Rules:
 - **Lapses caused elsewhere.** On a shared transport, a command on another connection can end a subscription's authorization, for example by revoking its grant or claiming a new authority epoch. The provider then sends the final notification without waiting for a request on the subscriber's connection. Two rules make this observable:
   - **Ordering, normative.** No item committed after the command that ended authorization is delivered on that subscription. Authorization and the items to deliver are evaluated against the same committed state.
   - **Latency, conformance bound.** Fixtures expect the final notification within 2 seconds of the ending command's response on the other connection.
-- **Backpressure (proposed M3 draft, feature `core.events.backpressure`).** Semantic events are never skipped. A consumer that stops reading loses its connection, not events:
+- **Backpressure (feature `core.events.backpressure`, M3).** Semantic events are never skipped. A consumer that stops reading loses its connection, not events:
   - **Bounded pending output.** A provider bounds, per connection, the memory and bytes of output produced but not yet written. When a subscription's next notification would exceed that bound, the provider stops producing items for the connection's subscriptions; the withheld items stay undelivered, never skipped.
   - **Stall and room deadline.** A stall starts when the next notification or response would exceed the bound. The consumer must drain all pending output within `backpressure_notice_ms` of the stall's start. Partial progress does not extend that deadline. A consumer that misses it is **too slow**. A consumer that drains within each deadline is keeping up and is not closed.
   - **Ending notices, one budget.** If the session negotiated `core.events.backpressure`, the provider attempts one final `core.events.notify` for every subscription on the connection, with `"items": []` and `"ended": { "reason": "consumer_too_slow" }`. All of the connection's notices share one budget of `backpressure_notice_ms`, starting when the consumer was declared too slow. The budget does not restart per subscription, and nothing else is waited for before closure.
@@ -609,7 +609,7 @@ Reading or subscribing needs an authority principal, or a grant with right `core
 
 An event records a fact the provider committed. It is not delivery to any consumer, not verification of the fact's correctness, and not project acceptance. A stream position is not a global clock and says nothing about another provider's stream.
 
-## 17. Capability snapshots (proposed M2 draft)
+## 17. Capability snapshots
 
 Negotiation (§4.2) says which protocol features a provider implements. **Capabilities** say what the provider can actually do right now, and on what evidence. For example: whether its store accepts writes, or, in later profiles, whether a harness adapter can enforce a restriction. This section is negotiated as the Core feature `core.capabilities`. Matrix rows: CORE-16, CORE-17.
 
@@ -678,7 +678,7 @@ Accepted by [decision 006](../../decisions/006-unix-socket-principal-credential.
 
 A successful authentication proves that the caller possessed the credential. It does not prove which program the caller is. On a machine where coding agents run as the same user without file-access enforcement, an agent that can read the credential file can act as that principal. Execution providers must report the enforcement level protecting credential files (`enforced`, `mediated` or `cooperative`) in their capabilities. Revoking a credential stops future authentications. It does not end sessions already authenticated with it; the provider's administration may close those explicitly.
 
-## 19. Effects and obligations (proposed M3 draft)
+## 19. Effects and obligations
 
 > Proposed for milestone M3 with the [Execution profile](EXECUTION.md). Not normative until M3 is accepted with schemas and fixtures. This section is negotiated as the Core feature `core.effects`. Matrix rows: EFF-1 to EFF-4.
 
@@ -702,7 +702,7 @@ Its **status** is observed separately and appended as evidence: `pending`, `succ
 
 ### 19.2 Querying after response loss
 
-`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "revision", "status", "observations", "attempts", "obligations" }`. `revision` is the effect record's revision, used as the precondition revision of subject `{ "kind": "core.effect", "id" }` (§19.4). `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
+`core.effects.get` (query) takes `{ "effect": id }` and returns `{ "effect": descriptor, "revision", "status", "observations", "attempts", "obligations" }`. `revision` is the effect record's revision, used as the precondition revision of subject `{ "kind": "core.effect", "id" }` (§19.4). `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
 
 - After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
 - A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.
@@ -731,7 +731,7 @@ An obligation records an expected observation: an effect outcome, a lifecycle tr
 - **Deadline:** when the deadline passes with no observation, a provider-origin event marks the obligation `overdue`, even if no other event arrives.
 - **An ended wait is not an observation.** When a deadline passes, or a profile ends a wait because it timed out, the obligation is `overdue`, not `satisfied`, even if the wait's end leads to a determination (EXECUTION §8). Only the expected observation satisfies it.
 - **Aborting:** closes the wait. It MUST NOT change the effect's status: an aborted wait for an `unknown` effect leaves the effect `unknown` (EFF-4).
-  - `core.effects.abort_obligation` (command, *candidate*) on subject `{ "kind": "core.effect", "id" }`, with precondition revision equal to the effect's revision and payload `{ "obligation" }`. It returns `{ effect, obligation: { id, state: "aborted" }, status }`, and appends `core.effect.obligation.aborted` with payload `{ effect, obligation, target }` on the effect subject.
+  - `core.effects.abort_obligation` (command) on subject `{ "kind": "core.effect", "id" }`, with precondition revision equal to the effect's revision and payload `{ "obligation" }`. It returns `{ effect, obligation: { id, state: "aborted" }, status }`, and appends `core.effect.obligation.aborted` with payload `{ effect, obligation, target }` on the effect subject.
   - An obligation that is not `open` or `overdue` is `not_found`. The command records no effect, so `effect_refs` is `[]`.
   - Under a grant it needs right `core.effects.abort_obligation` on the effect's target. An effect subject is visible in events exactly when its target is.
 - **Survival:** obligations survive cancellation, timeouts and restarts until satisfied or explicitly aborted.

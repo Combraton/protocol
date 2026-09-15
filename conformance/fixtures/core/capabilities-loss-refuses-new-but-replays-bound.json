@@ -8,7 +8,7 @@
     "CORE-17"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CORE.md#17-capability-snapshots-proposed-m2-draft"
+    "docs/spec/profiles/CORE.md#17-capability-snapshots"
   ],
   "role": "provider",
   "profiles": [

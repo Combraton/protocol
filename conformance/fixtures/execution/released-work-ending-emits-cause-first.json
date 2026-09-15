@@ -8,7 +8,7 @@
     "EXE-3"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4",
+    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation",
     "docs/spec/profiles/EXECUTION.md#151-conformance-executor-conventions"
   ],
   "role": "provider",

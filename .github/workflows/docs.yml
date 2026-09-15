@@ -13,3 +13,7 @@ jobs:
           persist-credentials: false
       - name: Check documentation
         run: python3 scripts/check_docs.py
+      - name: Every operation with a schema is documented
+        run: python3 scripts/check_operations.py
+      - name: Release inventory matches the committed files
+        run: python3 scripts/release_inventory.py --verify

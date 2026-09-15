@@ -1,6 +1,6 @@
-# Knowledge profile `knowledge/1` — proposed M5 draft
+# Knowledge profile `knowledge/1` — release candidate
 
-> **Status: proposed draft for Protocol 0.1 milestone M5, with owner decisions M5-Q1 to M5-Q4 and M5-Q8 incorporated ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)).** Nothing here is normative until M5 is accepted together with its schemas, fixtures, mutants and independent evidence. Names marked *candidate* may change. Architecture: [SPEC §2, §8, §9](../SPEC.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: cbr `docs/spec/SPEC.md` §3–§6, §9–§11 and `docs/spec/INTERNALS.md` §1–§3 at `3278393`; combraton `docs/architecture/MODEL.md` §3–§5 at `9af69ce`.
+> **Status: Protocol 0.1 release candidate.** Accepted as milestone M5, with owner decisions M5-Q1 to M5-Q4 and M5-Q8 ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)). Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC §2, §8, §9](../SPEC.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: cbr `docs/spec/SPEC.md` §3–§6, §9–§11 and `docs/spec/INTERNALS.md` §1–§3 at `3278393`; combraton `docs/architecture/MODEL.md` §3–§5 at `9af69ce`.
 
 A **knowledge provider** keeps scoped claims with their lineage, support, conflicts, applicability evaluations and reliance decisions. CBR is one knowledge provider; any service that keeps challengeable claims can implement this profile. A **producer** proposes and revises claims. An **authority** records reliance decisions for a bound scope. A **reader** inspects claims and their history.
 
@@ -288,12 +288,12 @@ Core event records. *Candidate* types:
 
 ## 12. Claims in context packets
 
-A packet that carries claims preserves their identity, reliance and applicability (SPEC §2). The Context side is [CONTEXT §14](CONTEXT.md#14-claims-in-packets-proposed-m5) (feature `context.claims`), and boundary enforcement is [EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5).
+A packet that carries claims preserves their identity, reliance and applicability (SPEC §2). The Context side is [CONTEXT §14](CONTEXT.md#14-claims-in-packets) (feature `context.claims`), and boundary enforcement is [EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation).
 
 ## 13. Conformance and test controls
 
 - **Reference participants only.** A reference knowledge provider keeps claims in its own store, and evaluates applicability over typed conditions and declared dependencies only. No fixture depends on CBR's memory engine, model runtime or retrieval.
-- **Launch configuration `knowledge`** (*candidate*):
+- **Launch configuration `knowledge`** (test control):
   - `evaluator: { id, version, condition_kinds }`;
   - the adversarial `serve_altered_claims`: claims whose inspected record is altered while the reference and digest stay the same, so readers are tested on recomputing digests, like EVIDENCE's `serve_altered_bytes`.
 

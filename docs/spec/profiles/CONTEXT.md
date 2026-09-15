@@ -1,6 +1,6 @@
-# Context profile `context/1` — proposed M4 draft
+# Context profile `context/1` — release candidate
 
-> **Status: proposed draft for Protocol 0.1 milestone M4.** Nothing here is normative until M4 is accepted together with its schemas, fixtures, mutants and independent evidence. Names marked *candidate* may change during M4. Architecture: [SPEC §2, §8, §9, §14](../SPEC.md). Task: [M4](../../work/release-0.1/M4.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: cbr `docs/spec/PREPARATION-AND-DELIVERY.md` and `docs/spec/SPEC.md` §7, §8 at `3278393`; pio `docs/spec/STANDALONE-CLIENT.md` §5, §6 at `e65b7c0`. Owner decisions M4-Q2, M4-Q3 and M4-Q4 (2026-09-15) are incorporated.
+> **Status: Protocol 0.1 release candidate.** Accepted as milestone M4, with owner decisions M4-Q2, M4-Q3 and M4-Q4; §14 accepted with M5 (M5-Q7). Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC §2, §8, §9, §14](../SPEC.md). Task: [M4](../../work/release-0.1/M4.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: cbr `docs/spec/PREPARATION-AND-DELIVERY.md` and `docs/spec/SPEC.md` §7, §8 at `3278393`; pio `docs/spec/STANDALONE-CLIENT.md` §5, §6 at `e65b7c0`. Owner decisions M4-Q2, M4-Q3 and M4-Q4 (2026-09-15) are incorporated.
 
 A **context provider** prepares exact, bounded context for a named consumer and reports what it could and could not supply. CBR is one context provider; any service that compiles cited context can implement this profile. A **caller** asks for context on behalf of work it will run. A **consumer** is the execution or harness the context is for.
 
@@ -13,7 +13,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 - `context/1` depends on `core/1` with `core.events`, and on `evidence/1` as a **protocol dependency**: every packet revision is an exact sealed Evidence artifact (§5), so its identity, integrity, retention and fetch reuse EVIDENCE (owner decision M4-Q2). This does not require a separate running service: a standalone context provider MAY implement `evidence/1` for its own packets.
 - Negotiating `context/1` does not require `evidence/1` in the same session. The packet reference names the evidence provider holding the bytes, and the reader negotiates `evidence/1` there, which may be this provider.
 - **Timing semantics are negotiated explicitly** (SPEC §14): features `context.advisory`, `context.required_before_start` and `context.required_before_transition`. A request using an obligation whose feature was not negotiated is refused with `unsupported_required_feature` (CTX-9).
-- Other optional features (*candidate*): `context.shared_jobs` (§4), `context.updates` (§8), `context.expand` (§6).
+- Other optional features: `context.shared_jobs` (§4), `context.updates` (§8), `context.expand` (§6).
 - A provider that cannot meet a requested boundary or delivery semantics refuses the request explicitly; it never silently degrades a required obligation (CTX-9).
 
 ## 2. Identities
@@ -166,7 +166,7 @@ A packet establishes which exact bytes, with which labels, coverage and gaps, th
 - that coverage frontiers from different producers describe one moment;
 - project acceptance of any claim; Knowledge reliance is M5.
 
-## 14. Claims in packets (proposed M5)
+## 14. Claims in packets
 
 > Proposed M5 extension with owner decision M5-Q7 incorporated ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)). Nothing in this section applies to sessions that did not negotiate `context.claims`; §1–§13 are unchanged for them.
 
@@ -215,4 +215,4 @@ A packet that carries claims preserves Knowledge identity, reliance and applicab
 - **Sessions without `context.claims`** see packet facts without `claim` members, `claim_changes` or `unverified_items`, and `invalidated_items` lists only authority corrections.
 - **Knowledge source.** The reference provider reads claims in its own knowledge store, or at the provider named by launch configuration `context.knowledge_provider`.
 
-Execution enforces these at the binding's own boundary under `execution.claim_revalidation` ([EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5)).
+Execution enforces these at the binding's own boundary under `execution.claim_revalidation` ([EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation)).

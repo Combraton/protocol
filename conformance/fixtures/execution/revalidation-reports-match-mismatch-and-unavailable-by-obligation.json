@@ -9,7 +9,7 @@
     "EXE-17"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4"
+    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation"
   ],
   "role": "provider",
   "profiles": [

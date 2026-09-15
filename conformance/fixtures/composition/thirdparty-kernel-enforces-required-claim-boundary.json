@@ -9,7 +9,7 @@
     "CMP-9"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets-proposed-m5",
+    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets",
     "conformance/thirdparty/README.md",
     "docs/work/release-0.1/M6.md#s-a-an-independent-execution-kernel-enforcing-a-required-claim-boundary"
   ],

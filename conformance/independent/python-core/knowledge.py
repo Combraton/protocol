@@ -14,8 +14,8 @@ Durable records are ordinary subjects in the provider's SQLite store:
 - ``knowledge.authority``: one binding per scope; the subject ID is the scope.
 
 History positions are looked up in the retained event stream at the read.
-Section H.M5 of DIVERGENCES.md records the choices the documents leave open;
-the ``HM5-`` tags below refer to it.
+Sections H.M5 and H.M5b of DIVERGENCES.md record the choices the documents
+leave open; the ``HM5-`` and ``HM5B-`` tags below refer to them.
 """
 
 from __future__ import annotations
@@ -195,9 +195,9 @@ def _content(payload: dict, revise: bool) -> None:
         for member in ("from", "until"):
             if member in val:
                 E.instant(val[member], ptr("/payload/validity", member))
-        if "from" in val and "until" in val and val["from"] > val["until"]:
-            # HM5-VALIDITY-ORDER (fixture-driven): an interval ending before it starts.
-            raise Invalid("/payload/validity", "from must not be after until")
+        if "from" in val and "until" in val and val["from"] >= val["until"]:
+            # KNOWLEDGE 3: an empty or inverted interval (HM5-VALIDITY-ORDER, resolved).
+            raise Invalid("/payload/validity", "from must be before until")
     if "basis" in payload:
         basis(payload["basis"], "/payload/basis")
     support = E.array(payload["support"], "/payload/support", max_items=64)
@@ -215,6 +215,10 @@ def _content(payload: dict, revise: bool) -> None:
         if anc["completeness"] == "unknown" and roots:
             # KNOWLEDGE 5: with unknown ancestry roots MUST be empty (HM5-UNKNOWN-ROOTS-PATH).
             raise Invalid(ptr(ptr(p, "ancestry"), "roots"), "unknown ancestry declares no roots")
+        if anc["completeness"] != "unknown" and not roots:
+            # KNOWLEDGE 5: complete or partial ancestry names at least one root.
+            raise Invalid(ptr(ptr(p, "ancestry"), "roots"), "complete or partial ancestry names at least one root")
+    _unique_ids(support, "support_id", "/payload/support")  # KNOWLEDGE 3 "Unique IDs" (HM5B-DUPLICATE-PATH-ORDER)
     der = E.closed(payload["derivation"], "/payload/derivation", ("kind", "inputs"), ("record",))
     if der["kind"] not in DERIVATIONS:
         raise Invalid("/payload/derivation/kind", "must be deterministic, model_assisted or human")
@@ -231,6 +235,7 @@ def _content(payload: dict, revise: bool) -> None:
         E.array(payload["conditions"], "/payload/conditions", max_items=32)
         for idx, c in enumerate(payload["conditions"]):
             condition(c, ptr("/payload/conditions", idx))
+        _unique_ids(payload["conditions"], "condition_id", "/payload/conditions")
     if "health" in payload:
         if payload["health"] not in HEALTH:
             raise Invalid("/payload/health", "must be healthy, degraded, failing or unknown")
@@ -240,6 +245,14 @@ def _content(payload: dict, revise: bool) -> None:
         sup = E.closed(payload["supersedes"], "/payload/supersedes", ("revision", "digest"))
         E.integer(sup["revision"], "/payload/supersedes/revision", 1)
         E.digest_string(sup["digest"], "/payload/supersedes/digest")
+
+
+def _unique_ids(entries: list, member: str, path: str) -> None:
+    seen = set()
+    for entry in entries:
+        if entry[member] in seen:
+            raise Invalid(path, f"{member} {entry[member]!r} is listed more than once")
+        seen.add(entry[member])
 
 
 def _rank(use: str) -> int:
@@ -457,9 +470,9 @@ class Knowledge:
 
     # ---------------------------------------------------- authorization
     def _read_needs(self, refs) -> list:
-        """KNOWLEDGE 10: commands that name revisions need knowledge.read on
-        those claims; only claims at this provider can be covered here
-        (HM5-NAMED-REVISION-RIGHTS)."""
+        """KNOWLEDGE 10 "Rights on named revisions": knowledge.read on the
+        claims these references name at this provider; references naming
+        another provider add none."""
         needs = []
         for ref in refs:
             if ref.get("provider") == self.p.provider_id:
@@ -477,13 +490,8 @@ class Knowledge:
                 raise denied("not_authority")
             return p.make_auth(None)
         if method in ("knowledge.claim.propose", "knowledge.claim.revise"):
-            refs = list(payload.get("dependencies", []))
-            refs += [r for e in payload["support"] for r in e["ancestry"]["roots"] if r["kind"] == "claim"]
-            needs = [("knowledge.propose", env["subject"])]
-            if method == "knowledge.claim.revise":
-                needs.append(("knowledge.read", env["subject"]))  # supersedes names its revision
-            needs += [n for n in self._read_needs(refs) if n not in needs]
-            return p.authorize_under(env, needs)
+            # KNOWLEDGE 10: claim.revise and references inside claim content need no further right.
+            return p.authorize_under(env, [("knowledge.propose", env["subject"])])
         if method in ("knowledge.claim.inspect", "knowledge.claim.history"):
             return p.authorize_under(env, [("knowledge.read", subject_of(CLAIM_KIND, payload["claim"]))])
         if method == "knowledge.authority.get":
@@ -493,10 +501,15 @@ class Knowledge:
         if method == "knowledge.conflict.open":
             return p.authorize_under(env, [("knowledge.propose", env["subject"])] + self._read_needs(payload["revisions"]))
         if method == "knowledge.conflict.resolve":
-            refs = [payload["selected"]] if "selected" in payload else []
-            return p.authorize_under(env, [("knowledge.decide", env["subject"])] + self._read_needs(refs))
+            return p.authorize_under(env, [("knowledge.decide", env["subject"])])
         if method == "knowledge.applicability.evaluate":
-            return p.authorize_under(env, [("knowledge.propose", env["subject"])] + self._read_needs([payload["claim"]]))
+            # KNOWLEDGE 10: the claim and every claim its dependencies name at this provider
+            # (HM5B-EVALUATE-DEPENDENCY-RIGHTS: the dependencies of the named revision, digest unchecked).
+            refs = [payload["claim"]]
+            named = self.named_revision(payload["claim"])
+            if named is not None:
+                refs += named["record"]["dependencies"]
+            return p.authorize_under(env, [("knowledge.propose", env["subject"])] + self._read_needs(refs))
         raise AssertionError(method)
 
     # ------------------------------------------------------------ reads
@@ -504,13 +517,21 @@ class Knowledge:
         return self.store.get_json(CLAIM_KIND, cid)
 
     def revision_entry(self, ref: dict):
-        """The stored revision a reference names at this provider, or None."""
+        """The stored revision with the reference's provider, claim ID and
+        revision at this provider, or None (its digest is not compared)."""
         if ref["provider"] != self.p.provider_id:
             return None
         row = self.lineage(ref["claim"])
         if row is None or not 1 <= ref["revision"] <= len(row[1]["revisions"]):
             return None
         return row[1]["revisions"][ref["revision"] - 1]
+
+    named_revision = revision_entry
+
+    def resolves(self, ref: dict) -> bool:
+        """KNOWLEDGE 8: an exact local reference (provider, claim, revision, digest)."""
+        entry = self.revision_entry(ref)
+        return entry is not None and entry["digest"] == ref["digest"]
 
     def served_record(self, entry: dict) -> dict:
         """The record as this provider serves it to readers; the adversarial
@@ -588,7 +609,9 @@ class Knowledge:
             state = ev.availability(ref["artifact"]["id"], row[1])["state"]
             counts["available" if state == "available" else "purged" if state == "purged" else "unavailable"] += 1
         total = sum(counts.values())
-        if counts["available"] == total:
+        if total == 0:
+            state = "unknown"  # KNOWLEDGE 5: no support entries
+        elif counts["available"] == total:
             state = "complete"
         elif counts["available"]:
             state = "partial"
@@ -672,12 +695,12 @@ class Knowledge:
     def op_decision(self, env, auth):
         payload = env["payload"]
         ref = payload["claim"]
+        # KNOWLEDGE 6 "Who decides": Core revision preconditions first (HM5B-STEP7-CORE-ORDER).
+        self.p.check_preconditions(env, auth)
         entry = self.revision_entry(ref)
         if entry is None:
-            raise ProtocolError("not_found")
+            raise ProtocolError("not_found")  # including a reference naming another provider
         binding = self._authority_checks(env, auth, entry["record"]["scope"]["id"])
-        # HM5-CORE-PRECONDITION-ORDER: Core preconditions follow the epoch check (CORE 10 step 7).
-        self.p.check_preconditions(env, auth)
         if entry["digest"] != ref["digest"]:
             raise ProtocolError("invalid_envelope", {"path": "/payload/claim/digest",
                                                      "reason": "the digest differs from the revision's"})
@@ -727,13 +750,14 @@ class Knowledge:
 
     def op_resolve(self, env, auth):
         cid = env["subject"]["id"]
+        # KNOWLEDGE 7: Core revision preconditions first.
+        self.p.check_preconditions(env, auth)
         row = self.store.get_json(CONFLICT_KIND, cid)
         if row is None or row[1]["state"] != "open":
             raise ProtocolError("not_found")
         revision, rec = row
         entry = self.revision_entry(rec["revisions"][0])
         binding = self._authority_checks(env, auth, entry["record"]["scope"]["id"])
-        self.p.check_preconditions(env, auth)  # HM5-CORE-PRECONDITION-ORDER
         payload = env["payload"]
         resolution = payload["resolution"]
         if resolution == "select":
@@ -776,14 +800,7 @@ class Knowledge:
                 finding = "missing_anchor" if env_value is None else ("match" if env_value == c["expected"] else "mismatch")
             findings.append({"condition_id": c["condition_id"], "finding": finding})
         for dep in record["dependencies"]:
-            finding = "unchecked"
-            if not self.same_revision(dep, ref):
-                latest = self.latest_evaluation(dep, target)
-                if latest is not None and latest[1]["result"] == "applicable":
-                    finding = "match"
-                elif latest is not None and latest[1]["result"] == "invalid_for_target":
-                    finding = "mismatch"
-            findings.append({"dependency": dep, "finding": finding})
+            findings.append(self.dependency_finding(dep, ref, target))
         values = [f["finding"] for f in findings]
         if "mismatch" in values:
             result = "invalid_for_target"
@@ -796,6 +813,27 @@ class Knowledge:
         else:
             result = "applicable"
         return findings, result
+
+    def dependency_finding(self, dep: dict, ref: dict, target: dict) -> dict:
+        """KNOWLEDGE 8: a dependency resolves only as an exact local reference
+        (HM5B-SELF-OR-REMOTE for the order of the reasons)."""
+        if dep["provider"] != self.p.provider_id:
+            reason = "remote_dependency"
+        elif dep["claim"] == ref["claim"] and dep["revision"] == ref["revision"]:
+            reason = "self_reference"
+        elif not self.resolves(dep):
+            reason = "unresolved"
+        else:
+            latest = self.latest_evaluation(dep, target)
+            if latest is None:
+                reason = "not_evaluated"
+            elif latest[1]["result"] == "applicable":
+                return {"dependency": dep, "finding": "match"}
+            elif latest[1]["result"] == "invalid_for_target":
+                return {"dependency": dep, "finding": "mismatch"}
+            else:
+                reason = "not_established"
+        return {"dependency": dep, "finding": "unchecked", "reason": reason}
 
     def op_evaluate(self, env, auth):
         self.p.check_preconditions(env, auth)

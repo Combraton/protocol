@@ -14,8 +14,8 @@ Durable records are ordinary subjects in the provider's SQLite store:
   read back from the sealed bytes.
 
 Contracts are read from this provider's own evidence store. Section H.M5 of
-DIVERGENCES.md records the choices the documents leave open; the ``HM5-``
-tags below refer to it.
+DIVERGENCES.md, with its realignment H.M5b, records the choices the documents
+leave open; the ``HM5-`` and ``HM5B-`` tags below refer to it.
 """
 
 from __future__ import annotations
@@ -76,6 +76,9 @@ def _validate_step(step, what: str) -> None:
             _fail(f"{what}.property has an ill-typed property_id or result")
         if "reason" in val and (not isinstance(val["reason"], str) or not 1 <= len(val["reason"]) <= 256):
             _fail(f"{what}.property.reason must be a string of 1-256 characters")
+        if (val["result"] in REASONED) != ("reason" in val):
+            # VERIFICATION 11 and the launch schema: reason exactly for not_evaluated and indeterminate.
+            _fail(f"{what}.property.reason is required exactly for not_evaluated and indeterminate")
     elif key == "observe":
         if not isinstance(val, dict) or set(val) != {"anchors"} or not isinstance(val["anchors"], dict) \
                 or not all(isinstance(v, str) for v in val["anchors"].values()):
@@ -138,12 +141,12 @@ def parse_contract(data: bytes):
     contract (HM5-CONTRACT-FORMAT)."""
     try:
         doc = V.loads(data.decode("utf-8"))
-        E.closed(doc, "", ("outcome", "subjects", "properties", "environment", "evaluators", "freshness"), ("format",))
-        if "format" in doc and doc["format"] != CONTRACT_FORMAT:
-            return None
+        E.closed(doc, "", ("format", "outcome", "subjects", "properties", "environment", "evaluators", "freshness"))
+        if doc["format"] != CONTRACT_FORMAT:
+            return None  # VERIFICATION 3: format is required
         E.string(doc["outcome"], "/outcome")
         roles = set()
-        for idx, s in enumerate(E.array(doc["subjects"], "/subjects")):
+        for idx, s in enumerate(E.array(doc["subjects"], "/subjects", 1)):
             E.closed(s, ptr("/subjects", idx), ("role", "kind"))
             E.identifier(s["role"], ptr(ptr("/subjects", idx), "role"))
             E.string(s["kind"], ptr(ptr("/subjects", idx), "kind"), 1)
@@ -151,7 +154,7 @@ def parse_contract(data: bytes):
                 return None
             roles.add(s["role"])
         ids = set()
-        for idx, prop in enumerate(E.array(doc["properties"], "/properties")):
+        for idx, prop in enumerate(E.array(doc["properties"], "/properties", 1)):
             p = ptr("/properties", idx)
             E.closed(prop, p, ("property_id", "layer", "required", "statement"))
             E.identifier(prop["property_id"], ptr(p, "property_id"))
@@ -211,7 +214,7 @@ def listing_problems(names: list, expected: list) -> dict:
         seen.add(n)
     missing = [n for n in expected if n not in seen]
     unknown = list(dict.fromkeys(n for n in names if n not in expected))
-    # HM5-LISTING-DETAILS (fixture-driven): all three lists, empty ones included.
+    # VERIFICATION 4, 5: all three lists, empty ones included (HM5-LISTING-DETAILS, resolved).
     return {"missing": missing, "duplicated": duplicated, "unknown": unknown}
 
 
@@ -248,8 +251,8 @@ class Verification:
     def predicate_status(self, evaluator: dict) -> str:
         _, predicates = self.store.capabilities()
         name = predicate_name(evaluator)
-        # HM5-UNLISTED-EVALUATOR (fixture-driven): an evaluator this verifier does not list is unsupported.
-        return next((pr["status"] for pr in predicates if pr["name"] == name), "unsupported")
+        # VERIFICATION 4 step 1: an unlisted version has no evidence of support, so unknown (CORE 17.1).
+        return next((pr["status"] for pr in predicates if pr["name"] == name), "unknown")
 
     def _emit(self, changes, etype: str, subject: dict, revision: int, payload: dict) -> None:
         if changes is not None:
@@ -393,14 +396,25 @@ class Verification:
         return contract
 
     # --------------------------------------------------------- commands
+    def _id_taken(self, auth, kind: str, sid: str) -> None:
+        """VERIFICATION 4 "ID shared with receipts" (HM5B-COLLISION-DETAILS)."""
+        current = self.store.revision(kind, sid)
+        if current:
+            item = {"subject": {"kind": kind, "id": sid}, "expected": 0}
+            if auth.may_read(item["subject"]):
+                item["current"] = current
+            raise ProtocolError("precondition_failed", {"failed": [item]})
+
     def op_evaluate(self, env, auth):
         payload = env["payload"]
         evaluator = payload["evaluator"]
+        # VERIFICATION 4 "Order at step 7": Core preconditions, then 0 to 3.
+        self.p.check_preconditions(env, auth)
+        self._id_taken(auth, RECEIPT_KIND, env["subject"]["id"])
         status = self.predicate_status(evaluator)
         if status != "supported":
-            # VERIFICATION 4 step 7, first: never another version.
+            # Never another version.
             raise ProtocolError("capability_unavailable", {"capability": predicate_name(evaluator), "status": status})
-        self.p.check_preconditions(env, auth)  # HM5-CORE-PRECONDITION-ORDER
         contract = self.contract_or_refuse(payload["contract"])
         roles = [s["role"] for s in contract["subjects"]]
         _refuse_listing("/payload/subjects", listing_problems([s["role"] for s in payload["subjects"]], roles))
@@ -409,6 +423,7 @@ class Verification:
                "requested_environment": payload.get("environment"), "roles": roles,
                "properties": [{"property_id": pr["property_id"], "required": pr["required"]}
                               for pr in contract["properties"]],
+               "outcome": contract["outcome"],
                "state": "queued", "recorded": [], "anchors": {}, "valid_until": None, "pos": 0,
                "submitted_at": self.now(), "started_at": None}
         self.store.put_json(JOB_KIND, jid, 1, rec)
@@ -417,6 +432,7 @@ class Verification:
 
     def op_record(self, env, auth):
         self.p.check_preconditions(env, auth)
+        self._id_taken(auth, JOB_KIND, env["subject"]["id"])  # VERIFICATION 4 "ID shared with receipts"
         payload = env["payload"]
         contract = self.contract_or_refuse(payload["contract"])
         _refuse_listing("/payload/subjects", listing_problems([s["role"] for s in payload["subjects"]],
@@ -491,8 +507,8 @@ class Verification:
         ref = payload["receipt"]
         row = self.store.get_json(RECEIPT_KIND, ref["receipt"]) if ref["provider"] == self.p.provider_id else None
         if row is None:
-            # HM5-ASSESS-MISSING (fixture-driven): after authorization (step 6), a nonexistent
-            # receipt is not_found; an unauthorized reader was already refused identically for both.
+            # VERIFICATION 7 "Authorization": after step 6, a nonexistent receipt is not_found for an
+            # authorized reader; an unauthorized one was already refused identically for both.
             raise ProtocolError("not_found")
         contract, contract_reason = self.read_contract(payload["contract"])
         if contract is not None:
@@ -512,8 +528,8 @@ class Verification:
 
         mapped = row[1]["reference"]["artifact"]
         if V.canonical(ref["artifact"]) != V.canonical(mapped):
-            # HM5-ASSESS-REFERENCE-MISMATCH (fixture-driven): the referenced bytes are not the
-            # receipt's, so no property result is presented from the mapped bytes.
+            # VERIFICATION 7: a reference differing from its mapping makes the receipt unusable,
+            # so no property result is presented from the mapped bytes.
             fail("receipt", "receipt_reference_mismatch")
             content = None
         else:
@@ -521,9 +537,11 @@ class Verification:
             if content is None:
                 fail("receipt", "receipt_unavailable", "unverifiable")
         if contract is None:
-            fail("contract", "contract_unavailable", "unverifiable")
+            # VERIFICATION 7 table: the contract cannot be read.
+            for name in ("contract", "environment", "evaluator"):
+                fail(name, "contract_unavailable", "unverifiable")
         if content is None:
-            # HM5-ASSESS-UNREADABLE-RECEIPT: checks that need the receipt's content.
+            # VERIFICATION 7 table: the receipt cannot be used (HM5B-UNUSABLE-REASON-ORDER).
             for name in ("contract", "subjects", "environment", "evaluator", "time"):
                 fail(name, checks["receipt"]["reasons"][0], "unverifiable")
         else:
@@ -532,10 +550,7 @@ class Verification:
             by_role = {s["role"]: s["digest"] for s in content["subjects"]}
             if any(by_role.get(s["role"]) != s["digest"] for s in payload["subjects"]):
                 fail("subjects", "subject_mismatch")
-            if contract is None:
-                for name in ("environment", "evaluator"):
-                    fail(name, "contract_unavailable", "unverifiable")
-            else:
+            if contract is not None:
                 requested = (payload.get("environment") or {}).get("anchors", {})
                 observed = content["environment"]["anchors"]
                 for anchor in contract["environment"]["required_anchors"]:
@@ -574,7 +589,8 @@ class Verification:
                 properties.append({"property_id": prop["property_id"], "required": prop["required"],
                                    "result": result, "status": status, "reasons": reasons})
         required = [pr for pr in properties if pr["required"]]
-        if not properties:
+        # VERIFICATION 7 "Overall".
+        if blocking or not properties:
             overall = "not_satisfied"
         elif any(pr["status"] == "failed" for pr in required):
             overall = "failed"
@@ -582,8 +598,6 @@ class Verification:
             overall = "not_satisfied"
         else:
             overall = "satisfied"
-        if blocking and overall == "satisfied":
-            overall = "not_satisfied"  # HM5-OVERALL-WITH-FAILED-CHECKS
         time_basis = "provider_clock" if at is None else "caller_selected"
         return {"assessed_at": assessed_at, "time_basis": time_basis,
                 "present_validity": "established" if time_basis == "provider_clock" and overall == "satisfied"
@@ -634,14 +648,19 @@ class Verification:
         revision, rec = self.store.get_json(JOB_KIND, jid)
         if rec["state"] == "completed":
             return False
-        if self.predicate_status(rec["evaluator"]) != "supported":
+        lost = self.predicate_status(rec["evaluator"]) != "supported"
+        if lost and rec["state"] == "running":
             # VERIFICATION 4 "Losing the pinned evaluator".
             return self._complete(jid, revision, rec, "indeterminate", "evaluator_unavailable")
         if rec["state"] == "queued":
+            # "running from its first evaluation"; a queued job whose evaluator is lost
+            # passes through running at the evaluation that completes it (HM5B-QUEUED-LOSS).
             rec["state"] = "running"
             rec["started_at"] = self.now()
             revision = self._job_event(jid, revision, "verification.job.changed",
                                        {"state": "running", "evaluator": rec["evaluator"]})
+            if lost:
+                return self._complete(jid, revision, rec, "indeterminate", "evaluator_unavailable")
             self.store.put_json(JOB_KIND, jid, revision, rec)
             return True
         script = self.script_for(jid)
@@ -658,10 +677,9 @@ class Verification:
             known = {pr["property_id"] for pr in rec["properties"]}
             already = {r["property_id"] for r in rec["recorded"]}
             if val["property_id"] in known and val["property_id"] not in already:
-                reason = None
-                if val["result"] in REASONED:
-                    reason = val.get("reason", val["result"])  # HM5-SCRIPT-REASON
-                revision = self._record_result(jid, revision, rec, val["property_id"], val["result"], reason)
+                # The launch configuration carries a reason exactly where one is required.
+                revision = self._record_result(jid, revision, rec, val["property_id"], val["result"],
+                                               val.get("reason"))
         elif key == "observe":
             rec["anchors"].update(val["anchors"])
         elif key == "valid_until":
@@ -674,11 +692,9 @@ class Verification:
         return True
 
     def _complete(self, jid: str, revision: int, rec: dict, fill: str, reason: str) -> bool:
-        if self.store.revision(RECEIPT_KIND, jid):
-            return False  # HM5-RECEIPT-ID-TAKEN: a recorded receipt already holds this ID
         now = self.now()
-        # HM5-RECORDED-FILL (fixture-driven): results filled in at completion appear in the
-        # receipt only; ``recorded`` keeps what the evaluator reported.
+        # VERIFICATION 4: results assigned at completion appear in the receipt only;
+        # ``recorded`` keeps what the evaluator reported.
         by_id = {r["property_id"]: r for r in rec["recorded"]}
         properties = []
         for prop in rec["properties"]:
@@ -689,12 +705,17 @@ class Verification:
         content = {"format": RECEIPT_FORMAT, "receipt": jid, "subjects": rec["subjects"], "contract": rec["contract"],
                    "evaluator": dict(rec["evaluator"], principal=self.p.provider_id),  # HM5-VERIFIER-PRINCIPAL
                    "environment": {"anchors": dict(rec["anchors"])}, "inputs": [], "properties": properties,
-                   "observed_from": rec["started_at"] or rec["submitted_at"], "observed_until": now,
-                   "valid_until": rec["valid_until"], "scope": f"verification job {jid}", "job": jid,
+                   "observed_from": rec["started_at"], "observed_until": now,
+                   "valid_until": rec["valid_until"], "scope": rec["outcome"], "job": jid,
                    "provenance": []}
-        reference = self._seal_receipt(jid, content, jid, None)
+        # VERIFICATION 4 "Issued receipt members": receipt.issued, then the artifact's
+        # events, then job.changed (HM5B-ISSUED-EVENTS).
+        artifact_events = []
+        reference = self._seal_receipt(jid, content, jid, artifact_events)
         self._emit(None, "verification.receipt.issued", receipt_subject(jid), 1,
-                   {"reference": reference, "job": job_subject(jid)})
+                   {"reference": reference, "job": jid})
+        for etype, subject, rev, event_payload in artifact_events:
+            self._emit(None, etype, subject, rev, event_payload)
         rec["state"] = "completed"
         rec["receipt"] = reference
         revision = self._job_event(jid, revision, "verification.job.changed",

@@ -29,7 +29,8 @@ FEATURE_MEMBERS = {
     "context_bindings": "execution.context",
     "continuation": "execution.continuation",
 }
-BASE_SUBMIT_MEMBERS = ("brief", "adapter", "restrictions", "timeouts", "predecessor", "correlation")
+# `origin` (EXECUTION 13.2) is in the submit schema without a feature gate (H-REVAL-SCOPE).
+BASE_SUBMIT_MEMBERS = ("brief", "adapter", "restrictions", "timeouts", "predecessor", "correlation", "origin")
 
 
 def _command(env, method, features) -> dict:
@@ -129,7 +130,13 @@ def submit_params(env, method, features) -> None:
     if "context_bindings" in payload:
         E.array(payload["context_bindings"], "/payload/context_bindings", max_items=64)
         for idx, binding in enumerate(payload["context_bindings"]):
-            context_binding_request(binding, ptr("/payload/context_bindings", idx))
+            context_binding_request(binding, ptr("/payload/context_bindings", idx),
+                                    "execution.context_revalidation" in features)
+    if "origin" in payload:
+        o = E.closed(payload["origin"], "/payload/origin", ("initiator", "depth", "call_budget"))
+        E.subject(o["initiator"], "/payload/origin/initiator")
+        E.integer(o["depth"], "/payload/origin/depth")
+        E.integer(o["call_budget"], "/payload/origin/call_budget")
     if "continuation" in payload:
         c = E.closed(payload["continuation"], "/payload/continuation", ("of", "mode"))
         E.identifier(c["of"], "/payload/continuation/of")
@@ -153,12 +160,37 @@ def workspace_request(v, path: str) -> None:
         raise Invalid(ptr(path, "cleanup"), "must be retain or remove")
 
 
-def context_binding_request(v, path: str) -> None:
-    E.closed(v, path, ("binding_id", "packet", "obligation", "selected_by"), ("transition",))
+def context_binding_request(v, path: str, revalidation: bool = False) -> None:
+    # EXECUTION 13.1: `request`, `conditions`, `fetch` and a packet reference
+    # only under execution.context_revalidation; otherwise invalid_envelope at
+    # that member.
+    extra = ("request", "conditions", "fetch") if revalidation else ()
+    E.closed(v, path, ("binding_id", "packet", "obligation", "selected_by"), ("transition",) + extra)
     E.identifier(v["binding_id"], ptr(path, "binding_id"))
-    packet = E.closed(v["packet"], ptr(path, "packet"), ("ref", "digest"))
-    E.identifier(packet["ref"], ptr(ptr(path, "packet"), "ref"))
-    E.digest_string(packet["digest"], ptr(ptr(path, "packet"), "digest"))
+    packet = v["packet"]
+    if isinstance(packet, dict) and "packet" in packet:
+        if not revalidation:
+            raise Invalid(ptr(path, "packet"), "a packet reference needs execution.context_revalidation")
+        import context as CTX
+        CTX.packet_reference(packet, ptr(path, "packet"))
+    else:
+        E.closed(packet, ptr(path, "packet"), ("ref", "digest"))
+        E.identifier(packet["ref"], ptr(ptr(path, "packet"), "ref"))
+        E.digest_string(packet["digest"], ptr(ptr(path, "packet"), "digest"))
+    if "request" in v:
+        E.subject(v["request"], ptr(path, "request"), "context.request")
+    if "conditions" in v:
+        import context as CTX
+        E.array(v["conditions"], ptr(path, "conditions"), max_items=64)
+        for idx, cond in enumerate(v["conditions"]):
+            CTX.condition(cond, ptr(ptr(path, "conditions"), idx))
+    if "fetch" in v:
+        f = E.closed(v["fetch"], ptr(path, "fetch"), ("evidence",), ("context",))
+        for member in ("context", "evidence"):
+            if member in f:
+                g = E.closed(f[member], ptr(ptr(path, "fetch"), member), ("provider", "grant"))
+                E.identifier(g["provider"], ptr(ptr(ptr(path, "fetch"), member), "provider"))
+                E.identifier(g["grant"], ptr(ptr(ptr(path, "fetch"), member), "grant"))
     if v["obligation"] not in OBLIGATIONS:
         raise Invalid(ptr(path, "obligation"), "unknown obligation")
     if "transition" in v:

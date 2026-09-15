@@ -5,6 +5,295 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "dependency-read-unauthorized",
+        "evaluates without knowledge.read on the claims its dependencies name",
+    ),
+    (
+        "authority-binds-under-grant",
+        "lets an authority principal bind a scope while acting under a grant",
+    ),
+    (
+        "empty-roots-accepted",
+        "accepts complete or partial ancestry that declares no roots",
+    ),
+    (
+        "absent-evaluator-unsupported",
+        "reports an evaluator version the snapshot does not list as unsupported instead of unknown",
+    ),
+    (
+        "receipt-events-artifact-first",
+        "appends the receipt artifact's events before the receipt's own event",
+    ),
+    (
+        "overall-ignores-checks",
+        "derives overall from required properties even when a check failed",
+    ),
+    (
+        "issued-environment-requested",
+        "reports the requested environment as observed in an issued receipt",
+    ),
+    (
+        "contract-unverifiable-checks-passed",
+        "passes environment and evaluator checks when the contract cannot be read",
+    ),
+    (
+        "receipt-id-collision-accepted",
+        "lets a job and a recorded receipt share one ID",
+    ),
+    (
+        "claims-format-without-negotiation",
+        "publishes packet format /2 for requests submitted without context.claims",
+    ),
+    (
+        "knowledge-epoch-after-preconditions",
+        "checks a knowledge scope's authority epoch after the Core preconditions",
+    ),
+    (
+        "self-reference-before-provider",
+        "reports a remote dependency repeating the evaluated claim ID and revision as a self reference",
+    ),
+    (
+        "evaluator-after-preconditions",
+        "checks the evaluator capability after the Core preconditions",
+    ),
+    (
+        "contract-members-open",
+        "accepts a contract with unlisted members or without its format",
+    ),
+    (
+        "unusable-reasons-dropped",
+        "drops the receipt's reason when the contract is also unreadable",
+    ),
+    (
+        "issued-events-job-first",
+        "appends the job's completed change before the issued receipt's events",
+    ),
+    (
+        "issued-scope-from-job",
+        "names the job instead of the contract's outcome as an issued receipt's scope",
+    ),
+    (
+        "historical-claim-reason-unavailable",
+        "reports a historical claim section's item as unavailable instead of invalid for the target",
+    ),
+    (
+        "hypothesis-invalidation-unreported",
+        "does not invalidate hypothesis or reference items whose claim becomes invalid for the target",
+    ),
+    (
+        "scripted-unmet-overrides-satisfied",
+        "lets a scripted unmet step override an item its check satisfies",
+    ),
+    (
+        "dependency-digest-ignored",
+        "resolves a dependency by claim and revision whatever its digest",
+    ),
+    (
+        "dependency-provider-ignored",
+        "resolves a dependency naming another provider against this provider's claims",
+    ),
+    (
+        "missing-dependency-satisfied",
+        "treats an unresolved dependency as a match",
+    ),
+    (
+        "reference-provider-unchecked",
+        "accepts a claim reference naming another provider as a local revision",
+    ),
+    (
+        "dirty-snapshot-as-tree",
+        "treats a dirty-snapshot condition as matching whenever the repository is present",
+    ),
+    (
+        "label-promotes-claim",
+        "publishes a claim section labeled binding although the claim is not accepted for binding use",
+    ),
+    (
+        "unknown-applicability-marked-stale",
+        "marks claims whose applicability is not established as stale historical sections",
+    ),
+    (
+        "claim-latest-substituted",
+        "carries the claim's latest revision instead of the named one",
+    ),
+    (
+        "claim-digest-unchecked",
+        "carries a claim without recomputing its record digest",
+    ),
+    (
+        "claims-without-negotiation",
+        "shows claim snapshots to sessions without context.claims",
+    ),
+    (
+        "claim-invalidation-unreported",
+        "does not report required items whose claims lost their use or applicability",
+    ),
+    (
+        "unavailable-knowledge-valid",
+        "treats unreadable claim knowledge as still valid",
+    ),
+    (
+        "claim-revalidation-ignored",
+        "ignores claim invalidations and unverified items when revalidating",
+    ),
+    (
+        "advisory-blocked-by-claims",
+        "blocks advisory work when its packet's claims are invalidated",
+    ),
+    (
+        "receipt-listing-incomplete-accepted",
+        "records a receipt that does not list every contract property exactly once",
+    ),
+    (
+        "results-in-outcome",
+        "returns property results in the evaluate_contract outcome",
+    ),
+    (
+        "evaluator-version-substituted",
+        "pins another supported version when the requested evaluator version is unavailable",
+    ),
+    (
+        "lost-evaluator-reports-pass",
+        "reports unfinished properties as pass when the pinned evaluator is lost",
+    ),
+    (
+        "lost-evaluator-switches-version",
+        "continues a job under another version when its pinned evaluator is lost",
+    ),
+    (
+        "recorded-results-rewritten",
+        "rewrites recorded property results when the pinned evaluator is lost",
+    ),
+    (
+        "not-evaluated-satisfied",
+        "assesses a not_evaluated property as satisfied",
+    ),
+    (
+        "contract-digest-only",
+        "compares contract digests instead of exact contract references",
+    ),
+    (
+        "subject-digest-ignored",
+        "assesses a receipt without comparing subject digests",
+    ),
+    (
+        "time-basis-ignored",
+        "reports present validity for a caller-selected time",
+    ),
+    (
+        "before-observation-ignored",
+        "assesses a time before the observation as if the result were known",
+    ),
+    (
+        "stale-ignored",
+        "ignores validity and freshness when assessing",
+    ),
+    (
+        "environment-unverified-satisfied",
+        "treats a missing required environment anchor as matching",
+    ),
+    (
+        "assess-roles-incomplete-accepted",
+        "assesses a request that does not name every contract role",
+    ),
+    (
+        "receipt-bytes-unchecked",
+        "assesses a receipt whose sealed bytes are unavailable",
+    ),
+    (
+        "failure-marks-execution",
+        "lets a failing receipt request cancellation of the execution it names",
+    ),
+    (
+        "receipt-authorizes-decision",
+        "lets a principal decide when its decision cites a receipt",
+    ),
+    (
+        "claim-revision-overwritten",
+        "replaces the previous claim revision instead of keeping it",
+    ),
+    (
+        "revise-base-unchecked",
+        "accepts a revise whose supersedes names a stale revision or digest",
+    ),
+    (
+        "drift-as-conflict",
+        "records normative against observed as a conflict rather than drift",
+    ),
+    ("single-status-field", "lets acceptance imply applicability"),
+    (
+        "support-entries-as-origins",
+        "treats each support artifact as an origin when no ancestry is declared",
+    ),
+    (
+        "equal-digest-roots-disjoint",
+        "treats roots with equal digests but different references as disjoint",
+    ),
+    (
+        "overlap-as-multiple",
+        "classifies pairwise-overlapping ancestry as multiple lineages",
+    ),
+    (
+        "conflict-on-identity-only",
+        "accepts a conflict on matching subject, predicate and scope alone",
+    ),
+    (
+        "potential-reported-demonstrated",
+        "reports a conflict with uncertain dimensions as demonstrated",
+    ),
+    (
+        "resolve-without-authority",
+        "lets any principal with a decide right resolve a conflict",
+    ),
+    (
+        "decide-by-grant-right",
+        "lets a grant with knowledge.decide record decisions without the binding",
+    ),
+    (
+        "derivation-label-authorizes",
+        "lets a producer decide its own claim when the derivation says human",
+    ),
+    (
+        "transfer-resets-reliance",
+        "drops decisions recorded under an earlier authority epoch",
+    ),
+    (
+        "self-adoption-unrecorded",
+        "records a decision by the claim's author without author_is_decider",
+    ),
+    (
+        "incomplete-coverage-applicable",
+        "treats a missing anchor as a match",
+    ),
+    (
+        "unknown-outranks-mismatch",
+        "reports unknown when an observed mismatch is present",
+    ),
+    (
+        "history-drops-superseded",
+        "omits superseded revisions from history",
+    ),
+    (
+        "validity-filled-from-recorded",
+        "fills an unknown validity start from the recorded time",
+    ),
+    (
+        "normative-implies-binding",
+        "reports undecided normative claims as accepted for binding use",
+    ),
+    (
+        "decision-epoch-optional",
+        "accepts a decision without an authority epoch",
+    ),
+    (
+        "decision-supersession-unchecked",
+        "records a decision without naming the latest decision it replaces",
+    ),
+    (
+        "bind-by-grant",
+        "lets a non-authority principal bind a scope under a grant",
+    ),
+    (
         "chunk-limit-ignores-overhead",
         "declares a chunk limit that ignores base64 and envelope overhead",
     ),

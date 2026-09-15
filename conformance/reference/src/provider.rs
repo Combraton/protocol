@@ -231,6 +231,86 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "knowledge.claim.propose",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.claim.revise",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.claim.inspect",
+        profile: "knowledge",
+        command: false,
+    },
+    Operation {
+        name: "knowledge.claim.history",
+        profile: "knowledge",
+        command: false,
+    },
+    Operation {
+        name: "knowledge.authority.bind",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.authority.transfer",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.authority.get",
+        profile: "knowledge",
+        command: false,
+    },
+    Operation {
+        name: "knowledge.decision.record",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.conflict.open",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.conflict.resolve",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.applicability.evaluate",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "verification.evaluate_contract",
+        profile: "verification",
+        command: true,
+    },
+    Operation {
+        name: "verification.job.inspect",
+        profile: "verification",
+        command: false,
+    },
+    Operation {
+        name: "verification.receipt.record",
+        profile: "verification",
+        command: true,
+    },
+    Operation {
+        name: "verification.receipt.inspect",
+        profile: "verification",
+        command: false,
+    },
+    Operation {
+        name: "verification.receipt.assess",
+        profile: "verification",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -304,9 +384,24 @@ const SUPPORTED: &[SupportedProfile] = &[
             "context.shared_jobs",
             "context.updates",
             "context.expand",
+            "context.claims",
         ],
         depends_on: &["core"],
         requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
+        name: "knowledge",
+        majors: &[1],
+        features: &[],
+        depends_on: &["core"],
+        requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
+        name: "verification",
+        majors: &[1],
+        features: &["verification.jobs", "verification.record"],
+        depends_on: &["core"],
+        requires_core_features: &["core.events", "core.capabilities"],
     },
     SupportedProfile {
         name: "core-test",
@@ -317,8 +412,9 @@ const SUPPORTED: &[SupportedProfile] = &[
     },
 ];
 /// Optional `execution/1` features (EXECUTION sections 11 and 13).
-const EXECUTION_FEATURES: [&str; 11] = [
+const EXECUTION_FEATURES: [&str; 12] = [
     "execution.context_revalidation",
+    "execution.claim_revalidation",
     "execution.evidence_outputs",
     "execution.steering",
     "execution.actions",
@@ -371,7 +467,7 @@ pub fn retry_class(code: &str) -> &'static str {
         | "upload_incomplete"
         | "hold_active" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
-        "capability_unavailable" => "after_reconcile",
+        "capability_unavailable" | "contract_unavailable" => "after_reconcile",
         _ => "no",
     }
 }
@@ -426,6 +522,10 @@ pub struct Identity {
     pub evidence_store: std::sync::Arc<Value>,
     /// Scripted context preparation (test environment; CONTEXT section 12).
     pub context_script: std::sync::Arc<Value>,
+    /// Knowledge evaluator and adversarial store controls (test environment; KNOWLEDGE section 13).
+    pub knowledge: std::sync::Arc<Value>,
+    /// Scripted evaluator (test environment; VERIFICATION section 11).
+    pub verifier: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -578,7 +678,19 @@ impl Provider {
         {
             eprintln!("evidence tick: {error}");
         }
-        let mut publisher = json!({"provider_id": self.identity.provider_id});
+        let verifier = self.identity.verifier.clone();
+        let capabilities = self.identity.capabilities.clone();
+        if let Err(error) = crate::verification::tick(
+            &mut self.store,
+            &now,
+            &capabilities,
+            &verifier,
+            &self.identity.provider_id,
+            &self.mutants,
+        ) {
+            eprintln!("verification tick: {error}");
+        }
+        let mut publisher = self.context_publisher();
         if let Some(peer) = self.identity.context_script.get("evidence_provider") {
             publisher["evidence_provider"] = peer.clone();
         }
@@ -677,6 +789,10 @@ impl Provider {
                     Some("evidence.retention_control")
                 }
                 "context.expand" => Some("context.expand"),
+                "verification.evaluate_contract" | "verification.job.inspect" => {
+                    Some("verification.jobs")
+                }
+                "verification.receipt.record" => Some("verification.record"),
                 _ => None,
             };
             if let Some(feature) = feature
@@ -906,13 +1022,20 @@ impl Provider {
         let evidence_store = self.identity.evidence_store.clone();
         let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
         let context_script = self.identity.context_script.clone();
+        let knowledge_config = self.identity.knowledge.clone();
+        let capabilities = self.identity.capabilities.clone();
+        let evidence_config = self.identity.evidence_store.clone();
+        let provider_id = self.identity.provider_id.clone();
+        let full_params = params.clone();
         let execution_features = (
             self.feature_negotiated("execution.context_revalidation"),
             self.feature_negotiated("execution.evidence_outputs"),
+            self.feature_negotiated("execution.claim_revalidation"),
         );
         let context_features = (
             self.feature_negotiated("context.shared_jobs"),
             self.feature_negotiated("context.updates"),
+            self.feature_negotiated("context.claims"),
         );
         let fail_commit =
             fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
@@ -928,6 +1051,7 @@ impl Provider {
                     grant: grant_id.as_deref(),
                     revalidation: execution_features.0,
                     evidence_outputs: execution_features.1,
+                    claim_revalidation: execution_features.2,
                 };
                 let (revision, outcome, events, effect_refs) = match operation_name {
                     "execution.submit" => {
@@ -960,6 +1084,7 @@ impl Provider {
                             principal: &principal,
                             shared_jobs: context_features.0,
                             updates: context_features.1,
+                            claims: context_features.2,
                             script: &context_script,
                             mutants,
                         };
@@ -968,6 +1093,41 @@ impl Provider {
                         } else {
                             crate::context::cancel(tx, &subject_id, &session)?
                         }
+                    }
+                    name if name.starts_with("knowledge.") => {
+                        let knowledge_context = crate::knowledge::Context {
+                            now: recorded_at.clone(),
+                            principal: &principal,
+                            provider_id: &provider_id,
+                            config: &knowledge_config,
+                            order: sequence,
+                            mutants,
+                        };
+                        crate::knowledge::apply(
+                            tx,
+                            name,
+                            &subject_id,
+                            &full_params,
+                            &knowledge_context,
+                        )?
+                    }
+                    name if name.starts_with("verification.") => {
+                        let verification_context = crate::verification::Context {
+                            now: recorded_at.clone(),
+                            principal: &principal,
+                            provider_id: &provider_id,
+                            capabilities: &capabilities,
+                            evidence_config: &evidence_config,
+                            order: sequence,
+                            mutants,
+                        };
+                        crate::verification::apply(
+                            tx,
+                            name,
+                            &subject_id,
+                            &full_params,
+                            &verification_context,
+                        )?
                     }
                     name if name.starts_with("evidence.") => {
                         let evidence_context = crate::evidence::Context {
@@ -1189,6 +1349,37 @@ impl Provider {
                 if self.mutants.on("packet-grant-covers-all-packets") =>
             {
                 return Ok(Some(Vec::new()));
+            }
+            // Evaluating reads the claims its local dependencies name (KNOWLEDGE section 10).
+            "knowledge.applicability.evaluate" => {
+                let mut needed =
+                    crate::grants::required_rights(operation, params).unwrap_or_default();
+                if !self.mutants.on("dependency-read-unauthorized") {
+                    let reader = self.store.reader().map_err(storage)?;
+                    let reference = &params["payload"]["claim"];
+                    if reference["provider"] == self.identity.provider_id.as_str()
+                        && let Some(entry) = crate::knowledge::revision_entry(
+                            &reader,
+                            reference["claim"].as_str().unwrap_or_default(),
+                            reference["revision"].as_i64().unwrap_or(0),
+                        )
+                        .map_err(storage)?
+                    {
+                        for dependency in entry["record"]["dependencies"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            if dependency["provider"] == self.identity.provider_id.as_str() {
+                                needed.push((
+                                    "knowledge.read".to_string(),
+                                    json!({"kind": crate::knowledge::CLAIM, "id": dependency["claim"]}),
+                                ));
+                            }
+                        }
+                    }
+                }
+                return Ok(Some(needed));
             }
             "evidence.release" => {
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
@@ -1509,6 +1700,17 @@ impl Provider {
         let denied = |reason: &str| Err(reject("permission_denied", json!({"reason": reason})));
         match operation {
             "core.grant.issue" => self.authorize_issuing(params),
+            // Only provider authority principals bind scopes; a grant never does (KNOWLEDGE 6).
+            "knowledge.authority.bind" | "knowledge.authority.transfer" => {
+                // A grant restricts even an authority principal, and no right covers binding.
+                let under_grant = params.get("grant").is_some()
+                    && !self.mutants.on("authority-binds-under-grant");
+                if (self.is_authority() && !under_grant) || self.mutants.on("bind-by-grant") {
+                    Ok(())
+                } else {
+                    denied("not_authority")
+                }
+            }
             "core.grant.revoke" => {
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
                 let record = self.store.grant(id).map_err(storage)?;
@@ -1745,6 +1947,7 @@ impl Provider {
                     "source_included",
                     "evidence_included",
                     "authority_content_included",
+                    "claim_included",
                 ];
                 if !known.iter().any(|kind| item["check"]["kind"] == *kind) {
                     item["check"] = json!({"kind": "authority_content_included"});
@@ -1884,6 +2087,17 @@ impl Provider {
         if operation.name == "context.request.submit"
             && let Err((path, reason)) =
                 crate::context::validate_submit(&params["payload"], &self.mutants)
+        {
+            return invalid(&path, reason);
+        }
+        if operation.name.starts_with("knowledge.")
+            && let Err((path, reason)) =
+                crate::knowledge::validate(operation.name, params, &self.mutants)
+        {
+            return invalid(&path, reason);
+        }
+        if operation.name.starts_with("verification.")
+            && let Err((path, reason)) = crate::verification::validate(operation.name, params)
         {
             return invalid(&path, reason);
         }
@@ -2108,8 +2322,62 @@ impl Provider {
         {
             self.check_controller_epoch(params)?;
         }
+        self.check_profile_capability_and_epoch(operation, params)?;
         self.check_preconditions_only(params)?;
         self.check_targets(operation, params)
+    }
+
+    /// Step 7 checks that CORE section 10 places before the preconditions: an evaluator version a
+    /// verification job depends on (CORE section 17), and a knowledge scope's authority epoch.
+    fn check_profile_capability_and_epoch(
+        &self,
+        operation: &str,
+        params: &Value,
+    ) -> Result<(), Reject> {
+        let reader = self.store.reader().map_err(storage)?;
+        if operation.starts_with("knowledge.") {
+            let checked = crate::knowledge::epoch_check(
+                &reader,
+                operation,
+                params,
+                &self.identity.provider_id,
+                &self.mutants,
+            )
+            .map_err(storage)?;
+            return self.knowledge_refusal(&reader, operation, params, checked);
+        }
+        if operation == "verification.evaluate_contract" {
+            let context = self.verification_context(0);
+            if let Err((code, details)) = crate::verification::capability_check(params, &context) {
+                return Err(reject(code, details));
+            }
+        }
+        Ok(())
+    }
+
+    /// A knowledge refusal, with `current_epoch` only for a principal who may read the binding.
+    fn knowledge_refusal(
+        &self,
+        reader: &rusqlite::Transaction,
+        operation: &str,
+        params: &Value,
+        checked: Result<(), (&'static str, Value)>,
+    ) -> Result<(), Reject> {
+        match checked {
+            Ok(()) => Ok(()),
+            Err(("stale_authority_epoch", details)) => {
+                let scope =
+                    crate::knowledge::scope_of(reader, operation, params).map_err(storage)?;
+                let binding = json!({"kind": crate::knowledge::AUTHORITY, "id": scope});
+                let details = if self.may_read(&binding, params)? {
+                    details
+                } else {
+                    json!({})
+                };
+                Err(reject("stale_authority_epoch", details))
+            }
+            Err((code, details)) => Err(reject(code, details)),
+        }
     }
 
     /// Controller lease (EXECUTION section 11, EXE-13): once a controller has claimed the host,
@@ -2162,6 +2430,40 @@ impl Provider {
             .is_some(),
             "execution.controller.claim" => {
                 id == crate::execution::host_id(&self.identity.executor)
+            }
+            name if name.starts_with("knowledge.") => {
+                let checked = crate::knowledge::check(
+                    &reader,
+                    name,
+                    params,
+                    &self.identity.principal,
+                    &self.identity.provider_id,
+                    &self.mutants,
+                )
+                .map_err(storage)?;
+                return self.knowledge_refusal(&reader, name, params, checked);
+            }
+            name if name.starts_with("verification.") => {
+                let context = self.verification_context(0);
+                return match crate::verification::check(&reader, name, params, &context)
+                    .map_err(storage)?
+                {
+                    Ok(()) => Ok(()),
+                    // An ID collision names the existing subject, with `current` where readable
+                    // (CORE section 7).
+                    Err(("precondition_failed", mut details)) if details["failed"].is_array() => {
+                        for entry in details["failed"].as_array_mut().into_iter().flatten() {
+                            let kind = entry["subject"]["kind"].as_str().unwrap_or_default();
+                            let id = entry["subject"]["id"].as_str().unwrap_or_default();
+                            if self.may_read(&entry["subject"], params)? {
+                                entry["current"] =
+                                    json!(self.store.revision(kind, id).map_err(storage)?);
+                            }
+                        }
+                        Err(reject("precondition_failed", details))
+                    }
+                    Err((code, details)) => Err(reject(code, details)),
+                };
             }
             "context.request.cancel" => crate::context::preparing(&reader, id)
                 .map_err(storage)?
@@ -2429,14 +2731,22 @@ impl Provider {
                     .map_err(storage)?
                     .ok_or_else(|| reject("not_found", json!({})))
             }
-            "context.packet.inspect" => crate::context::inspect_packet(
-                &self.store,
-                &params["payload"],
-                self.caller_frame_limit,
-                &self.mutants,
-            )
-            .map_err(storage)?
-            .ok_or_else(|| reject("not_found", json!({}))),
+            "context.packet.inspect" => {
+                let publisher = self.context_publisher();
+                let reader = crate::context::PacketReader {
+                    claims: self.feature_negotiated("context.claims"),
+                    publisher: &publisher,
+                };
+                crate::context::inspect_packet(
+                    &self.store,
+                    &params["payload"],
+                    self.caller_frame_limit,
+                    &reader,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                .ok_or_else(|| reject("not_found", json!({})))
+            }
             "context.expand" => {
                 // A citation the principal may not read, a nonexistent citation and one held at
                 // another provider are refused identically (CONTEXT section 6, CORE-12).
@@ -2516,6 +2826,62 @@ impl Provider {
                 .map_err(storage)?
                 .map_err(|code| reject(code, json!({"reason": "malformed"})))
             }
+            "knowledge.claim.inspect" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let knowledge_reader = crate::knowledge::Reader {
+                    provider_id: &self.identity.provider_id,
+                    config: &self.identity.knowledge,
+                    evidence_config: &self.identity.evidence_store,
+                    mutants: &self.mutants,
+                };
+                crate::knowledge::inspect(&reader, &params["payload"], &knowledge_reader)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "verification.job.inspect" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let id = params["payload"]["job"].as_str().unwrap_or_default();
+                crate::verification::inspect_job(&reader, id)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "verification.receipt.inspect" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let id = params["payload"]["receipt"].as_str().unwrap_or_default();
+                match crate::verification::inspect_receipt(
+                    &reader,
+                    id,
+                    &self.identity.evidence_store,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                {
+                    Ok(Some(result)) => Ok(result),
+                    Ok(None) => Err(reject("not_found", json!({}))),
+                    Err((code, details)) => Err(reject(code, details)),
+                }
+            }
+            "verification.receipt.assess" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let context = self.verification_context(0);
+                crate::verification::assess(&reader, &params["payload"], &context)
+                    .map_err(storage)?
+                    .map_err(|(code, details)| reject(code, details))
+            }
+            "knowledge.claim.history" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let claim = params["payload"]["claim"].as_str().unwrap_or_default();
+                crate::knowledge::history(&reader, claim, &self.mutants)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "knowledge.authority.get" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let scope = params["payload"]["scope"].as_str().unwrap_or_default();
+                crate::knowledge::authority(&reader, scope)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
             "execution.discovery.list" => Ok(crate::features::discovery(
                 &self.identity.executor,
                 &self.mutants,
@@ -2540,6 +2906,31 @@ impl Provider {
                 )
             }
             _ => Err(reject("method_not_found", json!({"operation": operation}))),
+        }
+    }
+
+    /// What the context provider reaches besides its store: evidence and knowledge sources.
+    fn context_publisher(&self) -> Value {
+        let mut publisher = json!({
+            "provider_id": self.identity.provider_id,
+            "knowledge": *self.identity.knowledge,
+            "evidence_store": *self.identity.evidence_store,
+        });
+        if let Some(peer) = self.identity.context_script.get("knowledge_provider") {
+            publisher["knowledge_provider"] = peer.clone();
+        }
+        publisher
+    }
+
+    fn verification_context(&self, order: i64) -> crate::verification::Context<'_> {
+        crate::verification::Context {
+            now: self.identity.clock.now(),
+            principal: &self.identity.principal,
+            provider_id: &self.identity.provider_id,
+            capabilities: &self.identity.capabilities,
+            evidence_config: &self.identity.evidence_store,
+            order,
+            mutants: &self.mutants,
         }
     }
 
@@ -2944,6 +3335,20 @@ impl Provider {
                 )?;
             }
             any
+        } else if kind.starts_with("verification.") {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "verification.read")
+        } else if kind.starts_with("knowledge.") {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "knowledge.read")
         } else if kind == crate::evidence::ARTIFACT {
             covers
                 && grant["rights"]

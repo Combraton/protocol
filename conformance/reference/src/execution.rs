@@ -37,6 +37,8 @@ pub struct Context<'a> {
     pub revalidation: bool,
     /// The submitting session negotiated `execution.evidence_outputs` (EXECUTION 13.2).
     pub evidence_outputs: bool,
+    /// The submitting session negotiated `execution.claim_revalidation` (EXECUTION 13.3).
+    pub claim_revalidation: bool,
 }
 
 /// What recovery needs to revalidate a resumable delivery.
@@ -542,6 +544,8 @@ pub fn submit(
     if ctx.revalidation
         && let Some(bindings) = payload["context_bindings"].as_array()
     {
+        let claims = ctx.claim_revalidation;
+        record["context"] = json!({"claim_revalidation": claims});
         let mut states = Vec::new();
         for binding in bindings {
             let mut entry = binding.clone();
@@ -580,7 +584,7 @@ pub fn submit(
             context_checks.push(check);
             states.push(entry);
         }
-        record["context"] = json!({"bindings": states, "deliveries": [], "checks": context_checks, "revalidation": true});
+        record["context"] = json!({"bindings": states, "deliveries": [], "checks": context_checks, "revalidation": true, "claim_revalidation": claims});
     } else if let Some(bindings) = payload["context_bindings"].as_array() {
         let held = ctx.executor["context_packets"]
             .as_array()
@@ -814,6 +818,8 @@ fn blocks(binding: &Value, boundary: &str, mutants: &Mutants) -> bool {
         Some("required_before_transition") => {
             boundary == "transition" || mutants.on("transition-binding-blocks-all")
         }
+        // Mutant: revalidates advisory bindings at dispatch and blocks on their claim results.
+        Some("advisory") => boundary == "dispatch" && mutants.on("advisory-blocked-by-claims"),
         _ => false,
     }
 }
@@ -2880,6 +2886,7 @@ fn present_context(result: &mut Value, revalidation: bool) {
         return;
     };
     context.remove("revalidation");
+    context.remove("claim_revalidation");
     for binding in context
         .get_mut("bindings")
         .and_then(Value::as_array_mut)

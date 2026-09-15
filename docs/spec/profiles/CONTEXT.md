@@ -151,6 +151,7 @@ A packet published by the provider appears as a provider-origin event (CORE §16
 
 - **Reference participants only.** A reference context provider drives a **scripted preparation** selected by launch configuration: packet content per request, delays against the clock file, coverage frontiers, unmet items, mid-job corrections, budget exhaustion and outages. The script is test environment, normative only for its conformance tests (as EXECUTION §15, owner decision Q4). No fixture depends on CBR's memory engine.
 - **Script vocabulary** (launch configuration `context`, test control `context.script`): `scripts` maps the ID of the request that starts a job to a list of one-key steps, and `default_script` applies otherwise. Steps: `wait_until` (an instant), `investigate` (units of investigation budget spent), `section` (`section_id`, `item_id?`, `label`, `content`, `citations?`, `authority_revision?`, `source?`), `coverage` (`producer`, `frontier`, `gaps`), `unmet` (`item_id`, `reason`), `omit` (`item_id?`, `reason`), `correction` (`item_id`, `authority_revision`), `conditions` (typed applicability conditions), `publish`, `end` (a job end reason) and `stall`. Steps advance no later than the provider's next request. A `publish` whose advisory items are unsatisfied under `wait_until_deadline` waits for the deadline.
+- **Scripted unmet reasons.** A scripted `unmet` step never makes a satisfied item unmet: whether an item is satisfied is decided by its check. For an item that is not satisfied, the scripted reason takes precedence over every reason the item's check would give, including the claim reasons of §14 (`knowledge_unavailable` and `claim_digest_mismatch` too).
 - **Mandatory size.** For `budget_insufficient`, the reference provider counts the content of the scripted sections for required items.
 - **Scripted content and checks.** A scripted `section` is content the provider prepared; whether it satisfies its item is still decided by the item's `check`: `source_included` needs a section whose `source` names the check's repository and path, `evidence_included` a citation of the exact artifact and digest, and `authority_content_included` a section at the item's current authority revision.
 - **Conformance conventions** (as EXECUTION §15.1: normative only for the conformance provider, never for callers): a job started by request `r` has ID `r`, and packet revision `n` of request `r` is sealed as artifact `packet.<r>.<n>`. The provenance `compiler` names the implementation that compiled the packet and is not a convention.
@@ -164,3 +165,54 @@ A packet establishes which exact bytes, with which labels, coverage and gaps, th
 - that a labeled observation still holds after its basis changed;
 - that coverage frontiers from different producers describe one moment;
 - project acceptance of any claim; Knowledge reliance is M5.
+
+## 14. Claims in packets (proposed M5)
+
+> Proposed M5 extension with owner decision M5-Q7 incorporated ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)). Nothing in this section applies to sessions that did not negotiate `context.claims`; §1–§13 are unchanged for them.
+
+A packet that carries claims preserves Knowledge identity, reliance and applicability (SPEC §2, KNOWLEDGE §12). Its sections are immutable snapshots. Later changes are reported separately at the read, and they make required items unsatisfied through the same invalidation path as authority corrections (§8).
+
+**Negotiation and format.**
+- **Feature** `context.claims`. A provider with it reads claims at a knowledge provider, its own or a peer, as an ordinary reader under a grant held there (§7 applies to that audience too).
+- **Packet format** `combraton-context-packet/2`. It adds the section member `claim`; format `/1` packets never carry it. A request submitted without `context.claims` gets `/1` packets and M4 behavior.
+- **Check kind** `{ kind: "claim_included", claim: reference }` for items. In a request whose session did not negotiate `context.claims`, it is `unsupported_required_feature` with `features` including `context.claims` (the order of `features` is not significant).
+- **Recomputing digests.** The provider recomputes each claim record's digest from what it read (KNOWLEDGE §3). A record whose digest differs from the reference is never carried or relied on: its section is omitted with reason `unavailable`, and its item is `unmet` with reason `claim_digest_mismatch`.
+
+**Section claim snapshot**, as read when the packet was prepared:
+
+`claim: { reference, plane, reliance: { state, decision?, permitted_use?, author_is_decider? }, applicability: { result, evaluation? }, conflicts: [ { conflict, kind, status } ], support: { class } }`
+
+- `reference` is the exact revision reference, never "latest".
+- `applicability` is the latest evaluation of that exact revision for a target equal to the packet's basis converted to a Knowledge target: each repository's `id` and `tree`, and its `dirty` snapshot only when the basis gives one; `environment` and `build` when present; and `completeness`. `workspace` and `configuration` have no Knowledge counterpart and are dropped. With no such evaluation, `result` is `unknown` and `evaluation` is absent.
+- `conflicts` lists only open conflicts.
+- The snapshot reflects the claim as the provider read it during preparation, no later than the packet's publication; the instant is provider-defined.
+
+**What a claim section can satisfy.** Item reliance uses rank `binding` > `evidence` > `hypothesis` > `reference`. A `claim_included` item is satisfied when a section for that item that is not `historical` carries exactly its reference and:
+
+| Item reliance | Needs | Otherwise `unmet` with reason |
+|---|---|---|
+| `binding` or `evidence` | reliance `accepted_for_use` with `permitted_use` of at least the item's rank, and applicability `applicable` | `not_accepted`; `invalid_for_target`; `applicability_not_established` for `needs_check` or `unknown` |
+| `hypothesis` or `reference` | reliance other than `rejected` | `not_accepted` |
+| any | the claim could be read and its digest verified | `knowledge_unavailable` or `claim_digest_mismatch` |
+| any | a section that is not `historical` | `invalid_for_target`, when the item's only section carrying its reference is historical and the reliance rows give no other reason |
+
+**Labels cannot promote a claim, and applicability keeps its distinctions.**
+- A section may be labeled `binding` only when its claim is `accepted_for_use` with `permitted_use: binding`. A proposed or rejected claim is never `binding`; the reference provider publishes such a section as `hypothesis`. An extracted instruction stays a `hypothesis` or `inferred` section until decided (KNW-9).
+- Only `invalid_for_target` makes a claim section `historical: true` with label `stale`. A claim whose applicability is `needs_check` or `unknown` is not stale and not historical: its section keeps its label with `historical: false`, and its snapshot shows the result.
+- Open conflicts involving a carried claim are listed in the snapshot. When a conflict is material to an item, the competing revisions are carried, or omitted with a stated reason, never dropped silently.
+
+**At the read.** `context.packet.inspect`, in a session that negotiated `context.claims`, re-reads carried claims and reports:
+- `claim_changes: [ { section_id, claim, change } ]`, at most one entry per change kind per section, in section order and then in this order of `change`:
+  - `reliance_changed`;
+  - `applicability_changed`, when the result for the basis differs (a re-evaluation with the same result is not a change);
+  - `conflict_opened`;
+  - `lineage_revised`, whenever the claim has a revision newer than the carried one, including one revised before the packet was prepared; this is information, not invalidity;
+  - `unavailable`.
+- **Invalidated items.** A required item satisfied at publication by a claim section that no longer meets the table above appears in `invalidated_items` as `{ item_id, claim, reason }`. `reason` is `permitted_use_lost` or `invalid_for_target`. For every reliance, a claim whose latest evaluation for the basis is now `invalid_for_target` would make its section historical, so the item is invalidated with `invalid_for_target`; `permitted_use_lost` comes first when both apply. These sit beside the authority corrections of §8.
+- **Unverified items.** A required item satisfied at publication whose claim now cannot be read or verified, or, for a `binding` or `evidence` item, whose latest evaluation for the basis is now `needs_check` or `unknown`, appears in `unverified_items: [ { item_id, claim, reason } ]`. `reason` is `knowledge_unavailable`, `claim_digest_mismatch` or `applicability_not_established`. Unavailable knowledge is unknown, never valid.
+- Packet bytes and published facts never change. A newer claim revision or a newer packet revision is never substituted. Supersession stays distinct from invalidity, as in §8.
+
+- **Sessions without `context.claims`** see packet facts without `claim` members, `claim_changes` or `unverified_items`, and `invalidated_items` lists only authority corrections.
+- **Knowledge source.** The reference provider reads claims in its own knowledge store, or at the provider named by launch configuration `context.knowledge_provider`.
+
+Execution enforces these at the binding's own boundary under `execution.claim_revalidation` ([EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5)).

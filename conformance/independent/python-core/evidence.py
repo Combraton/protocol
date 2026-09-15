@@ -872,7 +872,7 @@ class Evidence:
 
     # ------------------------------------------- packets (CONTEXT 5, M4-Q2)
     def seal_internal(self, aid: str, data: bytes, media_type: str, source: dict, scope: str, coverage: dict,
-                      work: dict | None = None) -> str:
+                      work: dict | None = None, changes: list | None = None) -> str:
         """Seal bytes this provider produced itself as an ordinary artifact,
         with provider-origin staged, appended and sealed events. Call inside
         a transaction. Returns the digest."""
@@ -887,9 +887,10 @@ class Evidence:
             descriptor["work"] = work
         subject = artifact_subject(aid)
         self.store.set_blob(aid, data)
-        self._emit(None, "evidence.artifact.staged", subject, 1, {"descriptor": descriptor})
-        self._emit(None, "evidence.artifact.appended", subject, 2, {"received": len(data)})
-        self._emit(None, "evidence.artifact.sealed", subject, 3, {"digest": digest, "size": len(data)})
+        # ``changes``: the events of a command that seals (VERIFICATION 5 recording); otherwise provider-origin.
+        self._emit(changes, "evidence.artifact.staged", subject, 1, {"descriptor": descriptor})
+        self._emit(changes, "evidence.artifact.appended", subject, 2, {"received": len(data)})
+        self._emit(changes, "evidence.artifact.sealed", subject, 3, {"digest": digest, "size": len(data)})
         self.store.put_json(ARTIFACT_KIND, aid, 3, {"descriptor": descriptor, "state": "sealed",
                                                     "staged_at": self.now(), "holds": []})
         return digest

@@ -1382,7 +1382,9 @@
           "context.script",
           "evidence.store",
           "executor.script",
-          "store.faults"
+          "knowledge.store",
+          "store.faults",
+          "verifier.script"
         ]
       },
       "description": "Portable test controls the participant must declare under claims.test_controls; otherwise the fixture is unsupported (a coverage limit)."

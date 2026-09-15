@@ -143,7 +143,7 @@ pub fn retry_class(code: &str) -> &'static str {
         | "upload_incomplete"
         | "hold_active" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
-        "capability_unavailable" => "after_reconcile",
+        "capability_unavailable" | "contract_unavailable" => "after_reconcile",
         _ => "no",
     }
 }

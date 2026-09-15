@@ -6,113 +6,110 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-15. The owner reviewed M4 and asked for a bounded close-out pass (not yet accepted or authorized). The pass is done, three further independent passes (eighth to tenth) are resolved, and M4 is presented again; it is not merged.
-- **Status:** M0–M3 merged. M4 in progress on `release-0.1/m4` ([M4 task](M4.md)). Protocol 0.1 is not released.
+- **Checkpoint:** 2026-09-15.
+  - The owner accepted M4 at `86e128f` as a completed milestone with its documented coverage limits. PR #5 merged as `ee82afb`.
+  - M5 began on `release-0.1/m5`. Step 1 is done: the owner decided M5-Q1 to M5-Q9, and the decisions are incorporated. Implementation is authorized within M5 scope, but not merging or releasing.
+  - Steps 2–5 are done ([M5 status](M5.md#status)): the Knowledge and Verification reference providers, claims in packets and claim revalidation, the owner's dependency-identity follow-up, and three spec-only independent passes with every divergence resolved ([M5-DIVERGENCES](M5-DIVERGENCES.md)).
+- **Status:** M0–M4 merged. M5 is presented for owner acceptance on draft [PR #6](https://github.com/Combraton/protocol/pull/6) and is not merged. Protocol 0.1 is not accepted or released.
 
 ## Goal, decisions and constraints
 
 - **Plan:** [PLAN](PLAN.md), [MATRIX](MATRIX.md).
 - **Owner decisions:**
-  - Scope accepted; macOS and Linux only (U4); MIT (U6); Rust tooling; U12 credential file plus `core.authenticate`.
+  - Scope accepted; macOS and Linux only (U4); MIT (U6); Rust tooling; U12 credential file plus `core.authenticate`; U2 verification depth is receipts plus `evaluate_contract` job references, with no signing or evaluator orchestration.
   - Decision records 001–007 accepted; 001 amended for distinct outcomes; 007 accepted with refinements.
-  - M2 accepted on 2026-09-14.
-  - M3 conditionally accepted on 2026-09-14 with corrections C1–C3 ([M3 status](M3.md#status)) and merged.
-  - M4: contracts and matrix before implementation; EXE-21 explicit; cover exact artifact and packet identity, authorized access, provenance and availability, missing required context, corrections during preparation, stale basis, shared-subscriber cancellation, CBR outage and the preparation/resource dependency cycle; reference participants only.
-  - M4-Q1 to M4-Q7 decided on 2026-09-15 ([M4 decisions](M4.md#owner-decisions-2026-09-15)). Negative fixtures are required for authority, cross-provider, stale-boundary, upload-retry and manifest cases; the independent implementation and cross-profile scenarios stay explicit; M4 is presented for acceptance before merge.
+  - M2 accepted on 2026-09-14. M3 conditionally accepted on 2026-09-14 with corrections C1–C3 ([M3 status](M3.md#status)).
+  - M4-Q1 to M4-Q7 and the close-out items ([M4](M4.md)); M4 accepted on 2026-09-15 with its coverage limits.
+  - M5 (2026-09-15):
+    - Knowledge and Verification per the release plan, including packets carrying claims and a provider reconnecting with a changed capability;
+    - contracts, matrix and proposed decisions, with concrete examples, before implementing new public semantics;
+    - reuse Core, Execution, Evidence and Context, and identify compatibility changes explicitly;
+    - reference participants, independent implementations and conformance tests only;
+    - carry M4 gaps forward with impact and disposition, without making each one a blocker;
+    - bring new architectural or authority decisions with a recommendation and alternatives.
 - **Constraints:**
   - Protocol owns contracts and fixtures only. Nothing is released. Do not implement the real CBR memory engine or PIO adapters.
   - Commit and push as work progresses. Do not merge without authorization.
   - Substantive contract changes or unresolved decisions go to the owner; routine work continues.
   - Never create a records-only commit merely to note that the previous commit passed CI; link PR checks.
+  - Never describe same-implementation composition as mixed-implementation proof.
 
 ## Git state
 
-- **`main`** at `481cf7f`, the merge of PR #4. Its final head `19e0e16` passed all [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
-- **Branch** `release-0.1/m4` from `481cf7f`, in draft [PR #5](https://github.com/Combraton/protocol/pull/5).
-- **Worktrees:** `.worktrees/independent-m4` (branch `release-0.1/m4-independent`), merged into `release-0.1/m4` and kept until M4 merges. Both M3 helper worktrees were removed after their sources were verified as merged.
-- **Local-only branches:** `release-0.1/m2`, `release-0.1/m3` and `release-0.1/m3-independent` are merged; kept, not deleted.
+- **`main`** at `ee82afb`, the merge of PR #5 (parents `481cf7f` and `86e128f`; its tree equals `86e128f`).
+- **Branch** `release-0.1/m5` from `ee82afb`, in draft [PR #6](https://github.com/Combraton/protocol/pull/6), pushed; the candidate head is the commit carrying this handoff.
+- **Worktree** `.worktrees/independent-m5` (branch `release-0.1/m5-independent`, local only, at `53ec6bf`). It is fully merged into `release-0.1/m5` (merges `87f84ec`, `808801b` and `4458bfa`) and has no uncommitted changes. Its results are copied to `conformance/results/independent-m5-pass-evidence/`. It is kept until M5 merges and the merge is verified.
+- **M4 worktree:**
+  - `.worktrees/independent-m4` was removed on 2026-09-15 after checks: it had no uncommitted changes, `release-0.1/m4-independent` (`6ec6712`) had no commits outside `main`, and its results directory matched the preserved copy. Only regenerable `target/` and `__pycache__/` were discarded.
+  - The branch was deleted.
+- **Local-only branches:** `release-0.1/m2`, `release-0.1/m3`, `release-0.1/m3-independent` and `release-0.1/m4` are merged; kept, not deleted.
 
 ## What exists
 
 - **Merged on `main`:**
   - Core §1–§19, STREAM (stdio and Unix socket), ENCODING;
-  - the Execution profile with its optional features, telemetry and backpressure;
-  - 212 fixtures, the reference provider and its mutants, the independent Python provider (Core, effects and Execution);
+  - Execution with its optional features, context revalidation and evidence outputs;
+  - Evidence and Context;
+  - 256 fixtures, the reference provider and its mutants, the multi-participant runner;
+  - the independent Python provider (Core, effects, Execution, Evidence, Context over stdio);
   - CI with distinct outcomes and uploaded result artifacts.
-- **On `release-0.1/m4`:**
-  - step 1: `docs/spec/profiles/EVIDENCE.md` and `docs/spec/profiles/CONTEXT.md` drafts with owner decisions M4-Q1 to M4-Q7; refined MATRIX rows EVD-1 to EVD-8, CTX-1 to CTX-20, EXE-21, CMP-8 and the M4 scenarios;
-  - step 2: `schemas/evidence/1`, the reference Evidence provider (`conformance/reference/src/evidence.rs`) with its scripted store control `evidence_store`, 13 fixtures in `conformance/fixtures/evidence` and 23 new mutants ([M4 status](M4.md#status));
-  - step 4: runner steps `start_participant`, `stop_participant`, `kill_participant` and `connect` with `participant`; the reference protocol client `conformance/reference/src/peer.rs`; packets sealed at a separate evidence provider; 2 fixtures in `conformance/fixtures/composition` and 3 new mutants;
-  - step 3: `schemas/context/1`, the reference Context provider (`conformance/reference/src/context.rs`) with scripted preparation (`context`), packets sealed as Evidence artifacts in its own store, runner pattern `$sha256_base64`, 9 fixtures in `conformance/fixtures/context` and 19 new mutants;
-  - steps 5–8 and the owner close-out pass: `execution.context_revalidation` and `execution.evidence_outputs`, the cross-profile scenarios, capacity release while blocked before dispatch, adversarial fetched bytes, `require_current`, typed work-binding constraints, and the independent passes six to ten ([M4 status](M4.md#status), [M4-DIVERGENCES](M4-DIVERGENCES.md)).
+- **On `release-0.1/m5`:**
+  - **Specs:** KNOWLEDGE and VERIFICATION; CONTEXT §14 (`context.claims`); EXECUTION §13.3 (`execution.claim_revalidation`); CORE §12 codes `claims_not_comparable` and `contract_unavailable`.
+  - **Schemas:** `schemas/knowledge/1` (11 operations) and `schemas/verification/1` (5 operations); the Context and launch-configuration additions.
+  - **Reference:** the knowledge and verification providers, claims in packets, claim revalidation, and their mutants.
+  - **Fixtures:** 17 M5 fixtures (10 `knowledge.*`, 5 `verification.*`, the claims fixture, and the claims composition), for 273 in total.
+  - **Runner:** patterns `$canonical_sha256` and `$base64_json`; the mixed-directive lint; `start` configuration variables, validated after substitution.
+  - **Independent Python provider:** `knowledge/1`, `verification/1` and single-provider `context.claims`.
+  - **Records:** [M5](M5.md), [M5-DIVERGENCES](M5-DIVERGENCES.md), and the MATRIX rows KNW-1 to KNW-10, VER-1 to VER-5, SCN-7, SCN-16 and CMP-9.
 
 ## Evidence
 
-- **M3 merge:** CI at `19e0e16` (Conformance run 34878446254). Ubuntu artifact: reference stdio 200 pass and 12 skipped; Unix socket 212 pass; independent 196 pass, 4 unsupported, 12 skipped; mutants 252/252 and 25/25; race regression 20/20 each way. Details in [M3 status](M3.md#status) and [M3-DIVERGENCES](M3-DIVERGENCES.md).
-- **M3 helper run evidence** (not committed; local, gitignored): `conformance/results/independent-m3-pass-evidence/` and `conformance/results/independent-c1-evidence/`: first runs, fix runs, stability and sensitivity runs.
-- **M4 step 1:** documentation only; `scripts/check_docs.py` passes.
-- **M4 step 2:** CI green on Ubuntu and macOS at `2dc3d71`. Locally, the full stdio `check-mutants` also passed.
-- **M4 step 3 (local, macOS):**
-  - `check-fixtures`: 234 fixtures ok;
-  - reference: stdio 222 pass and 12 skipped; Unix socket 234 pass;
-  - independent: 196 pass, 12 skipped, 26 unsupported (it claims neither `evidence/1` nor `context/1`);
-  - mutants: each one the Evidence and Context fixtures declare fails every fixture declaring it;
-  - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass.
-- **M4 step 4 (local, macOS):**
-  - `check-fixtures`: 236 fixtures ok;
-  - reference: stdio 222 pass and 14 skipped (compositions need the Unix-socket binding); Unix socket 236 pass;
-  - independent: 196 pass, 14 skipped, 26 unsupported;
-  - Unix-socket `check-mutants` passes, and so does the per-group mutant check for Evidence and Context;
-  - each composition fixture ran as intended in 15 of 15 repeated runs.
-- **M4 steps 5 and 6 (local, macOS):**
-  - `check-fixtures`: 246 fixtures ok;
-  - reference: stdio 226 pass and 20 skipped (compositions need the Unix-socket binding); Unix socket 246 pass;
-  - independent: 196 pass, 20 skipped, 30 unsupported;
-  - `check-mutants` passes on both bindings;
-  - each new composition scenario ran as intended 10 of 10 times;
-  - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass.
-- **M4 step 7 (local, macOS, head before close-out):**
-  - reference: stdio 229 pass and 20 skipped; Unix socket 249 pass;
-  - `check-mutants` passes on both bindings;
-  - independent after the seventh pass: 225 pass, 0 fail, 4 unsupported, 20 skipped.
-- **Close-out pass (local, macOS, at `63f1bb0`, the reference code of the final head):**
-  - `check-fixtures`: 255 fixtures ok;
-  - reference: stdio 232 pass and 23 skipped; Unix socket 255 pass;
-  - `check-mutants` passes on both bindings;
-  - each new fixture, and the altered-bytes mutant run, ran as intended 10 of 10 times.
-- **Candidate head after the ninth and tenth passes (local, macOS; reference code as of `0e80475`):**
-  - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass;
-  - `check-fixtures`: 256 fixtures ok;
-  - reference: stdio 233 pass and 23 skipped; Unix socket 256 pass;
-  - `check-mutants` passes on both bindings;
-  - independent after the tenth pass: 229 pass, 0 fail, 4 unsupported, 23 skipped;
-  - `execution.released-work-ending-emits-cause-first` ran as intended 10 of 10 times on the reference, with its mutant, and on the independent provider.
-  - CI at `0e80475` failed only in the independent step, on that fixture (step 14, evidence class). It ran the ninth-pass independent code, before the tenth pass fixed that behavior.
-- **CI:** Ubuntu and macOS were green at `39e9dc8`, where the uploaded artifacts show stdio 226 pass and 20 skipped, Unix socket 246 pass, independent 196 pass, 20 skipped and 30 unsupported, and all mutants killed (307 of 307 stdio pairs, 42 of 42 Unix pairs). The final head's results are on [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
+- **M4 acceptance head `86e128f`:** CI green on Ubuntu and macOS ([run 34959862568](https://github.com/Combraton/protocol/actions/runs/34959862568) and the push run). The uploaded artifacts are identical on both:
+  - reference stdio 233 pass, 23 skipped; Unix socket 256 pass;
+  - independent 229 pass, 4 unsupported, 23 skipped, 0 fail;
+  - mutants 321 of 321 and 51 of 51 as intended;
+  - race regression 20/20 each way.
+
+  Local results and the close-out history are in [M4 status](M4.md#status) and [M4-DIVERGENCES](M4-DIVERGENCES.md).
+- **M4 merge:** `gh pr merge 5 --merge --match-head-commit 86e128f…` produced `ee82afb`; `git diff 86e128f ee82afb` is empty. CI for `main` at `ee82afb` runs in the repository's [Actions](https://github.com/Combraton/protocol/actions?query=branch%3Amain).
+- **Independent-implementation evidence** (gitignored, local): `conformance/results/independent-m4-pass-evidence/`, including `worktree-results/`, a copy of the helper worktree's run results for passes six to ten. M3 helper evidence stays under `conformance/results/independent-m3-pass-evidence/` and `conformance/results/independent-c1-evidence/`.
+- **M5 step 1:** documentation only; `python3 scripts/check_docs.py` passes.
+- **M5 candidate** (local, macOS; reference code at `6dccc56`, independent code at `4458bfa`, no code change since):
+  - `cargo fmt --check`, `clippy -D warnings` and `cargo test` pass;
+  - `check-fixtures`: 273 fixtures and 144 matrix requirement IDs ok; `check_docs.py` passes;
+  - reference over stdio: 249 pass, 24 skipped; over the Unix socket: 273 pass;
+  - independent: 245 pass, 24 skipped, 4 unsupported, 0 fail;
+  - `check-mutants` passes on both bindings: every declared mutant is killed by every fixture that declares it.
+
+  CI on Ubuntu and macOS for the candidate head: [PR #6 checks](https://github.com/Combraton/protocol/pull/6/checks).
+- **Helper evidence** (gitignored, local): `conformance/results/independent-m5-pass-evidence/pass-11`, `pass-12` and `pass-13`.
+- **Earlier milestones:** [M3 status](M3.md#status) and [M3-DIVERGENCES](M3-DIVERGENCES.md); M2 evidence in [M2](M2.md).
 
 ## What remains uncertain
 
-- **M4 limits for acceptance:** [M4 points for the owner](M4.md#points-for-the-owner-at-acceptance) and [M4-DIVERGENCES §D](M4-DIVERGENCES.md#d-still-unchecked-by-fixtures-coverage-limits). The main ones:
-  - independent evidence covers a single stdio provider, so it does not prove mixed-implementation composition;
-  - compositions run only on the reference over the Unix socket;
-  - there is no fairness among released executions.
+- **M5 decisions:** decided on 2026-09-15 ([M5](M5.md#owner-decisions-2026-09-15)); any genuinely new architectural or authority question goes back to the owner with a recommendation.
+- **M4 limits carried forward:** [M5 §M4 coverage carried forward](M5.md#m4-coverage-carried-forward), with impact and disposition for each.
+- **M5 limits:**
+  - checks still unguarded by fixtures are listed in [M5-DIVERGENCES §E](M5-DIVERGENCES.md#e-still-unchecked-by-fixtures-coverage-limits);
+  - the claims composition runs one implementation for every participant, so it is not mixed-implementation proof;
+  - the independent provider has no Unix-socket binding, so SCN-16 and the Execution side of CMP-9 are checked only on the reference.
+- **Profile status headers:** EXECUTION, EVIDENCE, CONTEXT, KNOWLEDGE and VERIFICATION still carry their "proposed draft" headers from before acceptance, as EXECUTION did after M3. Refreshing them belongs with M6's complete operation documentation.
 - **Carried from M3:**
   - the independent provider has no Unix socket or backpressure support;
   - barrier- and signal-synchronized fixtures are coverage limits for other participants;
   - all Execution evidence is scripted, not real-adapter evidence.
 - **Deferred decision:** machine-readable feature-dependency advertising is an M6 decision (CMP-5).
-- **M2 limits carried forward:** root is the only other OS user tested; capability evidence-source and cursor-past-head evidence is reference-only.
 
 ## Active resources
 
-- Worktree `.worktrees/independent-m4` (branch `release-0.1/m4-independent`, merged into `release-0.1/m4`). It is kept until M4 merges.
+- Helper worktree `.worktrees/independent-m5`, kept until M5 merges; see Git state.
+- No background processes.
 
 ## State and prompt disposition
 
-[STATE](../STATE.md) is updated. The workspace `START-PROTOCOL.md` prompt is retired and points to STATE and this handoff.
+[STATE](../STATE.md) is updated. No continuation prompt is active: the workspace `START-PROTOCOL.md` stays retired and points to STATE and this handoff. The M5 helper briefs lived in the session scratchpad only and are finished.
 
 ## Next action
 
-1. Owner acceptance of M4 after the close-out pass ([owner review resolutions](M4.md#owner-review-of-2026-09-15-and-the-close-out-pass)).
-2. After acceptance, green checks on the final head and the owner's authorization, merge PR #5. Then remove the helper worktree `.worktrees/independent-m4` once its branch is verified as merged; its run evidence is preserved locally under `conformance/results/independent-m4-pass-evidence/`.
-3. M5 (Knowledge and Verification) starts only after M4 acceptance, in a separate PR.
+1. Wait for the owner's decision on M5. Do not merge M5 or start M6 before acceptance.
+2. After acceptance and an authorized merge: verify that the merge tree equals the accepted head, update STATE, this handoff and issue #1, then remove the helper worktree and branch once integration and evidence are verified.

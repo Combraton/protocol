@@ -1026,6 +1026,12 @@ impl State<'_> {
     }
 
     fn start(&mut self, step: &Value) -> Result<(), StepError> {
+        // Launch configuration may name captured values, as start_participant's does.
+        let mut rendered = step.clone();
+        if step.get("config").is_some() {
+            rendered["config"] = self.render(&step["config"])?;
+        }
+        let step = &rendered;
         let config = self.launch_config(step)?;
         let config_file = self.ctx.work_dir.join("config.json");
         std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())

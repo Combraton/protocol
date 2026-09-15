@@ -1,10 +1,10 @@
-# Independent Python Core, Execution, Evidence and Context provider
+# Independent Python Core, Execution, Evidence, Context, Knowledge and Verification provider
 
-> **Status: conformance evidence for Protocol 0.1 (milestones M2 to M4), not a product.** It exists to test the fixtures and the reference provider for assumptions they share.
+> **Status: conformance evidence for Protocol 0.1 (milestones M2 to M5), not a product.** It exists to test the fixtures and the reference provider for assumptions they share.
 
-`combraton-independent-python-core` `0.1.0-dev.0` is a second implementation of the Core provider and of an executor. It speaks the stdio form of the stream binding and implements `core/1` together with the conformance-only `core-test/1` profile, including the Core features `core.grants` (CORE §15), `core.events` (§16), `core.capabilities` (§17) and `core.effects` (§19), and `core.authenticate` as a stdio session answers it (§18). Since the M3 pass it also implements `execution/1` (EXECUTION §1–§14) over the scripted executor of decision 007, with the clock file and store faults. Since the M4 pass it implements `evidence/1` with `evidence.manifests` and `evidence.retention_control` over a scripted store, `context/1` with its six features over scripted preparation (packets sealed as Evidence artifacts in its own store), and `execution.context_revalidation` for a single provider. Its value is that it was written **from the published documents only**, without reading the reference provider. Where the documents leave a question open, it records the question instead of copying the reference's answer.
+`combraton-independent-python-core` `0.1.0-dev.0` is a second implementation of the Core provider and of an executor. It speaks the stdio form of the stream binding and implements `core/1` together with the conformance-only `core-test/1` profile, including the Core features `core.grants` (CORE §15), `core.events` (§16), `core.capabilities` (§17) and `core.effects` (§19), and `core.authenticate` as a stdio session answers it (§18). Since the M3 pass it also implements `execution/1` (EXECUTION §1–§14) over the scripted executor of decision 007, with the clock file and store faults. Since the M4 pass it implements `evidence/1` with `evidence.manifests` and `evidence.retention_control` over a scripted store, `context/1` with its six features over scripted preparation (packets sealed as Evidence artifacts in its own store), and `execution.context_revalidation` for a single provider. Since the M5 pass it implements `knowledge/1` (all 11 operations, over its own store, with the `knowledge` launch control), `verification/1` with `verification.jobs` and `verification.record` over a scripted evaluator (contracts read from, and receipts sealed in, its own evidence store), and `context.claims` for claims in its own knowledge store. Its value is that it was written **from the published documents only**, without reading the reference provider. Where the documents leave a question open, it records the question instead of copying the reference's answer.
 
-It was written in ten spec-only passes:
+It was written in thirteen spec-only passes:
 
 1. the Core command path (M1 fixtures, base `f42d21a`);
 2. the three M2 features (base `3b32037`);
@@ -15,26 +15,29 @@ It was written in ten spec-only passes:
 7. realignment with the resolution of that pass's findings (base `8500948`);
 8. the owner's M4 close-out (base `63f1bb0`): capacity released while blocked before dispatch, pinning, typed grant constraints and `evidence.work_binding`, and the new store controls;
 9. realignment with the resolution of that pass's findings (base `9591551`): `require_current` needs `fetch.context`, `basis_changes` merges, `superseded_by` names the current revision, and a delivery timeout ends released work with `deadline_passed`;
-10. realignment at `0e80475`: released work ending before dispatch emits its cause first and the scheduling change last, with evidence class `scheduling` (EXECUTION §15.1).
+10. realignment at `0e80475`: released work ending before dispatch emits its cause first and the scheduling change last, with evidence class `scheduling` (EXECUTION §15.1);
+11. `knowledge/1`, `verification/1` and `context.claims` (M5, base `950f3e0`);
+12. realignment with the resolution of that pass's findings (base `6cec5f6`): dependencies resolve only as exact local references with a finding `reason`, named-revision rights, stricter claim content checks, Core preconditions first, unlisted evaluator versions `unknown`, job and receipt ID collisions refused, issued receipt members and event order, the contract format, the assessment's dependent checks, and non-historical claim sections;
+13. realignment at `808801b` with the resolution of that pass's points: step 7 follows CORE §10 and §17 (the authority epoch before the preconditions for decisions and resolutions, the evaluator capability before them for `evaluate_contract`), and a job that loses its evaluator before running goes straight to `completed`.
 
-The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to tenth passes read the documents before the fixtures.
+The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md), and in the twelfth and thirteenth [M5-DIVERGENCES](../../../docs/work/release-0.1/M5-DIVERGENCES.md). The third to thirteenth passes read the documents before the fixtures.
 
 ## What it was written from
 
 Allowed and read:
 
-- `docs/spec/profiles/CORE.md`, `docs/spec/profiles/EXECUTION.md` (fourth pass), `docs/spec/profiles/EVIDENCE.md` and `docs/spec/profiles/CONTEXT.md` (sixth pass), `docs/spec/bindings/STREAM.md`, `docs/spec/bindings/ENCODING.md`
-- `docs/decisions/007-execution-test-controls.md`, `docs/work/release-0.1/M3.md` and `docs/work/release-0.1/MATRIX.md` (fourth pass); `docs/work/release-0.1/M4.md` and the M4 rows of the matrix (sixth pass)
+- `docs/spec/profiles/CORE.md`, `docs/spec/profiles/EXECUTION.md` (fourth pass), `docs/spec/profiles/EVIDENCE.md` and `docs/spec/profiles/CONTEXT.md` (sixth pass), `docs/spec/profiles/KNOWLEDGE.md` and `docs/spec/profiles/VERIFICATION.md` (eleventh pass), `docs/spec/bindings/STREAM.md`, `docs/spec/bindings/ENCODING.md`
+- `docs/decisions/007-execution-test-controls.md`, `docs/work/release-0.1/M3.md` and `docs/work/release-0.1/MATRIX.md` (fourth pass); `docs/work/release-0.1/M4.md` and the M4 rows of the matrix (sixth pass); `docs/work/release-0.1/M5.md` and the M5 rows (eleventh pass, and its step 5 record in the twelfth)
 - `schemas/**`
 - `conformance/README.md` (including its launch configuration section), `docs/VERIFICATION.md`, `conformance/schemas/fixture.schema.json`, `conformance/schemas/launch-config.schema.json`
-- `docs/work/release-0.1/M2-DIVERGENCES.md` (second to fifth passes), `docs/work/release-0.1/M3-DIVERGENCES.md` (fifth and sixth passes) and `docs/work/release-0.1/M4-DIVERGENCES.md` (seventh pass)
+- `docs/work/release-0.1/M2-DIVERGENCES.md` (second to fifth passes), `docs/work/release-0.1/M3-DIVERGENCES.md` (fifth and sixth passes) `docs/work/release-0.1/M4-DIVERGENCES.md` (seventh pass) and `docs/work/release-0.1/M5-DIVERGENCES.md` (twelfth pass, with `git diff 950f3e0 6cec5f6`, and thirteenth pass, §D and `git diff 6cec5f6 808801b`, each restricted to `docs/spec`, `schemas`, `conformance/README.md`, `conformance/schemas`, M5 and M5-DIVERGENCES)
 - `conformance/fixtures/**`, `conformance/vectors/encoding.json`
 - `conformance/participants/*.json`, used only as format examples for the descriptor
 - the transcripts and manifests the runner wrote for this implementation
 
 Not read: `conformance/reference/**`, `conformance/crosscheck/**` and `conformance/runner/src/**`, nor their history. The runner was used only as a black-box binary.
 
-In the first two passes the fixtures were read **before** the code was written, so some choices on points the prose leaves open were informed by what the fixtures expect. [DIVERGENCES.md](DIVERGENCES.md) marks each such choice. The third to sixth passes wrote their change lists from the documents first and read the fixtures afterwards (sections F, G, G.5 and H). The fourth pass committed its implementation before opening any `execution/`, `socket/` or M3 Core fixture; the fifth read the five re-versioned fixtures only after its first run. The sixth recorded its readings (H.1) and committed its implementation before opening any `evidence/`, `context/`, `composition/` or M4 `execution/` fixture.
+In the first two passes the fixtures were read **before** the code was written, so some choices on points the prose leaves open were informed by what the fixtures expect. [DIVERGENCES.md](DIVERGENCES.md) marks each such choice. The third to sixth passes wrote their change lists from the documents first and read the fixtures afterwards (sections F, G, G.5 and H). The fourth pass committed its implementation before opening any `execution/`, `socket/` or M3 Core fixture; the fifth read the five re-versioned fixtures only after its first run. The sixth recorded its readings (H.1) and committed its implementation before opening any `evidence/`, `context/`, `composition/` or M4 `execution/` fixture. The eleventh committed its implementation (`97b5471`) before opening any M5 fixture, and then read only the five that failed (DIVERGENCES H.M5). The twelfth committed its readings (`f6d6122`) and its realignment (`cde7009`) before opening any fixture; its first complete run had no failure, so it read no fixture (DIVERGENCES H.M5b). The thirteenth committed its readings (`94871cf`) and implementation (`a5e966a`) before opening any fixture, and again read none (H.M5c).
 
 ## Layout
 
@@ -43,7 +46,9 @@ In the first two passes the fixtures were read **before** the code was written, 
 | `provider.py` | Entry point: stream framing (STREAM 1–5), JSON-RPC mapping, the CORE 10 processing order, negotiation (including the Core features `execution/1` requires), authorization (step 6), capability checks (step 7), store faults, subscriptions, the idle re-check thread, and the Core and core-test operations |
 | `executor.py` | Core effects and `execution/1`: effect records, attempts and obligations; admission, deliveries, completions, cancellation, reconciliation, the five timeouts and restart recovery; the optional features, including context revalidation (EXECUTION §13.1); and the scripted executor that interprets the launch configuration's `executor` scripts |
 | `evidence.py` | `evidence/1`: validation, authorization (bound work, hold release authority), staged upload, seal, abandon, inspect, query, fetch, manifests, holds, purge with proof-loss records, and the scripted store (`evidence_store`) |
-| `context.py` | `context/1`: validation, requests, shared jobs, cancellation, scripted preparation (`context`), packet publication as sealed artifacts, packet inspect and expand |
+| `context.py` | `context/1`: validation, requests, shared jobs, cancellation, scripted preparation (`context`), packet publication as sealed artifacts, packet inspect and expand; `context.claims`: claim snapshots, the `claim_included` check, packet format `/2`, and read-time claim changes, invalidations and unverified items |
+| `knowledge.py` | `knowledge/1`: validation, claim revisions and canonical digests, facets, support classes, availability, authority bindings and decisions, structural conflict comparison and resolution, applicability evaluation, history with positions, the adversarial `serve_altered_claims` |
+| `verification.py` | `verification/1`: contract reading, `evaluate_contract` jobs with pinned evaluator predicates and the scripted evaluator (`verifier`), receipts sealed as `receipt.<id>`, recording, inspect and assessment |
 | `execution_envelope.py` | Closed-object validation of the M3 operations, gating submit members on negotiated features |
 | `clock.py` | The provider clock: fixed, clock file (decision 007) or system clock |
 | `errors.py` | The symbolic protocol error |
@@ -102,7 +107,9 @@ The keys follow the conformance README's launch configuration table:
 - `clock.fixed` fixes the provider clock. `clock.file` names a file holding one instant, read at start (a missing or malformed file exits with status 2) and on every request and idle re-check; a missing, malformed or earlier instant keeps the last good one. Otherwise the system clock (UTC, seconds) is used.
 - `executor` is the scripted executor: adapter enforcement, echo proof, predicates, steering, enforced bounds and context boundaries; per-execution `scripts` and a `default_script`; `recovery_policy`, `host_id`, `capacity`, `budget_pools`, `context_packets` (by M3 reference or packet reference), `installations`, `output_spool_bytes` and `observed_basis`. Every script step of the launch-configuration schema is accepted, including `observe_basis`; EXECUTION §15.1 fixes their meaning under conformance; DIVERGENCES G.3, G.5 and H record the points it leaves open. `peers` and `evidence_outputs` need the socket binding and stop the provider.
 - `evidence_store` sets `corrupt` and `unavailable` artifact IDs, `staging_timeout_seconds` and `deletion_delay_seconds` (without a delay, a purge confirms deletion at once).
-- `context` sets `scripts` and `default_script` for preparation, with the steps of CONTEXT §12 except `execute`; `executor` and `evidence_provider` need the socket binding and stop the provider.
+- `context` sets `scripts` and `default_script` for preparation, with the steps of CONTEXT §12 except `execute` (a `section` may carry `claim`); `executor`, `evidence_provider` and `knowledge_provider` need the socket binding and stop the provider.
+- `knowledge` sets the applicability `evaluator` (`id`, `version`, `condition_kinds`; default `reference-conditions` version `1` with all three kinds) and `serve_altered_claims`, whose inspected records (and the records context preparation reads) are altered under an unchanged reference.
+- `verifier` sets `evaluators` (each a capability predicate `verification.evaluator.<id>.v<version>`, status `supported` unless given), `scripts` and `default_script` with the steps `wait_until`, `property`, `observe`, `valid_until` and `complete`; without a script a job completes at once.
 - `faults` makes the next owner transactions of an operation roll back and answer `unavailable`, or commit and answer `internal_error`.
 
 Unknown configuration keys, unknown script members, `credentials` (a socket-binding key), the backpressure bounds under `events`, enabled `test_barriers`, unknown capability names and ill-typed values stop the provider with exit status 2. Where the README leaves a meaning open, DIVERGENCES D-TESTCTL, E-START-ORDER, F-UNVOUCHED-CONFIG and section G.3 record the choice.
@@ -183,6 +190,34 @@ The one change is the `resumed` reason of `execution.scheduling.changed`, which 
 
 The Protocol session resolved those points at `9591551` (M4-DIVERGENCES §C.2). The ninth pass followed the resolved text (DIVERGENCES H.9): 255 fixtures, 228 pass, 0 fail, 4 unsupported, 23 skipped on the first run, with nothing changed after reading the one re-versioned fixture. The tenth pass, at `0e80475` (DIVERGENCES H.10), gave 256 fixtures, 229 pass, 0 fail, 4 unsupported, 23 skipped on its first run, with nothing changed after reading the new fixture.
 
+The eleventh pass, at `950f3e0` (DIVERGENCES H.M5), claims `knowledge/1`, `verification/1`, `context.claims`, `verification.jobs`, `verification.record` and the `knowledge.store` and `verifier.script` test controls:
+
+| Run (base `950f3e0`, 271 fixtures) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Tenth-pass code and claims | 229 | 0 | 0 | 0 | 18 | 24 |
+| First complete run, implementation from the documents | 238 | 5 | 0 | 0 | 4 | 24 |
+| After six fixture-driven changes, and one repeat | 243 | 0 | 0 | 0 | 4 | 24 |
+
+The six changes (HM5-VALIDITY-ORDER, HM5-RECORDED-FILL, HM5-LISTING-DETAILS, HM5-ASSESS-REFERENCE-MISMATCH, HM5-UNLISTED-EVALUATOR, HM5-ASSESS-MISSING) follow fixture expectations the documents do not state; one of them (HM5-ASSESS-MISSING) contradicts the literal text of VERIFICATION §7. A throwaway sensitivity probe found 16 of 25 deliberate deviations unnoticed by the M5 fixtures (H.M5).
+
+The twelfth pass, at `6cec5f6` (DIVERGENCES H.M5b), realigns with the resolution of H.M5 ([M5-DIVERGENCES](../../../docs/work/release-0.1/M5-DIVERGENCES.md)). Claims are unchanged:
+
+| Run (base `6cec5f6`, 273 fixtures) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Eleventh-pass code | 238 | 7 | 0 | 0 | 4 | 24 |
+| First complete run after the realignment from the documents, and one repeat | 245 | 0 | 0 | 0 | 4 | 24 |
+
+Nothing was changed after a fixture run, and no fixture was read. A throwaway sensitivity probe (H.M5b) records which of this pass's readings the fixtures check.
+
+The thirteenth pass, at `808801b` (DIVERGENCES H.M5c), follows the resolution of H.M5b (M5-DIVERGENCES §D). Claims are unchanged:
+
+| Run (base `808801b`, 273 fixtures) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Twelfth-pass code | 243 | 2 | 0 | 0 | 4 | 24 |
+| First complete run after the changes from the documents, and one repeat | 245 | 0 | 0 | 0 | 4 | 24 |
+
+Again no fixture was read.
+
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 
 ## Limits
@@ -192,7 +227,10 @@ Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows w
 - Grants: provider-held records only (no bearer tokens). The tracked authority scopes are `core-test` and `execution.controller:<host id>`. Rights are defined for `core-test`, `core.events.read`, `core.effects.abort_obligation` and the Execution operations.
 - Events: one stream per data directory with a random ID. Retention, new epochs and unvouched events happen only through the launch configuration. Subscriptions live only as long as the session; they are re-authorized after every request and end with a final notification when their grant stops authorizing or an item cannot fit the caller's receive limit. An expiry alone is reported at the next request. `core.events.backpressure` is not implemented. It therefore makes no backpressure guarantee (CORE §16.5): the stdio writer blocks when the caller stops reading, with no room deadline and no closure (DIVERGENCES G.7, G.8).
 - Evidence: one scripted store in the data directory; integrity failures and unavailability come only from the launch configuration and are observed at reads, never recorded. Availability `partial` is never produced.
-- Context: scripted preparation only, standalone (packets sealed in this provider's own store). No investigation executions, no separate evidence provider.
+- Context: scripted preparation only, standalone (packets sealed in this provider's own store). No investigation executions, no separate evidence provider. `context.claims` reads claims only in this provider's own knowledge store; a claim at another provider is `knowledge_unavailable`.
+- Knowledge: one provider, its own store; support availability is observed only in its own evidence store (other providers count `unknown`). No temporal reconstruction (deferred in M5).
+- Verification: one scripted evaluator; contracts are read only from this provider's own evidence store (others are `contract_unavailable` / `unreachable`). Evaluator predicates change only between starts.
+- `execution.claim_revalidation` is not implemented: it needs a `fetch.context` binding, which this executor cannot use, so `composition.claims-in-packets-block-only-the-required-boundary` (SCN-16, the Execution side of CMP-9) is skipped.
 - Revalidation: packets are held only through `executor.context_packets`; `fetch` grants cannot be used, so a binding with `fetch` and no held packet reports `provider_unreachable`, and a `fetch.context` member makes `packet.facts` (and `packet.current` under `require_current`) `unavailable`. `serve_altered_bytes` alters only this provider's own `evidence.fetch`; no executor here fetches, so the executor's digest check is untested.
 - Capabilities: `core-test.writes` and the configured adapter predicates; only `core-test.subject.put` depends on a capability. Statuses change only between starts.
 - Effects: records are never discarded, so `effect_history_unavailable` never occurs. Effects exist only for Execution operations; every M1 and M2 command returns `effect_refs: []`.

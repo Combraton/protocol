@@ -5,7 +5,7 @@ Read [repository scope](../README.md), then [protocol spec](spec/SPEC.md). These
 **Protocol 0.1 release drafts (proposed, not released contracts):**
 - [Release plan](work/release-0.1/PLAN.md) and [requirements-to-acceptance matrix](work/release-0.1/MATRIX.md).
 - [Core profile](spec/profiles/CORE.md), [canonical encoding and digests](spec/bindings/ENCODING.md), [local stream binding](spec/bindings/STREAM.md).
-- [Execution profile](spec/profiles/EXECUTION.md); proposed M4 drafts: [Evidence](spec/profiles/EVIDENCE.md) and [Context](spec/profiles/CONTEXT.md).
+- Milestone-accepted drafts: [Execution profile](spec/profiles/EXECUTION.md) (M3), [Evidence](spec/profiles/EVIDENCE.md) and [Context](spec/profiles/CONTEXT.md) (M4). Protocol 0.1 is not released. Proposed M5 drafts: [Knowledge](spec/profiles/KNOWLEDGE.md) and [Verification](spec/profiles/VERIFICATION.md).
 - [Conformance suite](../conformance/README.md).
 
 - [Development workflow](https://github.com/Combraton/combraton/blob/main/docs/DEVELOPMENT.md) — ownership, parallel work, reviews and fresh-session recovery.

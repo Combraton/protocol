@@ -17,6 +17,8 @@ pub const JOB: &str = "context.job";
 pub const PACKET: &str = "context.packet";
 pub const PACKET_MEDIA_TYPE: &str = "application/vnd.combraton.context-packet+json";
 pub const PACKET_FORMAT: &str = "combraton-context-packet/1";
+/// Packets for requests submitted under `context.claims` (CONTEXT section 14).
+pub const CLAIMS_PACKET_FORMAT: &str = "combraton-context-packet/2";
 const COMPILER: &str = "combraton-reference-context";
 
 /// Features of the submitting session that change how a request is prepared.
@@ -24,6 +26,8 @@ pub struct Session<'a> {
     pub principal: &'a str,
     pub shared_jobs: bool,
     pub updates: bool,
+    /// The session negotiated `context.claims` (CONTEXT section 14).
+    pub claims: bool,
     pub script: &'a Value,
     pub mutants: &'a Mutants,
 }
@@ -133,9 +137,17 @@ pub fn validate_submit(payload: &Value, mutants: &Mutants) -> Result<(), (String
     Ok(())
 }
 
-/// Obligation features a submit needs (CTX-9).
+/// Obligation features a submit needs (CTX-9), and `context.claims` for claim checks.
 pub fn obligation_features(payload: &Value) -> Vec<String> {
     let mut features: Vec<String> = Vec::new();
+    if payload["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|item| item["check"]["kind"] == "claim_included")
+    {
+        features.push("context.claims".to_string());
+    }
     for item in payload["items"].as_array().into_iter().flatten() {
         let feature = format!(
             "context.{}",
@@ -167,6 +179,7 @@ pub fn submit(
         "authority_content": payload.get("authority_content").cloned().unwrap_or(json!([])),
         "submitted_by": session.principal,
         "updates": session.updates,
+        "claims": session.claims,
         "packets": [],
     });
     if let Some(origin) = payload.get("origin") {
@@ -401,6 +414,44 @@ fn advance(
             "section" => {
                 let mut section = argument.clone();
                 section["historical"] = json!(false);
+                if let Some(reference) = argument.get("claim") {
+                    let basis = job["basis"].clone();
+                    let wanted = if mutants.on("claim-latest-substituted") {
+                        json!({"provider": reference["provider"], "claim": reference["claim"]})
+                    } else {
+                        reference.clone()
+                    };
+                    let read = read_claim(tx, publisher, &wanted);
+                    match claim_snapshot(read, reference, &basis, mutants) {
+                        Ok(snapshot) => {
+                            let accepted_binding = snapshot["reliance"]["state"]
+                                == "accepted_for_use"
+                                && snapshot["reliance"]["permitted_use"] == "binding";
+                            if section["label"] == "binding"
+                                && !accepted_binding
+                                && !mutants.on("label-promotes-claim")
+                            {
+                                section["label"] = json!("hypothesis");
+                            }
+                            let result = snapshot["applicability"]["result"].clone();
+                            if result == "invalid_for_target"
+                                || (result != "applicable"
+                                    && mutants.on("unknown-applicability-marked-stale"))
+                            {
+                                section["historical"] = json!(true);
+                                section["label"] = json!("stale");
+                            }
+                            let mut snapshot = snapshot;
+                            if let Some(map) = snapshot.as_object_mut() {
+                                map.remove("current_revision");
+                            }
+                            section["claim"] = snapshot;
+                        }
+                        Err(reason) => {
+                            section["claim_error"] = json!(reason);
+                        }
+                    }
+                }
                 if let (Some(item), Some(revision)) = (
                     section["item_id"].as_str(),
                     section["authority_revision"].as_i64(),
@@ -608,7 +659,11 @@ fn item_results(
                     && check_passes(item, s, record, job, mutants)
             });
             let mut result = json!({"item_id": item_id, "obligation": obligation});
-            if let Some(unmet) = job["unmet"].get(item_id) {
+            // A scripted unmet reason never overrides a satisfied item (CONTEXT section 12).
+            let scripted = job["unmet"]
+                .get(item_id)
+                .filter(|_| !satisfied || mutants.on("scripted-unmet-overrides-satisfied"));
+            if let Some(unmet) = scripted {
                 result["result"] = json!("unmet");
                 result["reason"] = unmet.clone();
             } else if satisfied {
@@ -616,7 +671,10 @@ fn item_results(
             } else if !finishing {
                 result["result"] = json!("pending");
             } else {
-                let cause = if omitted {
+                let claim_cause = claim_reason(item, job, mutants);
+                let cause = if let Some(claim) = claim_cause {
+                    claim
+                } else if omitted {
                     "output_capacity"
                 } else if corrected {
                     "corrected_during_preparation"
@@ -669,6 +727,10 @@ fn check_passes(
                         && c["evidence"]["digest"] == check["evidence"]["digest"]
                 })
         }
+        Some("claim_included") => {
+            section["claim"]["reference"] == check["claim"]
+                && claim_shortfall(item, &section["claim"]).is_none()
+        }
         Some("authority_content_included") => {
             let item_id = item["item_id"].as_str().unwrap_or_default();
             let supplied = record["authority_content"]
@@ -699,6 +761,16 @@ fn inclusion(record: &Value, job: &Value, mutants: &Mutants) -> (Vec<Value>, Vec
     let mut included = Vec::new();
     let mut omissions: Vec<Value> = job["omissions"].as_array().cloned().unwrap_or_default();
     for section in job["sections"].as_array().into_iter().flatten() {
+        // A claim that could not be read or verified is never carried (CONTEXT section 14).
+        if section.get("claim_error").is_some() {
+            let mut omission =
+                json!({"section_id": section["section_id"], "reason": "unavailable"});
+            if let Some(item) = section.get("item_id") {
+                omission["item_id"] = item.clone();
+            }
+            omissions.push(omission);
+            continue;
+        }
         let size = section["content"].as_str().map_or(0, str::len) as i64;
         let mandatory = items
             .iter()
@@ -768,6 +840,9 @@ fn publish_one(
             if let Some(item) = s.get("item_id") {
                 out["item_id"] = item.clone();
             }
+            if record["claims"] == true && s["claim"].is_object() {
+                out["claim"] = s["claim"].clone();
+            }
             out
         })
         .collect();
@@ -805,8 +880,13 @@ fn publish_one(
         })
         .collect();
     let applicability = json!({"basis": record["basis"], "conditions": job["conditions"]});
+    let format = if record["claims"] == true || mutants.on("claims-format-without-negotiation") {
+        CLAIMS_PACKET_FORMAT
+    } else {
+        PACKET_FORMAT
+    };
     let mut body = json!({
-        "format": PACKET_FORMAT,
+        "format": format,
         "request": request,
         "revision": packet_revision,
         "sections": sections,
@@ -893,6 +973,9 @@ fn publish_one(
                 "citations": s["citations"].as_array().into_iter().flatten().map(|c| c["citation_id"].clone()).collect::<Vec<_>>()});
             if let Some(item) = s.get("item_id") {
                 out["item_id"] = item.clone();
+            }
+            if record["claims"] == true && s["claim"].is_object() {
+                out["claim"] = s["claim"].clone();
             }
             if mutants.on("unlabeled-section") {
                 out.as_object_mut().map(|o| o.remove("label"));
@@ -1001,6 +1084,7 @@ fn facts(
     tx: &Transaction,
     packet: &str,
     revision: i64,
+    reader: &PacketReader,
     mutants: &Mutants,
 ) -> rusqlite::Result<Option<(Value, bool)>> {
     let Some((_, record)) = evidence::load(tx, REQUEST, packet)? else {
@@ -1041,7 +1125,293 @@ fn facts(
         })
         .collect();
     facts["invalidated_items"] = json!(invalidated);
+    if reader.claims {
+        read_time_claims(tx, &record, &mut facts, reader, mutants);
+    } else if !mutants.on("claims-without-negotiation") {
+        for section in facts["sections"].as_array_mut().into_iter().flatten() {
+            if let Some(map) = section.as_object_mut() {
+                map.remove("claim");
+            }
+        }
+    }
     Ok(Some((facts, current)))
+}
+
+/// How a packet read reaches claims: the session's `context.claims` and the provider's knowledge
+/// source (its own store, or `knowledge_provider`).
+pub struct PacketReader<'a> {
+    pub claims: bool,
+    pub publisher: &'a Value,
+}
+
+/// Read a claim revision as an ordinary reader: at the configured knowledge provider, or in this
+/// provider's own knowledge store. `Err` means the knowledge could not be read.
+fn read_claim(
+    tx: &Transaction,
+    publisher: &Value,
+    reference: &Value,
+) -> Result<Value, &'static str> {
+    let mut payload = json!({"claim": reference["claim"]});
+    if let Some(revision) = reference.get("revision") {
+        payload["revision"] = revision.clone();
+    }
+    match publisher.get("knowledge_provider") {
+        Some(peer) if peer["provider_id"] == reference["provider"] => {
+            let profiles = json!([
+                {"name": "core", "majors": [1], "required": true, "required_features": ["core.events", "core.grants"], "optional_features": []},
+                {"name": "knowledge", "majors": [1], "required": true, "required_features": [], "optional_features": []},
+            ]);
+            let mut client =
+                crate::peer::Peer::connect(peer, profiles).map_err(|_| "knowledge_unavailable")?;
+            client
+                .query("knowledge.claim.inspect", payload, peer["grant"].as_str())
+                .map_err(|_| "knowledge_unavailable")
+        }
+        None if publisher["provider_id"] == reference["provider"] => {
+            let reader = crate::knowledge::Reader {
+                provider_id: publisher["provider_id"].as_str().unwrap_or_default(),
+                config: &publisher["knowledge"],
+                evidence_config: &publisher["evidence_store"],
+                mutants: &Mutants::default(),
+            };
+            match crate::knowledge::inspect(tx, &payload, &reader) {
+                Ok(Some(result)) => Ok(result),
+                _ => Err("knowledge_unavailable"),
+            }
+        }
+        _ => Err("knowledge_unavailable"),
+    }
+}
+
+/// A context basis as a knowledge target (KNOWLEDGE section 8).
+fn to_target(basis: &Value) -> Value {
+    let repositories: Vec<Value> = basis["repositories"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| {
+            let mut out = json!({"id": r["id"], "tree": r["tree"]});
+            if r["dirty"].is_object() {
+                out["dirty"] = r["dirty"].clone();
+            }
+            out
+        })
+        .collect();
+    let mut target = json!({"repositories": repositories, "completeness": basis["completeness"]});
+    for member in ["environment", "build"] {
+        if let Some(value) = basis.get(member) {
+            target[member] = value.clone();
+        }
+    }
+    target
+}
+
+/// The section claim snapshot, after recomputing the record digest (CONTEXT section 14).
+fn claim_snapshot(
+    read: Result<Value, &'static str>,
+    reference: &Value,
+    basis: &Value,
+    mutants: &Mutants,
+) -> Result<Value, &'static str> {
+    let found = read?;
+    let computed = crate::json::sha256_digest(&crate::json::canonical(
+        &found["record"],
+        crate::json::CanonicalFlaws::default(),
+    ));
+    // Mutant `claim-latest-substituted` checks whatever revision it read against its own digest.
+    let latest = mutants.on("claim-latest-substituted");
+    let expected = if latest {
+        &found["reference"]
+    } else {
+        reference
+    };
+    let exact = latest
+        || (found["reference"]["digest"] == reference["digest"]
+            && found["reference"]["revision"] == reference["revision"]);
+    if !mutants.on("claim-digest-unchecked")
+        && (computed != expected["digest"].as_str().unwrap_or_default() || !exact)
+    {
+        return Err("claim_digest_mismatch");
+    }
+    let target = to_target(basis);
+    let canonical = |v: &Value| crate::json::canonical(v, crate::json::CanonicalFlaws::default());
+    let applicability = found["applicability"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|a| canonical(&a["target"]) == canonical(&target))
+        .map(|a| json!({"result": a["result"], "evaluation": a["evaluation"]}))
+        .unwrap_or_else(|| json!({"result": "unknown"}));
+    let conflicts: Vec<Value> = found["conflicts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c["state"] == "open")
+        .map(|c| json!({"conflict": c["conflict"], "kind": c["kind"], "status": c["status"]}))
+        .collect();
+    Ok(json!({
+        "reference": found["reference"],
+        "plane": found["record"]["plane"],
+        "reliance": found["reliance"],
+        "applicability": applicability,
+        "conflicts": conflicts,
+        "support": {"class": found["support"]["class"]},
+        "current_revision": found["current_revision"],
+    }))
+}
+
+/// Why a claim snapshot does not satisfy an item's reliance (CONTEXT section 14), if it does not.
+fn claim_shortfall(item: &Value, snapshot: &Value) -> Option<&'static str> {
+    let rank = |use_: &Value| match use_.as_str() {
+        Some("binding") => 4,
+        Some("evidence") => 3,
+        Some("hypothesis") => 2,
+        Some("reference") => 1,
+        _ => 0,
+    };
+    let reliance = &snapshot["reliance"];
+    match item["reliance"].as_str() {
+        Some("binding" | "evidence") => {
+            if reliance["state"] != "accepted_for_use"
+                || rank(&reliance["permitted_use"]) < rank(&item["reliance"])
+            {
+                Some("not_accepted")
+            } else if snapshot["applicability"]["result"] == "invalid_for_target" {
+                Some("invalid_for_target")
+            } else if snapshot["applicability"]["result"] != "applicable" {
+                Some("applicability_not_established")
+            } else {
+                None
+            }
+        }
+        _ if reliance["state"] == "rejected" => Some("not_accepted"),
+        _ => None,
+    }
+}
+
+/// The unmet reason a claim check gives an item, when it has a claim section.
+fn claim_reason(item: &Value, job: &Value, mutants: &Mutants) -> Option<&'static str> {
+    if item["check"]["kind"] != "claim_included" {
+        return None;
+    }
+    let section = job["sections"].as_array().into_iter().flatten().find(|s| {
+        s["item_id"] == item["item_id"] && s.get("claim").or_else(|| s.get("claim_error")).is_some()
+    })?;
+    if let Some(error) = section["claim_error"].as_str() {
+        return Some(if error == "claim_digest_mismatch" {
+            "claim_digest_mismatch"
+        } else {
+            "knowledge_unavailable"
+        });
+    }
+    if section["claim"]["reference"] != item["check"]["claim"] {
+        return Some("unavailable");
+    }
+    // Only a section that is not historical satisfies; a historical one is invalid for the target.
+    claim_shortfall(item, &section["claim"]).or((section["historical"] == true
+        && !mutants.on("historical-claim-reason-unavailable"))
+    .then_some("invalid_for_target"))
+}
+
+/// Read-time claim facts: changes, claim invalidations and unverified items (CONTEXT section 14).
+fn read_time_claims(
+    tx: &Transaction,
+    record: &Value,
+    facts: &mut Value,
+    reader: &PacketReader,
+    mutants: &Mutants,
+) {
+    let basis = &record["basis"];
+    let mut changes = Vec::new();
+    let mut invalidated: Vec<Value> = facts["invalidated_items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut unverified = Vec::new();
+    let sections: Vec<Value> = facts["sections"].as_array().cloned().unwrap_or_default();
+    for section in sections.iter().filter(|s| s["claim"].is_object()) {
+        let snapshot = &section["claim"];
+        let reference = &snapshot["reference"];
+        let current = claim_snapshot(
+            read_claim(tx, reader.publisher, reference),
+            reference,
+            basis,
+            mutants,
+        );
+        let item = record["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|i| i["item_id"] == section["item_id"])
+            .cloned()
+            .unwrap_or(Value::Null);
+        let satisfied_required = !item.is_null()
+            && item["obligation"] != "advisory"
+            && item["check"]["kind"] == "claim_included"
+            && facts["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|i| i["item_id"] == item["item_id"] && i["result"] == "satisfied");
+        let change = |kind: &str| json!({"section_id": section["section_id"], "claim": reference, "change": kind});
+        match current {
+            Err(reason) => {
+                changes.push(change("unavailable"));
+                if satisfied_required && !mutants.on("unavailable-knowledge-valid") {
+                    unverified.push(
+                        json!({"item_id": item["item_id"], "claim": reference, "reason": reason}),
+                    );
+                }
+            }
+            Ok(now) => {
+                if now["reliance"]["state"] != snapshot["reliance"]["state"]
+                    || now["reliance"]["permitted_use"] != snapshot["reliance"]["permitted_use"]
+                {
+                    changes.push(change("reliance_changed"));
+                }
+                if now["applicability"]["result"] != snapshot["applicability"]["result"] {
+                    changes.push(change("applicability_changed"));
+                }
+                if now["conflicts"].as_array().into_iter().flatten().any(|c| {
+                    !snapshot["conflicts"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|o| o["conflict"] == c["conflict"])
+                }) {
+                    changes.push(change("conflict_opened"));
+                }
+                if now["current_revision"].as_i64() > reference["revision"].as_i64() {
+                    changes.push(change("lineage_revised"));
+                }
+                // For every reliance, a claim now invalid for the target would make its section
+                // historical (CONTEXT section 14); a lost permitted use comes first.
+                let shortfall = claim_shortfall(&item, &now)
+                    .or((now["applicability"]["result"] == "invalid_for_target"
+                        && !mutants.on("hypothesis-invalidation-unreported"))
+                    .then_some("invalid_for_target"));
+                if satisfied_required {
+                    match shortfall {
+                        Some("not_accepted") if !mutants.on("claim-invalidation-unreported") => {
+                            invalidated.push(json!({"item_id": item["item_id"], "claim": reference, "reason": "permitted_use_lost"}));
+                        }
+                        Some("invalid_for_target")
+                            if !mutants.on("claim-invalidation-unreported") =>
+                        {
+                            invalidated.push(json!({"item_id": item["item_id"], "claim": reference, "reason": "invalid_for_target"}));
+                        }
+                        Some("applicability_not_established") => {
+                            unverified.push(json!({"item_id": item["item_id"], "claim": reference, "reason": "applicability_not_established"}));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    facts["claim_changes"] = json!(changes);
+    facts["invalidated_items"] = json!(invalidated);
+    facts["unverified_items"] = json!(unverified);
 }
 
 fn excerpt(data: &[u8], payload: &Value, frame_budget: usize) -> Value {
@@ -1059,12 +1429,13 @@ pub fn inspect_packet(
     store: &Store,
     payload: &Value,
     frame_budget: usize,
+    reader: &PacketReader,
     mutants: &Mutants,
 ) -> rusqlite::Result<Option<Value>> {
     let tx = store.reader()?;
     let packet = payload["packet"].as_str().unwrap_or_default();
     let revision = payload["revision"].as_i64().unwrap_or(0);
-    let Some((facts, current)) = facts(&tx, packet, revision, mutants)? else {
+    let Some((facts, current)) = facts(&tx, packet, revision, reader, mutants)? else {
         return Ok(None);
     };
     let data = if mutants.on("packet-bytes-regenerated") {
@@ -1088,6 +1459,11 @@ pub fn inspect_packet(
     }
     result["current"] = json!(current);
     result["invalidated_items"] = facts["invalidated_items"].clone();
+    for member in ["claim_changes", "unverified_items"] {
+        if let Some(value) = facts.get(member) {
+            result[member] = value.clone();
+        }
+    }
     if let Some(latest) = facts.get("superseded_by") {
         result["superseded_by"] = latest.clone();
     }
@@ -1104,7 +1480,11 @@ pub fn citation(
     let tx = store.reader()?;
     let packet = payload["packet"].as_str().unwrap_or_default();
     let revision = payload["revision"].as_i64().unwrap_or(0);
-    let Some((facts, _)) = facts(&tx, packet, revision, mutants)? else {
+    let reader = PacketReader {
+        claims: false,
+        publisher: &Value::Null,
+    };
+    let Some((facts, _)) = facts(&tx, packet, revision, &reader, mutants)? else {
         return Ok(None);
     };
     Ok(facts["citations"]

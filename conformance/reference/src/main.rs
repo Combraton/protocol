@@ -12,12 +12,14 @@ mod features;
 mod frames;
 mod grants;
 mod json;
+mod knowledge;
 mod mutants;
 mod outbox;
 mod peer;
 mod provider;
 mod revalidation;
 mod store;
+mod verification;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -193,11 +195,14 @@ fn run(args: Args) -> Result<(), String> {
     let writes = config["capabilities"]["core-test.writes"]
         .as_str()
         .unwrap_or("supported");
-    let capabilities = json!([{
+    let mut capabilities = json!([{
         "name": "core-test.writes",
         "status": writes,
         "evidence": {"source": if writes == "supported" { "reference-store" } else { "launch-configuration" }},
     }]);
+    if let Some(list) = capabilities.as_array_mut() {
+        list.extend(verification::predicates(&config["verifier"]));
+    }
     store
         .apply_capabilities(
             &provider_id,
@@ -247,6 +252,8 @@ fn run(args: Args) -> Result<(), String> {
             faults: std::sync::Arc::new(std::sync::Mutex::new(config["faults"].clone())),
             evidence_store: std::sync::Arc::new(config["evidence_store"].clone()),
             context_script: std::sync::Arc::new(config["context"].clone()),
+            knowledge: std::sync::Arc::new(config["knowledge"].clone()),
+            verifier: std::sync::Arc::new(config["verifier"].clone()),
             capabilities,
             authorities,
             principal,

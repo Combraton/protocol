@@ -4,7 +4,7 @@
 
 `combraton-independent-python-core` `0.1.0-dev.0` is a second implementation of the Core provider and of an executor. It speaks the stdio form of the stream binding and implements `core/1` together with the conformance-only `core-test/1` profile, including the Core features `core.grants` (CORE §15), `core.events` (§16), `core.capabilities` (§17) and `core.effects` (§19), and `core.authenticate` as a stdio session answers it (§18). Since the M3 pass it also implements `execution/1` (EXECUTION §1–§14) over the scripted executor of decision 007, with the clock file and store faults. Since the M4 pass it implements `evidence/1` with `evidence.manifests` and `evidence.retention_control` over a scripted store, `context/1` with its six features over scripted preparation (packets sealed as Evidence artifacts in its own store), and `execution.context_revalidation` for a single provider. Its value is that it was written **from the published documents only**, without reading the reference provider. Where the documents leave a question open, it records the question instead of copying the reference's answer.
 
-It was written in seven spec-only passes:
+It was written in eight spec-only passes:
 
 1. the Core command path (M1 fixtures, base `f42d21a`);
 2. the three M2 features (base `3b32037`);
@@ -12,9 +12,10 @@ It was written in seven spec-only passes:
 4. Core effects, `execution/1` and the test controls (M3, base `d81e49b`);
 5. realignment with the resolution of that pass's findings (base `ad91182`), a final alignment (base `c3e79d6`), the acceptance corrections C1–C3 (base `2d8402a`), and exit causal order (base `25f9c0b`);
 6. `evidence/1`, `context/1` and `execution.context_revalidation` (M4, base `39e9dc8`);
-7. realignment with the resolution of that pass's findings (base `8500948`).
+7. realignment with the resolution of that pass's findings (base `8500948`);
+8. the owner's M4 close-out (base `63f1bb0`): capacity released while blocked before dispatch, pinning, typed grant constraints and `evidence.work_binding`, and the new store controls.
 
-The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to seventh passes read the documents before the fixtures.
+The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to eighth passes read the documents before the fixtures.
 
 ## What it was written from
 
@@ -168,6 +169,16 @@ The Protocol session resolved those findings at `8500948` (M4-DIVERGENCES): the 
 
 Every applicable fixture passes and `run` exits 0. Nothing was changed after reading the fixtures. H.7 lists the points still open, none of them failing a fixture.
 
+The owner's close-out at `63f1bb0` added capacity release while blocked before dispatch (EXECUTION §13.1), pinning (`require_current`, `packet.facts`, CONTEXT §8 `invalidated_items` and `superseded_by`), typed grant constraints (CORE §15.3) with `evidence.work_binding`, the upload-operation table, and the store controls `basis_changes`, `observe_host_basis` and `serve_altered_bytes`. The eighth pass wrote its readings and committed its implementation before opening the changed fixtures (DIVERGENCES H.8), and adds `evidence.work_binding` to the claims:
+
+| Run (base `63f1bb0`, 255 fixtures) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Seventh-pass code and claims | 217 | 10 | 0 | 0 | 5 | 23 |
+| Implementation from the documents | 227 | 1 | 0 | 0 | 4 | 23 |
+| After one fixture-informed change, and one repeat | 228 | 0 | 0 | 0 | 4 | 23 |
+
+The one change is the `resumed` reason of `execution.scheduling.changed`, which no document or schema names (H8-RESUMED-REASON).
+
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 
 ## Limits
@@ -178,7 +189,7 @@ Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows w
 - Events: one stream per data directory with a random ID. Retention, new epochs and unvouched events happen only through the launch configuration. Subscriptions live only as long as the session; they are re-authorized after every request and end with a final notification when their grant stops authorizing or an item cannot fit the caller's receive limit. An expiry alone is reported at the next request. `core.events.backpressure` is not implemented. It therefore makes no backpressure guarantee (CORE §16.5): the stdio writer blocks when the caller stops reading, with no room deadline and no closure (DIVERGENCES G.7, G.8).
 - Evidence: one scripted store in the data directory; integrity failures and unavailability come only from the launch configuration and are observed at reads, never recorded. Availability `partial` is never produced.
 - Context: scripted preparation only, standalone (packets sealed in this provider's own store). No investigation executions, no separate evidence provider.
-- Revalidation: packets are held only through `executor.context_packets`; `fetch` grants cannot be used, so a binding with `fetch` and no held packet reports `provider_unreachable`, and a `fetch.context` member makes `packet.current` `unavailable`.
+- Revalidation: packets are held only through `executor.context_packets`; `fetch` grants cannot be used, so a binding with `fetch` and no held packet reports `provider_unreachable`, and a `fetch.context` member makes `packet.facts` (and `packet.current` under `require_current`) `unavailable`. `serve_altered_bytes` alters only this provider's own `evidence.fetch`; no executor here fetches, so the executor's digest check is untested.
 - Capabilities: `core-test.writes` and the configured adapter predicates; only `core-test.subject.put` depends on a capability. Statuses change only between starts.
 - Effects: records are never discarded, so `effect_history_unavailable` never occurs. Effects exist only for Execution operations; every M1 and M2 command returns `effect_refs: []`.
 - Execution: one scripted host. The harness is the launch configuration's script, interpreted by the conformance executor conventions of EXECUTION §15.1; there is no real adapter, no inline brief and no barrier or signal. A scripted crash exits with status 1 between requests.

@@ -1577,7 +1577,11 @@ class Executor:
         if x.get("scheduling") == value:
             return False
         x["scheduling"] = value
-        self._xevent(st, "execution.scheduling.changed", dict(value))
+        # EXECUTION 9: the event always carries a reason; reacquiring capacity
+        # is "resumed", which the inspect member omits (H8-RESUMED-REASON,
+        # fixture-informed: the scheduling schema's reasons do not include it).
+        payload = dict(value) if reason is not None else {"capacity": capacity, "reason": "resumed"}
+        self._xevent(st, "execution.scheduling.changed", payload)
         return True
 
     def _end_reason(self, x: dict):

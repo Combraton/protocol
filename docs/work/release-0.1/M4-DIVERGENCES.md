@@ -86,10 +86,20 @@ The helper realigned the independent provider with the close-out pass (`76db7a0`
 | H8-INVALIDATED-ITEMS (`superseded_by`) | **spec:** `superseded_by` names the request's current revision |
 | H8-CAPACITY-FAIRNESS | **spec:** the order between admitting queued work and resuming released work is unspecified; this is a coverage limit |
 
+## C.3 Ninth pass (realignment, base `9591551`)
+
+The helper realigned with C.2 (`36ca076`, merged): 228 pass, 0 fail, 4 unsupported and 23 skipped, on the first run after the changes.
+
+| Tag | Resolution |
+|---|---|
+| H9-TIMEOUT-SCHEDULING-ORDER | **spec:** EXECUTION §15.1 fixes one order for released work ending before dispatch, whatever the reason: each `execution.timeout.passed`, then `core.effect.obligation.overdue` when a deadline ended the wait, then `execution.delivery.observed`, and last `execution.scheduling.changed`. The evidence-class table gains a row: `delivery_timeout_before_dispatch` when the delivery timeout passed, otherwise `scheduling` on the delivery record and `never_dispatched` on the effect. This replaces the C.2 reading that the §8 evidence "may also be recorded". **reference defect:** it ended released work at the dispatch boundary before its timeouts were evaluated, so no `execution.timeout.passed` was ever emitted for the delivery timeout that caused the ending; now fixed. The independent executor put the scheduling change first on the cancellation path. **fixture:** `execution.released-work-ending-emits-cause-first`; mutant `released-ending-before-cause` fails at the exact event read. |
+| H9-OBSERVED-UNTESTED | No change: a coverage limit of the stdio binding; the strings are checked by the composition fixtures on the reference only |
+
 ## D. Still unchecked by fixtures (coverage limits)
 
 From H.5, after this resolution:
 - **Evidence:** `evidence.availability.changed`; fetch and excerpt shrinking to small receive limits; a manifest child that is sealed but unavailable; `released_holds` filtering; the less common credential-locator forms.
 - **Context:** script steps `end` and `unmet`; `omit` naming an item; conditions of kind `dirty_snapshot` and `environment_digest`; a cancel that leaves no subscriber; job-event visibility; shared jobs with different fallbacks; corrections on advisory items.
-- **Revalidation:** a dispatch or transition block clearing when the binding becomes current again; advisory checks at dispatch.
-- **Owner point 4 is open:** whether an execution blocked at dispatch releases its capacity slot ([M4](M4.md#points-for-the-owner-at-acceptance)).
+- **Revalidation:** advisory checks at dispatch. (Blocks clearing at dispatch and transition are now covered by `execution.blocked-dispatch-releases-capacity-and-resumes` and `execution.transition-block-clears-when-current`.)
+- **Capacity release:** fairness between admitting queued work and resuming released work (H8-CAPACITY-FAIRNESS); both deadline kinds passing at one evaluation of released work.
+- **Composition `observed` strings** for `packet.facts` and `packet.current` are checked on the reference only (H9-OBSERVED-UNTESTED).

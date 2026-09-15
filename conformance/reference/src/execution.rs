@@ -721,6 +721,8 @@ pub fn submit(
 
 /// End a released execution that was never dispatched, as restart recovery does (EXECUTION 7.1):
 /// its delivery fails before delivery, and a deadline ending the wait leaves obligations overdue.
+/// The cause comes first (EXECUTION 15): each passed timeout, then overdue obligations, then the
+/// delivery observation; the caller records the scheduling change last.
 #[allow(clippy::too_many_arguments)]
 fn end_undispatched(
     record: &mut Value,
@@ -731,9 +733,46 @@ fn end_undispatched(
     revision: i64,
     id: &str,
     drafts: &mut Vec<Draft>,
+    mutants: &Mutants,
 ) {
-    let evidence =
-        json!({"class": "scheduling", "source": format!("released before dispatch: {reason}")});
+    let started = started_at(record);
+    let passed: Vec<&str> = ["delivery", "execution_deadline"]
+        .into_iter()
+        .filter(|name| {
+            record["timeouts"][*name]
+                .as_i64()
+                .is_some_and(|seconds| now >= add_seconds(&started, seconds).as_str())
+                && !record["timeouts_passed"]
+                    .as_array()
+                    .is_some_and(|list| list.iter().any(|p| p == *name))
+        })
+        .collect();
+    let delivery_timeout = reason == "deadline_passed" && passed.contains(&"delivery");
+    if reason == "deadline_passed" && !mutants.on("released-ending-before-cause") {
+        for name in &passed {
+            push(record, "timeouts_passed", json!(name));
+            drafts.push((
+                "execution.timeout.passed",
+                subject(id),
+                revision,
+                json!({"timeout": name}),
+            ));
+        }
+    }
+    let (delivery_class, effect_class, source) = if delivery_timeout {
+        (
+            "delivery_timeout_before_dispatch",
+            "delivery_timeout_before_dispatch",
+            "delivery timeout passed".to_string(),
+        )
+    } else {
+        (
+            "scheduling",
+            "never_dispatched",
+            format!("released before dispatch: {reason}"),
+        )
+    };
+    let evidence = json!({"class": delivery_class, "source": source});
     determine(
         record,
         "failed_before_delivery",
@@ -743,7 +782,7 @@ fn end_undispatched(
         true,
     );
     if effect.is_object() {
-        observe_effect(effect, "failed", "never_dispatched", reason, now);
+        observe_effect(effect, "failed", effect_class, reason, now);
         if reason == "deadline_passed" {
             for obligation in effect["obligations"].as_array().into_iter().flatten() {
                 if obligation["state"] == "open" {
@@ -1454,6 +1493,7 @@ fn step(
                     revision,
                     id,
                     &mut drafts,
+                    mutants,
                 );
                 record["scheduling"] = json!({"capacity": "released", "reason": reason});
                 drafts.push((

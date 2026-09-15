@@ -6,7 +6,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-15, M4 steps 1–8 done and presented for owner acceptance. It is not merged.
+- **Checkpoint:** 2026-09-15. The owner reviewed M4 and asked for a bounded close-out pass (not yet accepted or authorized). The pass is done and M4 is presented again; it is not merged.
 - **Status:** M0–M3 merged. M4 in progress on `release-0.1/m4` ([M4 task](M4.md)). Protocol 0.1 is not released.
 
 ## Goal, decisions and constraints
@@ -74,6 +74,11 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - reference: stdio 229 pass and 20 skipped; Unix socket 249 pass;
   - `check-mutants` passes on both bindings;
   - independent after the seventh pass: 225 pass, 0 fail, 4 unsupported, 20 skipped.
+- **Close-out pass (local, macOS, at `63f1bb0`, the reference code of the final head):**
+  - `check-fixtures`: 255 fixtures ok;
+  - reference: stdio 232 pass and 23 skipped; Unix socket 255 pass;
+  - `check-mutants` passes on both bindings;
+  - each new fixture, and the altered-bytes mutant run, ran as intended 10 of 10 times.
 - **CI:** Ubuntu and macOS were green at `39e9dc8`, where the uploaded artifacts show stdio 226 pass and 20 skipped, Unix socket 246 pass, independent 196 pass, 20 skipped and 30 unsupported, and all mutants killed (307 of 307 stdio pairs, 42 of 42 Unix pairs). The final head's results are on [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
 
 ## What remains uncertain
@@ -98,5 +103,6 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## Next action
 
-1. Owner review of M4 and its [points for the owner](M4.md#points-for-the-owner-at-acceptance). Point 4, whether an execution blocked at dispatch releases its capacity slot, awaits a decision.
-2. After acceptance and green checks on the final head, merge PR #5 if the owner authorizes it. Then remove the helper worktree `.worktrees/independent-m4` once its branch is verified as merged; its run evidence is preserved locally under `conformance/results/independent-m4-pass-evidence/`.
+1. Owner acceptance of M4 after the close-out pass ([owner review resolutions](M4.md#owner-review-of-2026-09-15-and-the-close-out-pass)).
+2. After acceptance, green checks on the final head and the owner's authorization, merge PR #5. Then remove the helper worktree `.worktrees/independent-m4` once its branch is verified as merged; its run evidence is preserved locally under `conformance/results/independent-m4-pass-evidence/`.
+3. M5 (Knowledge and Verification) starts only after M4 acceptance, in a separate PR.

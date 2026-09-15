@@ -355,6 +355,7 @@
       "blocked-dispatch-holds-capacity",
       "resume-without-capacity",
       "resume-ignores-cancellation",
+      "released-ending-before-cause",
       "filtered-reveals-matches",
       "work-constraint-inferred",
       "abandon-sealed-accepted"

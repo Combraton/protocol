@@ -141,6 +141,10 @@ pub const ALL: &[(&str, &str)] = &[
         "resumes a released execution whose cancellation was requested",
     ),
     (
+        "released-ending-before-cause",
+        "ends released work without first emitting the timeout that caused the ending",
+    ),
+    (
         "fetched-digest-unchecked",
         "holds fetched packet bytes without computing their digest",
     ),

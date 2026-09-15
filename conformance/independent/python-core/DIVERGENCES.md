@@ -1572,3 +1572,18 @@ The H-RETRY-RUNNER failures are gone with the rebuilt runner. The sixth-pass cod
 
 - **H9-TIMEOUT-SCHEDULING-ORDER.** When a delivery timeout ends released work, this implementation appends `execution.timeout.passed`, the overdue markings, `execution.delivery.observed`, then `execution.scheduling.changed { released, deadline_passed }`. On the §13.1 path (execution deadline, cancellation, revoked authorization) the scheduling change comes first, before the determination. §9's causal order puts the cause first, but the text does not say whether the scheduling change is caused by the timeout or causes the determination. The two paths therefore order the same events differently. Unchecked. Suggested: fix one order for both. Basis: own judgment.
 - **H9-OBSERVED-UNTESTED.** The `observed` strings for `packet.facts` and `packet.current` are exercised only by composition fixtures, so this stdio participant never produces or checks them (coverage limit). Basis: spec text.
+
+### H.10 (base 0e80475)
+
+> Tenth spec-only pass. Read first: `git diff 36ca076 0e80475 -- docs/spec conformance/README.md docs/work/release-0.1/M4-DIVERGENCES.md` (EXECUTION §13.1 and §15.1; M4-DIVERGENCES §C.3). The new fixture `execution.released-work-ending-emits-cause-first` was read only after implementing and running. Read rules unchanged.
+
+**Changes, from the documents** (`941b60b`), resolving H9-TIMEOUT-SCHEDULING-ORDER:
+- **§15.1 "Event order".** Released work ending before dispatch now emits `execution.scheduling.changed` last on every path. On the §13.1 path (cancellation, lost authorization, execution deadline), the order is the overdue markings for a deadline, then `execution.delivery.observed`, then the scheduling change; before, the scheduling change came first. The delivery-timeout path already ended with it.
+- **§15.1 evidence-class row.** On the §13.1 path the delivery record's evidence class is `scheduling` and the effect's `never_dispatched` (before: `never_dispatched` on both). The delivery-timeout path keeps `delivery_timeout_before_dispatch` on both.
+- **"`execution.timeout.passed` for each timeout that passed".** When the delivery timeout ends released work and the execution deadline is due at the same evaluation, both `execution.timeout.passed` events now precede the overdue markings.
+
+**Run** (256 fixtures), first run after the changes: **229 pass, 0 fail, 0 timeout, 0 harness_error, 4 unsupported, 23 skipped** (`run: 256 fixtures (229 pass, 23 skipped, 4 unsupported), 0 not passing`). The new fixture passes. It checks the delivery-timeout order and evidence, and the cancellation order starting with `execution.cancel.requested` then the delivery observation with class `scheduling`. Nothing was changed after reading it.
+
+**Still open.** None fails a fixture.
+- **H10-DEADLINE-SEPARATE-UNITS.** An execution deadline passes in the executor's timeout unit, and the ending (overdue, delivery observation, scheduling change) follows in the script unit of the same tick, a separate provider transaction. The stream order is as §15.1 states, but another execution's events could fall between them. §15.1 orders events "with the same cause", not their contiguity. Unchecked. Basis: own judgment.
+- **H10-INACTIVITY-AT-ENDING.** "`execution.timeout.passed` for each timeout that passed": an `inactivity` timeout due at the same evaluation as an ending delivery timeout is emitted after the ending here, since inactivity does not end the wait. Whether it counts as part of the cause is not stated. Unchecked (M4-DIVERGENCES §D lists both deadline kinds at one evaluation as a coverage limit). Basis: own judgment.

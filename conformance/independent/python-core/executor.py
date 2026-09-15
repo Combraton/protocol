@@ -1351,6 +1351,11 @@ class Executor:
         if x["delivery"] == "pending" and due("delivery", admitted_at):
             pass_("delivery")
             dispatched = x.get("marker") is not None
+            released = not dispatched and x.get("scheduling", {}).get("capacity") == "released"
+            if released and x["runtime"] != "exited" and due("execution_deadline", admitted_at):
+                # EXECUTION 15.1 "Event order": released work ending emits every
+                # passed timeout before the overdue markings (H.10).
+                pass_("execution_deadline")
             evidence = {"class": "delivery_timeout" if dispatched else "delivery_timeout_before_dispatch",
                         "source": "delivery timeout"}
             # 15.1 order: timeout.passed, overdue obligations, then the
@@ -1359,9 +1364,9 @@ class Executor:
             # obligations stay overdue (G5-TIMEOUT-OBLIGATIONS).
             self._overdue(st, x["delivery_id"])
             self._determine(st, "ambiguous" if dispatched else "failed_before_delivery", evidence, close=False)
-            if not dispatched and x.get("scheduling", {}).get("capacity") == "released":
-                # EXECUTION 13.1: a passed delivery timeout ends released work
-                # with scheduling reason deadline_passed (H9-TIMEOUT-SCHEDULING).
+            if released:
+                # EXECUTION 13.1, 15.1: a passed delivery timeout ends released
+                # work; the scheduling change that records the ending is last.
                 x.pop("blocked", None)
                 self._set_scheduling(st, "released", "deadline_passed")
             progressed = True
@@ -1600,15 +1605,19 @@ class Executor:
         return None
 
     def _end_released(self, st, reason: str) -> None:
-        """Released work ends instead of resuming: never dispatched."""
+        """Released work ends instead of resuming: never dispatched. EXECUTION
+        15.1: any passed timeout was already appended by the timeout pass;
+        then the overdue markings for a deadline, the delivery observation
+        (class ``scheduling`` on the record, ``never_dispatched`` on the
+        effect), and last the scheduling change that records the ending (H.10)."""
         x = st["x"]
-        self._set_scheduling(st, "released", reason)
         x.pop("blocked", None)
         deadline = reason == "deadline_passed"
         if deadline:
             self._overdue(st, x["delivery_id"])  # a deadline leaves obligations overdue (7.1)
-        evidence = {"class": "never_dispatched", "source": reason}
-        self._determine(st, "failed_before_delivery", evidence, close=not deadline)
+        self._determine(st, "failed_before_delivery", {"class": "scheduling", "source": reason},
+                        effect_evidence={"class": "never_dispatched", "source": reason}, close=not deadline)
+        self._set_scheduling(st, "released", reason)
 
     def _dispatch_gate(self, st):
         """EXECUTION 13.1: a required-before-start binding that is not current

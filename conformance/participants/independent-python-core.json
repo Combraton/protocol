@@ -2,7 +2,7 @@
   "format": "combraton-conformance-participant/1",
   "name": "combraton-independent-python-core",
   "version": "0.1.0-dev.0",
-  "description": "Independent spec-only Core, Execution, Evidence and Context provider in Python (standard library only; not a product). Written from the published documents and schemas without reading the reference provider. See conformance/independent/python-core/README.md.",
+  "description": "Independent spec-only Core, Execution, Evidence, Context, Knowledge and Verification provider in Python (standard library only; not a product). Written from the published documents and schemas without reading the reference provider. See conformance/independent/python-core/README.md.",
   "role": "provider",
   "binding": "stdio",
   "claims": {
@@ -25,6 +25,14 @@
       },
       {
         "name": "context",
+        "major": 1
+      },
+      {
+        "name": "knowledge",
+        "major": 1
+      },
+      {
+        "name": "verification",
         "major": 1
       }
     ],
@@ -51,14 +59,19 @@
       "context.shared_jobs",
       "context.updates",
       "context.expand",
-      "evidence.work_binding"
+      "evidence.work_binding",
+      "context.claims",
+      "verification.jobs",
+      "verification.record"
     ],
     "test_controls": [
       "clock.file",
       "executor.script",
       "store.faults",
       "evidence.store",
-      "context.script"
+      "context.script",
+      "knowledge.store",
+      "verifier.script"
     ]
   },
   "launch": {

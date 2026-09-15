@@ -28,7 +28,7 @@ import evidence as EVD
 import knowledge as K
 import valuedomain as V
 from envelope import Invalid, ptr
-from errors import ProtocolError, denied
+from errors import ProtocolError
 
 JOB_KIND = "verification.job"
 RECEIPT_KIND = "verification.receipt"
@@ -209,20 +209,14 @@ def listing_problems(names: list, expected: list) -> dict:
         if n in seen and n not in duplicated:
             duplicated.append(n)
         seen.add(n)
-    problems = {}
     missing = [n for n in expected if n not in seen]
-    unknown = [n for n in names if n not in expected]
-    if missing:
-        problems["missing"] = missing
-    if duplicated:
-        problems["duplicated"] = duplicated
-    if unknown:
-        problems["unknown"] = list(dict.fromkeys(unknown))
-    return problems
+    unknown = list(dict.fromkeys(n for n in names if n not in expected))
+    # HM5-LISTING-DETAILS (fixture-driven): all three lists, empty ones included.
+    return {"missing": missing, "duplicated": duplicated, "unknown": unknown}
 
 
 def _refuse_listing(path: str, problems: dict) -> None:
-    if problems:
+    if any(problems.values()):
         # HM5-LISTING-DETAILS: the details name the problem kinds with their names.
         details = {"path": path, "reason": "the listing does not match the contract"}
         details.update(problems)
@@ -254,7 +248,8 @@ class Verification:
     def predicate_status(self, evaluator: dict) -> str:
         _, predicates = self.store.capabilities()
         name = predicate_name(evaluator)
-        return next((pr["status"] for pr in predicates if pr["name"] == name), "unknown")
+        # HM5-UNLISTED-EVALUATOR (fixture-driven): an evaluator this verifier does not list is unsupported.
+        return next((pr["status"] for pr in predicates if pr["name"] == name), "unsupported")
 
     def _emit(self, changes, etype: str, subject: dict, revision: int, payload: dict) -> None:
         if changes is not None:
@@ -496,8 +491,9 @@ class Verification:
         ref = payload["receipt"]
         row = self.store.get_json(RECEIPT_KIND, ref["receipt"]) if ref["provider"] == self.p.provider_id else None
         if row is None:
-            # VERIFICATION 7 "Authorization": identical to a receipt the reader may not read (HM5-ASSESS-MISSING).
-            raise denied("out_of_scope")
+            # HM5-ASSESS-MISSING (fixture-driven): after authorization (step 6), a nonexistent
+            # receipt is not_found; an unauthorized reader was already refused identically for both.
+            raise ProtocolError("not_found")
         contract, contract_reason = self.read_contract(payload["contract"])
         if contract is not None:
             _refuse_listing("/payload/subjects", listing_problems([s["role"] for s in payload["subjects"]],
@@ -516,16 +512,20 @@ class Verification:
 
         mapped = row[1]["reference"]["artifact"]
         if V.canonical(ref["artifact"]) != V.canonical(mapped):
+            # HM5-ASSESS-REFERENCE-MISMATCH (fixture-driven): the referenced bytes are not the
+            # receipt's, so no property result is presented from the mapped bytes.
             fail("receipt", "receipt_reference_mismatch")
-        content = self.receipt_content(ref["receipt"])
-        if content is None:
-            fail("receipt", "receipt_unavailable", "unverifiable")
+            content = None
+        else:
+            content = self.receipt_content(ref["receipt"])
+            if content is None:
+                fail("receipt", "receipt_unavailable", "unverifiable")
         if contract is None:
             fail("contract", "contract_unavailable", "unverifiable")
         if content is None:
             # HM5-ASSESS-UNREADABLE-RECEIPT: checks that need the receipt's content.
             for name in ("contract", "subjects", "environment", "evaluator", "time"):
-                fail(name, "receipt_unavailable", "unverifiable")
+                fail(name, checks["receipt"]["reasons"][0], "unverifiable")
         else:
             if V.canonical(content["contract"]) != V.canonical(payload["contract"]):
                 fail("contract", "contract_mismatch")
@@ -677,14 +677,13 @@ class Verification:
         if self.store.revision(RECEIPT_KIND, jid):
             return False  # HM5-RECEIPT-ID-TAKEN: a recorded receipt already holds this ID
         now = self.now()
-        recorded = {r["property_id"] for r in rec["recorded"]}
-        for prop in rec["properties"]:
-            if prop["property_id"] not in recorded:
-                revision = self._record_result(jid, revision, rec, prop["property_id"], fill, reason)
+        # HM5-RECORDED-FILL (fixture-driven): results filled in at completion appear in the
+        # receipt only; ``recorded`` keeps what the evaluator reported.
         by_id = {r["property_id"]: r for r in rec["recorded"]}
         properties = []
         for prop in rec["properties"]:
-            entry = dict(by_id[prop["property_id"]])
+            entry = dict(by_id.get(prop["property_id"]) or {"property_id": prop["property_id"], "result": fill,
+                                                             "reason": reason})
             entry["evidence"] = []
             properties.append(entry)
         content = {"format": RECEIPT_FORMAT, "receipt": jid, "subjects": rec["subjects"], "contract": rec["contract"],

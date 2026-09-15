@@ -195,6 +195,9 @@ def _content(payload: dict, revise: bool) -> None:
         for member in ("from", "until"):
             if member in val:
                 E.instant(val[member], ptr("/payload/validity", member))
+        if "from" in val and "until" in val and val["from"] > val["until"]:
+            # HM5-VALIDITY-ORDER (fixture-driven): an interval ending before it starts.
+            raise Invalid("/payload/validity", "from must not be after until")
     if "basis" in payload:
         basis(payload["basis"], "/payload/basis")
     support = E.array(payload["support"], "/payload/support", max_items=64)

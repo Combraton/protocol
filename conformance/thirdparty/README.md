@@ -13,7 +13,7 @@ The runner launches a client with the fixture step `start_client`, which renders
 - **Lifecycle.** A long-running client runs until its standard input reaches end of file, then exits with status 0. A one-shot client exits by itself: 0 on success, 1 when the work failed. Standard error is for diagnostics only; the runner saves it beside the transcript.
 - **Protocol use:**
   - One session per provider per purpose, each over its own Unix-socket connection.
-  - Each session authenticates, calls `core.feature_dependencies` (CORE §4.3), then negotiates.
+  - Each session authenticates, calls `core.feature_dependencies` (CORE §4.3), then negotiates. A session that carries a `grant` field also requests `core.grants` (CORE §5, §15); that is a use of the feature, not a dependency the query reports.
   - When the query answers `method_not_found`, the client uses the dependencies stated in the profile documents and still requests them. It never drops a required feature.
   - The client negotiates each profile with the provider that serves it, and relies only on what negotiation selected.
   - Commands use real command identity and digests (CORE §6, ENCODING).
@@ -22,6 +22,9 @@ The runner launches a client with the fixture step `start_client`, which renders
 - **Grants.** The configuration names the grant for each use (`context`, `packet_evidence`, `records`, `evidence`). Every profile operation for that use carries that grant; `core.authenticate`, `core.feature_dependencies` and `core.negotiate` carry none (CORE §15).
 
 Provider entries in a configuration have the form `{ "socket": path, "credential": string }`, keyed by `provider_id`.
+
+- **Not durable.** Clients keep no journal. A fixture never restarts a client, and recovery after a client restart is outside these clients' claimed coverage.
+- **Descriptor values** for artifacts a client publishes: `scope` `"thirdparty"`, `retention_class` `"standard"`, `capture` `{ captured_at: now, anchors: [] }` and `coverage` `{ completeness: "complete", covered: ["content"], gaps: [] }`. These are test values; EVIDENCE §3 leaves both scope and retention class to the provider and producer.
 
 ## `minimal-executor`: an independent execution kernel (S-A)
 
@@ -51,18 +54,22 @@ Each `work` item:
 
 **Evaluating the dispatch boundary.** For each item not yet dispatched, whenever `now` is at or after `dispatch_at`, the kernel evaluates the binding. The state is the first rule that applies:
 
-1. **Not held.** The packet bytes cannot be fetched at the artifact's provider, or the SHA-256 digest of the exact bytes received differs from the reference's digest: state `unsatisfied`.
-2. **Facts unreadable.** The packet's result facts cannot be read at the Context provider (`context.packet.inspect` under the context grant), or the facts name a different artifact or digest for that revision: state `unknown`.
+1. **Wrong bytes.** The SHA-256 digest of the exact bytes received differs from the reference's digest, or the Evidence provider refuses the fetch because the reference's digest is not the artifact's (`artifact_digest_mismatch`): state `unsatisfied`. Such bytes are never held (EXECUTION §13.1 "Fetch").
+2. **Unreadable.** The packet bytes cannot be fetched for any other reason, such as an unreachable provider or unavailable bytes; or the result facts cannot be read at the Context provider (`context.packet.inspect` under the context grant); or the facts name a different artifact or digest for that revision: state `unknown`.
 3. **Stale.** `invalidated_items` names an item whose obligation is not `advisory`: state `stale`.
 4. **Unknown.** `unverified_items` names an item whose obligation is not `advisory`, or a required item of that revision is not `satisfied`: state `unknown`.
 5. **Otherwise** `current`.
+
+An item whose obligation the facts do not state counts as required. A binding obligation or fallback this interface does not name is always withheld.
 
 **Decision.**
 - **`required_before_start`:** dispatch only when the state is `current`; otherwise withhold.
 - **`advisory` with `proceed_with_gap`:** always dispatch, with `gap` true when the state is not `current`.
 - **Re-evaluation.** A withheld item is evaluated again at later polls. A new check record is published only when the state or decision differs from the item's previous check.
 
-**Mutant `ignores-required-boundary`.** This deliberately broken kernel still evaluates and publishes honest check records, but it dispatches every due item whatever its state. It exists only so fixtures can prove they detect a kernel that ignores the boundary.
+**Mutants.** These deliberately broken kernels exist only so fixtures can prove they detect them:
+- **`ignores-required-boundary`** still evaluates and publishes honest check records, but it dispatches every due item whatever its state.
+- **`trusts-advertised-digest`** does not hash the fetched packet bytes, and treats bytes the provider returned for the reference's digest as held.
 
 **Records.** Each record is published at the records provider as a sealed Evidence artifact:
 - **Commands:** `evidence.upload.prepare`, `evidence.upload.append` and `evidence.seal`, with precondition revisions as EVIDENCE §4 requires.
@@ -87,6 +94,8 @@ Each `work` item:
 | `evidence` | `{ provider, grant }` |
 | `artifacts` | `[ { id, media_type, content_base64, chunk_bytes } ]`, published in order. `chunk_bytes` bounds each append, which must also respect the provider's `chunk_limit`. |
 | `result_file` | Optional: where to write the result |
+
+**Descriptor.** The common descriptor values above, with source `{ kind: "thirdparty.publisher", id: <artifact id> }`.
 
 **Behavior.** For each artifact the publisher:
 1. computes the SHA-256 digest over the decoded bytes;

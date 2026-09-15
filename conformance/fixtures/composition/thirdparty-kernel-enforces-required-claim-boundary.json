@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.thirdparty-kernel-enforces-required-claim-boundary",
-  "version": 1,
+  "version": 2,
   "title": "An independently written execution kernel (client only, not an execution/1 provider) negotiates Context with the Context provider and Evidence with each Evidence provider, and enforces its own dispatch boundary from read-time claim facts over the public protocol: a valid required context dispatches, an advisory-only change does not stop required work, an invalidated required claim withholds the required dispatch while advisory work proceeds with its gap, mismatched bytes are never held, and unavailable knowledge is never valid; a kernel that ignores the boundary fails",
   "requirements": [
     "SCN-16",
@@ -9,7 +9,7 @@
     "CMP-9"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets",
+    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets-proposed-m5",
     "conformance/thirdparty/README.md",
     "docs/work/release-0.1/M6.md#s-a-an-independent-execution-kernel-enforcing-a-required-claim-boundary"
   ],
@@ -39,14 +39,19 @@
   "requires_controls": [
     "clock.file",
     "context.script",
-    "knowledge.store"
+    "knowledge.store",
+    "evidence.store"
   ],
-  "polarity": "negative",
   "kills": [],
+  "polarity": "negative",
   "client_kills": [
     {
       "implementation": "minimal-executor",
       "mutant": "ignores-required-boundary"
+    },
+    {
+      "implementation": "minimal-executor",
+      "mutant": "trusts-advertised-digest"
     }
   ],
   "steps": [
@@ -660,6 +665,37 @@
               {
                 "publish": {}
               }
+            ],
+            "r-3": [
+              {
+                "section": {
+                  "section_id": "s-d",
+                  "item_id": "i-d",
+                  "label": "binding",
+                  "content": "content of C",
+                  "claim": {
+                    "provider": "knowledge-1",
+                    "claim": "C",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_C"
+                    }
+                  }
+                }
+              },
+              {
+                "conditions": [
+                  {
+                    "condition_id": "k-1",
+                    "kind": "repository_tree",
+                    "repository": "repo-a",
+                    "expected": "tree-1"
+                  }
+                ]
+              },
+              {
+                "publish": {}
+              }
             ]
           },
           "knowledge_provider": {
@@ -672,6 +708,11 @@
             },
             "grant": "g-ctx-read"
           }
+        },
+        "evidence_store": {
+          "serve_altered_bytes": [
+            "packet.r-3.1"
+          ]
         }
       },
       "credential_principals": [
@@ -982,6 +1023,76 @@
       "session": "ctx-owner"
     },
     {
+      "step": "command",
+      "operation": "context.request.submit",
+      "command_id": "request-submit-r-3",
+      "subject": {
+        "kind": "context.request",
+        "id": "r-3"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "context.request",
+            "id": "r-3"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "consumer": {
+          "task": "change billing",
+          "principal": "kernel"
+        },
+        "basis": {
+          "repositories": [
+            {
+              "id": "repo-a",
+              "tree": "tree-1",
+              "workspace": "clean",
+              "dirty": null
+            }
+          ],
+          "completeness": "complete"
+        },
+        "items": [
+          {
+            "item_id": "i-d",
+            "selector": {
+              "kind": "claim",
+              "value": "C"
+            },
+            "obligation": "required_before_start",
+            "reliance": "binding",
+            "selected_by": "owner",
+            "check": {
+              "kind": "claim_included",
+              "claim": {
+                "provider": "knowledge-1",
+                "claim": "C",
+                "revision": 1,
+                "digest": {
+                  "$var": "d_C"
+                }
+              }
+            }
+          }
+        ],
+        "limits": {
+          "deadline": "2030-01-01T01:00:00Z",
+          "investigation": {
+            "units": "queries",
+            "amount": 10
+          },
+          "output_capacity": {
+            "units": "bytes",
+            "amount": 4096
+          }
+        }
+      },
+      "session": "ctx-owner"
+    },
+    {
       "step": "query",
       "operation": "context.request.inspect",
       "payload": {
@@ -1010,6 +1121,22 @@
       },
       "capture": {
         "p2": "/result/packets/0/reference/artifact/digest"
+      },
+      "session": "ctx-owner"
+    },
+    {
+      "step": "query",
+      "operation": "context.request.inspect",
+      "payload": {
+        "request": "r-3"
+      },
+      "expect": {
+        "ok": {
+          "state": "ready"
+        }
+      },
+      "capture": {
+        "p3": "/result/packets/0/reference/artifact/digest"
       },
       "session": "ctx-owner"
     },
@@ -1252,6 +1379,30 @@
                   },
                   "digest": {
                     "$var": "p1"
+                  }
+                }
+              },
+              "obligation": "required_before_start"
+            }
+          },
+          {
+            "work_id": "w-altered",
+            "dispatch_at": "2030-01-01T00:03:00Z",
+            "binding": {
+              "packet": {
+                "packet": {
+                  "kind": "context.packet",
+                  "id": "r-3"
+                },
+                "revision": 1,
+                "artifact": {
+                  "provider": "context-1",
+                  "artifact": {
+                    "kind": "evidence.artifact",
+                    "id": "packet.r-3.1"
+                  },
+                  "digest": {
+                    "$var": "p3"
                   }
                 }
               },
@@ -1827,6 +1978,72 @@
             }
           }
         }
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "check.w-altered.1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "state": "sealed",
+          "descriptor": {
+            "producer": {
+              "principal": "kernel"
+            }
+          }
+        }
+      },
+      "capture": {
+        "c_altered": "/result/descriptor/digest"
+      },
+      "eventually_ms": 20000,
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "check.w-altered.1"
+        },
+        "digest": {
+          "$var": "c_altered"
+        }
+      },
+      "expect": {
+        "ok": {
+          "data_base64": {
+            "$base64_json": {
+              "format": "combraton-thirdparty-kernel-check/1",
+              "work_id": "w-altered",
+              "boundary": "dispatch",
+              "state": "unsatisfied",
+              "decision": "withhold"
+            }
+          }
+        }
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "dispatch.w-altered"
+        }
+      },
+      "expect": {
+        "error": "not_found"
       },
       "session": "rec-owner"
     },

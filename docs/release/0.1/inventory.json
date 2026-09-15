@@ -82,12 +82,12 @@
     },
     {
       "path": "conformance/fixtures/composition/thirdparty-kernel-enforces-required-claim-boundary.json",
-      "sha256": "a961b64aac48d87f488c37e92b0d7e7b7ebda2dea40583bb4792a348203d19d5",
-      "bytes": 46505
+      "sha256": "90edb2c102f05ca8cfeee2d074d9ff0dadb523f93f547e638c63a0d4bd77af19",
+      "bytes": 51859
     },
     {
       "path": "conformance/fixtures/composition/thirdparty-publisher-feeds-reference-verification.json",
-      "sha256": "778a8593a4b585cc291f3c2986ea4af2f1539a4d664af4a740abdcc9eff1ed54",
+      "sha256": "cd380e343c3d8968d29d65ed38fdc44cb51c4c001c773c74b9a97dfaffc3cf92",
       "bytes": 12156
     },
     {
@@ -2113,7 +2113,7 @@
   ],
   "totals": {
     "files": 420,
-    "bytes": 2922589,
-    "listing_sha256": "a383e8ab2a15c74cf5fb338942087404f22cc390342ee0b7cd2c394ad43513e0"
+    "bytes": 2927943,
+    "listing_sha256": "3f5082452d662c823300debffd85130bb12a1f850c21b15017c2f66dca888b31"
   }
 }

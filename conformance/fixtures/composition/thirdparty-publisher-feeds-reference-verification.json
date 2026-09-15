@@ -33,8 +33,8 @@
   "requires_controls": [
     "clock.file"
   ],
-  "polarity": "negative",
   "kills": [],
+  "polarity": "negative",
   "client_kills": [
     {
       "implementation": "minimal-publisher",

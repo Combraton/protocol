@@ -24,7 +24,8 @@
       "{mutant}"
     ],
     "names": [
-      "ignores-required-boundary"
+      "ignores-required-boundary",
+      "trusts-advertised-digest"
     ]
   }
 }

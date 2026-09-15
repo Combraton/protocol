@@ -141,6 +141,56 @@ The fixtures were opened only after that run.
 | `minimal-executor=ignores-required-boundary` | `composition.thirdparty-kernel-enforces-required-claim-boundary` | `fail` | 51: `expected error not_found, received success` for `evidence.inspect` of `dispatch.w-req` | The mutant published an honest `check.w-req.1` (`stale`, `withhold`) and then dispatched anyway (`dispatch.w-req`, `gap: true`). It also dispatched `w-tampered`. |
 | `minimal-publisher=uploads-bytes-differing-from-digest` | `composition.thirdparty-publisher-feeds-reference-verification` | `fail` | 5: `client "publisher" exited with status 1; 0 is required` | The provider refused the seal of `tp-contract` with `content_digest_mismatch` (client log), and the publisher exited 1. |
 
-## Unresolved
+## Unresolved at `67650ef`
 
-Nothing fails in these runs. Open interface questions, for the owner and not for the clients: TP-2 (descriptor `scope` and `retention_class`), TP-6 (kernel restart) and TP-8 (Context provider outage when it also holds the packets).
+Nothing failed in those runs. Three interface questions were left for the owner: TP-2 (descriptor `scope` and `retention_class`), TP-6 (kernel restart) and TP-8 (Context provider outage when it also holds the packets). They were resolved in `884582a` (below).
+
+## After the interface resolution (`884582a`)
+
+`884582a` changed `conformance/thirdparty/README.md`, added the kernel mutant `trusts-advertised-digest` to `minimal-executor/participant.json`, and brought kernel fixture version 2. Everything below was read from those files and from the allowed spec changes. The spec changes (status banners, removed *candidate* markers, negotiation item order in CORE §4.2, and feature-entry wording in EXECUTION §1) need no client change.
+
+### TP-18: rule order: only wrong bytes are `unsatisfied`
+- **Location.** Interface evaluation rules 1 and 2 (changed); resolves TP-8.
+- **Interface now.** Rule 1: the client's own SHA-256 differs from the reference digest, or the fetch is refused with `artifact_digest_mismatch`, gives `unsatisfied`. Rule 2: bytes that cannot be fetched for any other reason, unreadable facts, or facts naming another reference give `unknown`.
+- **Implemented.**
+  - `artifact_digest_mismatch` and an own-hash mismatch are `unsatisfied`.
+  - These give `unknown`: every other refusal (`not_found`, `permission_denied` and so on), transport or negotiation failure, `availability` other than `available`, and an inconsistent fetch response (another artifact or offset, changing `size`, `next_offset` not matching the bytes, no progress).
+  - A packet provider missing from `providers` or `packet_evidence`, or a reference without an artifact and digest, is also `unknown`: its bytes cannot be fetched.
+- **Basis.** Interface. Classing inconsistent responses and missing configuration as "cannot be fetched" rather than "wrong bytes" is own judgment: no hash of the packet's bytes was compared.
+
+### TP-19: fixed descriptor values
+- **Location.** Interface "Descriptor values" and the publisher's "Descriptor"; resolves TP-2 and TP-3.
+- **Implemented.** One shared helper, `test_descriptor`, gives both clients scope `thirdparty`, retention class `standard`, capture `{ captured_at: now, anchors: [] }`, coverage `{ completeness: "complete", covered: ["content"], gaps: [] }` and producer principal equal to the session principal. The sources are `thirdparty.kernel` with the work ID, and `thirdparty.publisher` with the artifact ID. `anchors`, `covered` and `gaps` were previously omitted.
+- **Basis.** Interface.
+
+### TP-20: kernel mutant `trusts-advertised-digest`
+- **Location.** Interface "Mutants"; `minimal-executor/participant.json`.
+- **Implemented.**
+  - The mutant does not hash the fetched packet bytes.
+  - The bytes count as held when the fetch completed and every response advertised the reference's digest.
+  - A refusal (`artifact_digest_mismatch` or any other) is judged as in TP-18, because nothing was returned.
+  - An advertised digest that differs from the reference is still `unsatisfied`, so the mutant differs from the correct kernel only in trusting the advertisement.
+- **Basis.** Interface. The branch for a different advertised digest is own judgment; the reference provider refuses such fetches, so it is not exercised.
+
+### TP-21: questions closed without code changes
+- **TP-1.** The interface now states that a session carrying `grant` requests `core.grants`; the code has done so since `725fec3`.
+- **TP-4 and TP-5.** The interface now states the fail-closed choices already implemented.
+- **TP-6.** The interface now says clients are not durable, and restart recovery is not claimed. Nothing to implement.
+- **TP-17.** Kernel fixture version 2 exercises the kernel's own hash: `packet.r-3.1` is served altered under its sealed digest (`evidence_store.serve_altered_bytes`), and `w-altered` must be `unsatisfied` and withheld.
+- **Basis.** Interface and fixture version 2.
+
+### TP-22: runs at `010bc13` (kernel fixture version 2)
+- **Normal run.** `run: 2 fixtures (2 pass), 0 not passing`.
+  - `w-altered` is recorded `unsatisfied` and withheld, with reason `fetched packet bytes do not match the reference digest`: the kernel's own hash decided it.
+  - `w-tampered` is recorded `unsatisfied` with reason `packet bytes refused: artifact_digest_mismatch`.
+  - The other records are unchanged from TP-15 and TP-16.
+- **Mutants**, each with the failing step (0-based) and reason:
+
+| Mutant | Outcome | Failing step and reason | Cause, from the client log |
+|---|---|---|---|
+| `minimal-executor=ignores-required-boundary` | `fail` | 55: `expected error not_found, received success` for `evidence.inspect` of `dispatch.w-altered` | Honest checks, then dispatch of every due item: `w-req` (`stale`), `w-tampered` and `w-altered` (`unsatisfied`) were all dispatched. Version 2 checks `dispatch.w-altered` before the steps that caught this mutant in version 1. |
+| `minimal-executor=trusts-advertised-digest` | `fail` | 54: `result/data_base64(json)/decision: expected "withhold", found "dispatch"` for `check.w-altered.1` | Without its own hash, the kernel took the altered bytes served under the sealed digest as held: `check.w-altered.1` state `current`, and `dispatch.w-altered` was published. `w-tampered` was still `unsatisfied`, because the provider refused that fetch. |
+| `minimal-publisher=uploads-bytes-differing-from-digest` | `fail` | 5: `client "publisher" exited with status 1; 0 is required` | The seal of `tp-contract` was refused with `content_digest_mismatch`. |
+
+- No client stderr log contains a credential (`ccred1`).
+- **Unresolved.** Nothing.

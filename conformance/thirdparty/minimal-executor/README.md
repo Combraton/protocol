@@ -25,19 +25,21 @@ The kernel opens one Unix-socket session per provider per purpose. Each session 
 
 At every poll (`poll_ms`, default 25), the kernel reads "now" from `clock_file`. Each undispatched item whose `dispatch_at` has passed is evaluated. The first rule that applies gives the state:
 
-1. **`unsatisfied`.** The packet bytes cannot be fetched in full with `evidence.fetch` at the artifact's provider, or the SHA-256 of the exact bytes received differs from the reference digest.
-2. **`unknown`.** `context.packet.inspect` fails, or its `reference` is not exactly the bound packet reference.
+1. **`unsatisfied`: wrong bytes.** The SHA-256 of the exact bytes received with `evidence.fetch` differs from the reference digest, or the provider refuses the fetch with `artifact_digest_mismatch`. Such bytes are never held.
+2. **`unknown`: unreadable.** The bytes cannot be fetched in full for any other reason (unreachable provider, unavailable bytes, an inconsistent response), `context.packet.inspect` fails, or its `reference` is not exactly the bound packet reference.
 3. **`stale`.** `invalidated_items` names an item that is not advisory.
 4. **`unknown`.** `unverified_items` names an item that is not advisory, or a required item's result is not `satisfied`.
 5. **`current`** otherwise.
 
-`required_before_start` work is dispatched only when the state is `current`. `advisory` work with `proceed_with_gap` is always dispatched, with `gap` true unless the state is `current`. A check record `check.<work_id>.<n>` is published whenever the state or the decision differs from the item's previous check. Records are canonical JSON, published with `evidence.upload.prepare`, `evidence.upload.append` and `evidence.seal`, with command identities derived from the artifact ID. A publication interrupted by a lost connection is retransmitted as the same commands, which replay.
+An item whose obligation the facts do not state counts as required. `required_before_start` work is dispatched only when the state is `current`. `advisory` work with `proceed_with_gap` is always dispatched, with `gap` true unless the state is `current`. Any other obligation or fallback is withheld. A check record `check.<work_id>.<n>` is published whenever the state or the decision differs from the item's previous check. Records are canonical JSON with the interface's fixed descriptor values (scope `thirdparty`, retention class `standard`, `anchors: []`, coverage `complete` over `["content"]` with no gaps), published with `evidence.upload.prepare`, `evidence.upload.append` and `evidence.seal`, with command identities derived from the artifact ID. A publication interrupted by a lost connection is retransmitted as the same commands, which replay.
 
 Credentials are read only from the configuration file. They are never put on the command line, in the environment or in a log line; the logger also redacts them.
 
-## Mutant
+## Mutants
 
-`--mutant ignores-required-boundary` evaluates and publishes honest check records, including `decision: "withhold"`. It then dispatches every due item whatever its state. Fixtures must detect it at the step that expects no dispatch.
+Both are deliberately broken kernels, for fixtures to detect:
+- **`--mutant ignores-required-boundary`** evaluates and publishes honest check records, including `decision: "withhold"`. It then dispatches every due item whatever its state. It must fail at the step that expects no dispatch.
+- **`--mutant trusts-advertised-digest`** does not hash the fetched packet bytes. Bytes the provider returned for the reference's digest count as held, so altered bytes served under the sealed digest look current. It must fail where the fixture expects `w-altered` to be `unsatisfied` and withheld.
 
 ## Written from
 
@@ -55,11 +57,12 @@ The shared client code is in `../common/combraton_client.py`.
 
 ## Coverage
 
-- **Demonstrated** (fixture `composition.thirdparty-kernel-enforces-required-claim-boundary`). A second implementation enforces a required dispatch boundary from CONTEXT §14 read-time facts. It checks packet bytes by digest. Advisory work proceeds with its gap, and unavailable knowledge never counts as valid. It publishes its records as Evidence through public operations.
+- **Demonstrated** (fixture `composition.thirdparty-kernel-enforces-required-claim-boundary`, version 2). A second implementation enforces a required dispatch boundary from CONTEXT §14 read-time facts. It checks packet bytes by its own digest: altered bytes served under the sealed digest (`w-altered`) and a reference the provider refuses (`w-tampered`) are both `unsatisfied` and withheld. Advisory work proceeds with its gap, and unavailable knowledge never counts as valid. It publishes its records as Evidence through public operations.
 - **Not claimed.**
   - `execution/1` provider conformance;
   - the EXECUTION §13.1/§13.3 wire shapes (`context.blocked`, queue reasons, `context.checks` in `execution.inspect`);
   - admission, capacity release and transition boundaries;
   - applicability conditions the executor would observe itself;
-  - restart recovery: the kernel keeps no durable journal (TP-6);
+  - restart recovery: clients are not durable, and fixtures never restart them (interface "Not durable");
+  - an outage of the Context provider or of a packet's Evidence provider (recorded `unknown`, but no fixture stops those providers);
   - the Context, Knowledge and Evidence providers, which are the reference.

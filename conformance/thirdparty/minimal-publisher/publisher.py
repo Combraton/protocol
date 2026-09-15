@@ -106,15 +106,8 @@ def run(cfg, mutant):
             if mutant == "uploads-bytes-differing-from-digest":
                 appended = alter_one_byte(content)
             now = read_now(clock)
-            fields = {
-                "media_type": a["media_type"],
-                "producer": {"principal": session.principal},
-                "source": {"kind": "thirdparty.publisher", "id": aid},
-                "scope": "thirdparty",
-                "capture": {"captured_at": cc.format_instant(now)},
-                "coverage": {"completeness": "complete"},
-                "retention_class": "standard",
-            }
+            fields = cc.test_descriptor(a["media_type"], "thirdparty.publisher", aid,
+                                        session.principal, now)
             log("publishing %s (%d bytes, %s)" % (aid, len(content), digest))
             try:
                 seal = cc.publish_artifact(session, grant, aid, content, fields, "tp-publisher",

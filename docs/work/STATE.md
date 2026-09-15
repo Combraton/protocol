@@ -16,7 +16,7 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
     - The merge commit's tree equals `86e128f`.
 
   M2, M3 and M4 are accepted milestones; Protocol 0.1 is not accepted or released.
-- **Branch:** `release-0.1/m5` from `ee82afb`, in a draft PR; not merged.
+- **Branch:** `release-0.1/m5` from `ee82afb`, in draft [PR #6](https://github.com/Combraton/protocol/pull/6); not merged.
 - **Done in M5 so far (step 1, drafts):**
   - [KNOWLEDGE](../spec/profiles/KNOWLEDGE.md) and [VERIFICATION](../spec/profiles/VERIFICATION.md);
   - [CONTEXT §14](../spec/profiles/CONTEXT.md#14-claims-in-packets-proposed-m5), claims in packets, a proposed negotiated extension;

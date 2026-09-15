@@ -36,7 +36,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 ## Git state
 
 - **`main`** at `ee82afb`, the merge of PR #5 (parents `481cf7f` and `86e128f`; its tree equals `86e128f`).
-- **Branch** `release-0.1/m5` from `ee82afb`, in a draft PR.
+- **Branch** `release-0.1/m5` from `ee82afb`, in draft [PR #6](https://github.com/Combraton/protocol/pull/6).
 - **Worktrees:** none.
   - `.worktrees/independent-m4` was removed on 2026-09-15 after checks: it had no uncommitted changes, `release-0.1/m4-independent` (`6ec6712`) had no commits outside `main`, and its results directory matched the preserved copy. Only regenerable `target/` and `__pycache__/` were discarded.
   - The branch was deleted.

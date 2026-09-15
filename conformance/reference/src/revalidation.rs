@@ -118,15 +118,21 @@ fn peer_for<'a>(executor: &'a Value, provider: &str) -> Option<&'a Value> {
 }
 
 /// Read the bound revision's result facts at the context provider under the binding's grant.
-fn read_facts(executor: &Value, binding: &Value) -> Result<Value, String> {
+fn read_facts(executor: &Value, binding: &Value, claims: bool) -> Result<Value, String> {
     let reference = &binding["packet"];
     let context = &binding["fetch"]["context"];
     let provider = context["provider"].as_str().unwrap_or_default();
     let peer = peer_for(executor, provider)
         .ok_or_else(|| format!("no connection to context provider {provider}"))?;
+    // Claim revalidation reads claim facts, which need `context.claims` (EXECUTION section 13.3).
+    let optional: Vec<&str> = if claims {
+        vec!["context.claims"]
+    } else {
+        Vec::new()
+    };
     let profiles = json!([
         {"name": "core", "majors": [1], "required": true, "required_features": ["core.events", "core.grants"], "optional_features": []},
-        {"name": "context", "majors": [1], "required": true, "required_features": [], "optional_features": []},
+        {"name": "context", "majors": [1], "required": true, "required_features": [], "optional_features": optional},
     ]);
     let mut client =
         Peer::connect(peer, profiles).map_err(|f| format!("context provider: {}", f.describe()))?;
@@ -232,7 +238,8 @@ pub fn check(
     if binding["fetch"].get("context").is_some() {
         let require_current =
             binding["require_current"] == true && !mutants.on("current-requirement-ignored");
-        match read_facts(executor, binding) {
+        let claims = record["context"]["claim_revalidation"] == true;
+        match read_facts(executor, binding, claims) {
             Err(reason) => {
                 let result = if mutants.on("context-outage-fails-open") {
                     "match"
@@ -277,19 +284,51 @@ pub fn check(
                     .filter(|i| i["obligation"] != "advisory")
                     .map(|i| &i["item_id"])
                     .collect();
-                let invalidated: Vec<String> = facts["invalidated_items"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|i| required.contains(&&i["item_id"]))
-                    .filter_map(|i| i["item_id"].as_str().map(String::from))
-                    .collect();
-                let mut entry = json!({"condition_id": "packet.facts", "evidence": "context provider result facts"});
-                if invalidated.is_empty() || mutants.on("pinned-ignores-correction") {
-                    entry["result"] = json!("match");
+                let listed = |member: &str, with_claim: bool| -> Vec<String> {
+                    facts[member]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|i| required.contains(&&i["item_id"]))
+                        .filter(|i| i.get("claim").is_some() == with_claim)
+                        .filter_map(|i| i["item_id"].as_str().map(String::from))
+                        .collect()
+                };
+                let invalidated = listed("invalidated_items", false);
+                let enforce_claims = claims && !mutants.on("claim-revalidation-ignored");
+                let claim_invalidated = if enforce_claims {
+                    listed("invalidated_items", true)
                 } else {
+                    Vec::new()
+                };
+                let unverified = if enforce_claims {
+                    listed("unverified_items", true)
+                } else {
+                    Vec::new()
+                };
+                let mut entry = json!({"condition_id": "packet.facts", "evidence": "context provider result facts"});
+                let corrected = !invalidated.is_empty() && !mutants.on("pinned-ignores-correction");
+                if corrected || !claim_invalidated.is_empty() {
                     entry["result"] = json!("mismatch");
-                    entry["observed"] = json!(format!("corrected: {}", invalidated.join(", ")));
+                    let mut observed = Vec::new();
+                    if corrected {
+                        observed.push(format!("corrected: {}", invalidated.join(", ")));
+                    }
+                    if !claim_invalidated.is_empty() {
+                        observed.push(format!(
+                            "claim invalidated: {}",
+                            claim_invalidated.join(", ")
+                        ));
+                    }
+                    entry["observed"] = json!(observed.join("; "));
+                } else if !unverified.is_empty() {
+                    entry["result"] = json!("unavailable");
+                    entry["evidence"] = json!(format!(
+                        "claim knowledge not established for: {}",
+                        unverified.join(", ")
+                    ));
+                } else {
+                    entry["result"] = json!("match");
                 }
                 results.push(entry);
                 let current = facts["current"] == true;

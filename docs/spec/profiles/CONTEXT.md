@@ -175,7 +175,7 @@ A packet that carries claims preserves Knowledge identity, reliance and applicab
 - **Feature** `context.claims`. A provider with it reads claims at a knowledge provider, its own or a peer, as an ordinary reader under a grant held there (§7 applies to that audience too).
 - **Packet format** `combraton-context-packet/2`. It adds the section member `claim`; format `/1` packets never carry it. A request submitted without `context.claims` gets `/1` packets and M4 behavior.
 - **Check kind** `{ kind: "claim_included", claim: reference }` for items. In a request whose session did not negotiate `context.claims`, it is `unsupported_required_feature` with `features: ["context.claims"]`.
-- **Recomputing digests.** The provider recomputes each claim record's digest from what it read (KNOWLEDGE §3). A record whose digest differs from the reference is never carried or relied on.
+- **Recomputing digests.** The provider recomputes each claim record's digest from what it read (KNOWLEDGE §3). A record whose digest differs from the reference is never carried or relied on: its section is omitted with reason `unavailable`, and its item is `unmet` with reason `claim_digest_mismatch`.
 
 **Section claim snapshot**, as read when the packet was prepared:
 
@@ -193,7 +193,7 @@ A packet that carries claims preserves Knowledge identity, reliance and applicab
 | any | the claim could be read and its digest verified | `knowledge_unavailable` or `claim_digest_mismatch` |
 
 **Labels cannot promote a claim, and applicability keeps its distinctions.**
-- A section may be labeled `binding` only when its claim is `accepted_for_use` with `permitted_use: binding`. A proposed or rejected claim is never `binding`. An extracted instruction stays a `hypothesis` or `inferred` section until decided (KNW-9).
+- A section may be labeled `binding` only when its claim is `accepted_for_use` with `permitted_use: binding`. A proposed or rejected claim is never `binding`; the reference provider publishes such a section as `hypothesis`. An extracted instruction stays a `hypothesis` or `inferred` section until decided (KNW-9).
 - Only `invalid_for_target` makes a claim section `historical: true` with label `stale`. A claim whose applicability is `needs_check` or `unknown` is not stale and not historical: its section keeps its label with `historical: false`, and its snapshot shows the result.
 - Open conflicts involving a carried claim are listed in the snapshot. When a conflict is material to an item, the competing revisions are carried, or omitted with a stated reason, never dropped silently.
 
@@ -202,10 +202,13 @@ A packet that carries claims preserves Knowledge identity, reliance and applicab
   - `reliance_changed`;
   - `applicability_changed`;
   - `conflict_opened`;
-  - `lineage_revised`, when the claim has a newer revision; this is information, not invalidity;
+  - `lineage_revised`, whenever the claim has a revision newer than the carried one, including one revised before the packet was prepared; this is information, not invalidity;
   - `unavailable`.
-- **Invalidated items.** A required item satisfied by a claim section that no longer meets the table above appears in `invalidated_items` as `{ item_id, claim, reason }`. `reason` is `permitted_use_lost` or `invalid_for_target`. These sit beside the authority corrections of §8.
-- **Unverified items.** A required item whose claim cannot be read or verified, or whose latest evaluation for the basis is now `needs_check` or `unknown`, appears in `unverified_items: [ { item_id, claim, reason } ]`. `reason` is `knowledge_unavailable`, `claim_digest_mismatch` or `applicability_not_established`. Unavailable knowledge is unknown, never valid.
+- **Invalidated items.** A required item satisfied at publication by a claim section that no longer meets the table above appears in `invalidated_items` as `{ item_id, claim, reason }`. `reason` is `permitted_use_lost` or `invalid_for_target`. These sit beside the authority corrections of §8.
+- **Unverified items.** A required item satisfied at publication whose claim now cannot be read or verified, or whose latest evaluation for the basis is now `needs_check` or `unknown`, appears in `unverified_items: [ { item_id, claim, reason } ]`. `reason` is `knowledge_unavailable`, `claim_digest_mismatch` or `applicability_not_established`. Unavailable knowledge is unknown, never valid.
 - Packet bytes and published facts never change. A newer claim revision or a newer packet revision is never substituted. Supersession stays distinct from invalidity, as in §8.
+
+- **Sessions without `context.claims`** see packet facts without `claim` members, `claim_changes` or `unverified_items`, and `invalidated_items` lists only authority corrections.
+- **Knowledge source.** The reference provider reads claims in its own knowledge store, or at the provider named by launch configuration `context.knowledge_provider`.
 
 Execution enforces these at the binding's own boundary under `execution.claim_revalidation` ([EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5)).

@@ -63,7 +63,9 @@
       "execution.evidence_outputs",
       "evidence.work_binding",
       "verification.jobs",
-      "verification.record"
+      "verification.record",
+      "context.claims",
+      "execution.claim_revalidation"
     ],
     "test_controls": [
       "clock.file",
@@ -139,7 +141,10 @@
       "current-requirement-ignored",
       "supersession-always-stale",
       "pinned-ignores-correction",
-      "newer-revision-substituted"
+      "newer-revision-substituted",
+      "unavailable-knowledge-valid",
+      "claim-revalidation-ignored",
+      "advisory-blocked-by-claims"
     ]
   }
 }

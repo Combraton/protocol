@@ -2,7 +2,7 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-15 (M5 decisions M5-Q1 to M5-Q9 incorporated; implementation authorized within M5 scope, not merge or release).
+- **Updated:** 2026-09-15 (M5 steps 1–4 done: decisions incorporated; Knowledge and Verification reference providers; claims in packets and claim revalidation. Next: step 5, the independent pass).
 - **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
   - Current milestone: [M5 task](release-0.1/M5.md), the Knowledge and Verification profiles.
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
@@ -36,6 +36,6 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
 - **Owner decisions M5-Q1 to M5-Q9** (2026-09-15): recorded in [M5](release-0.1/M5.md#owner-decisions-2026-09-15). Implementation is authorized within M5 scope; merging M5 and releasing Protocol 0.1 are not.
 - **Open owner decisions:** acceptance of M5 when presented. Machine-readable feature-dependency advertising stays an M6 decision (CMP-5).
 - **Prompt disposition:** no active continuation prompt. The workspace `START-PROTOCOL.md` is retired and points here.
-- **Next action:** M5 step 2, the Knowledge reference provider ([work plan](release-0.1/M5.md#work-plan)).
+- **Next action:** M5 step 5, the spec-only independent pass, then close-out ([work plan](release-0.1/M5.md#work-plan), [status](release-0.1/M5.md#status)).
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

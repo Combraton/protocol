@@ -63,7 +63,9 @@
       "execution.evidence_outputs",
       "evidence.work_binding",
       "verification.jobs",
-      "verification.record"
+      "verification.record",
+      "context.claims",
+      "execution.claim_revalidation"
     ],
     "test_controls": [
       "clock.file",
@@ -409,7 +411,13 @@
       "assess-roles-incomplete-accepted",
       "receipt-bytes-unchecked",
       "failure-marks-execution",
-      "receipt-authorizes-decision"
+      "receipt-authorizes-decision",
+      "label-promotes-claim",
+      "unknown-applicability-marked-stale",
+      "claim-latest-substituted",
+      "claim-digest-unchecked",
+      "claims-without-negotiation",
+      "claim-invalidation-unreported"
     ]
   }
 }

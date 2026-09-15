@@ -9,6 +9,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **Checkpoint:** 2026-09-15.
   - The owner accepted M4 at `86e128f` as a completed milestone with its documented coverage limits. PR #5 merged as `ee82afb`.
   - M5 began on `release-0.1/m5`. Step 1 is done: the owner decided M5-Q1 to M5-Q9, and the decisions are incorporated. Implementation is authorized within M5 scope, but not merging or releasing.
+  - Steps 2–4 are done ([M5 status](M5.md#status)): the Knowledge and Verification reference providers, claims in packets and claim revalidation.
 - **Status:** M0–M4 merged. M5 is in step 1 ([M5 task](M5.md)). Protocol 0.1 is not accepted or released.
 
 ## Goal, decisions and constraints
@@ -71,6 +72,13 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **M4 merge:** `gh pr merge 5 --merge --match-head-commit 86e128f…` produced `ee82afb`; `git diff 86e128f ee82afb` is empty. CI for `main` at `ee82afb` runs in the repository's [Actions](https://github.com/Combraton/protocol/actions?query=branch%3Amain).
 - **Independent-implementation evidence** (gitignored, local): `conformance/results/independent-m4-pass-evidence/`, including `worktree-results/`, a copy of the helper worktree's run results for passes six to ten. M3 helper evidence stays under `conformance/results/independent-m3-pass-evidence/` and `conformance/results/independent-c1-evidence/`.
 - **M5 step 1:** documentation only; `python3 scripts/check_docs.py` passes.
+- **M5 steps 2–4** (local, macOS, at the step 4 commit):
+  - `cargo fmt --check`, `clippy -D warnings` and `cargo test` pass;
+  - `check-fixtures`: 271 fixtures ok;
+  - reference: stdio 247 pass, 24 skipped; Unix socket 271 pass;
+  - independent: 229 pass, 24 skipped, 18 unsupported (it does not claim the M5 profiles yet);
+  - `check-mutants` passes on both bindings;
+  - the claims composition ran as intended 5 of 5 times.
 - **Earlier milestones:** [M3 status](M3.md#status) and [M3-DIVERGENCES](M3-DIVERGENCES.md); M2 evidence in [M2](M2.md).
 
 ## What remains uncertain
@@ -94,5 +102,5 @@ None. No helper worktrees or background processes are owned by this task.
 
 ## Next action
 
-1. M5 step 2: the Knowledge reference provider, with schemas, fixtures and mutants for KNW-1 to KNW-9.
-2. Steps 3–6 of the [M5 work plan](M5.md#work-plan); present M5 for acceptance before merging.
+1. M5 step 5: a spec-only helper extends the independent Python provider to `knowledge/1`, `verification/1` and `context.claims` in a separate worktree; divergences are resolved.
+2. Step 6: close-out, then presentation of M5 for acceptance before merging.

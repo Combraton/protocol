@@ -384,6 +384,7 @@ const SUPPORTED: &[SupportedProfile] = &[
             "context.shared_jobs",
             "context.updates",
             "context.expand",
+            "context.claims",
         ],
         depends_on: &["core"],
         requires_core_features: &["core.events"],
@@ -411,8 +412,9 @@ const SUPPORTED: &[SupportedProfile] = &[
     },
 ];
 /// Optional `execution/1` features (EXECUTION sections 11 and 13).
-const EXECUTION_FEATURES: [&str; 11] = [
+const EXECUTION_FEATURES: [&str; 12] = [
     "execution.context_revalidation",
+    "execution.claim_revalidation",
     "execution.evidence_outputs",
     "execution.steering",
     "execution.actions",
@@ -688,7 +690,7 @@ impl Provider {
         ) {
             eprintln!("verification tick: {error}");
         }
-        let mut publisher = json!({"provider_id": self.identity.provider_id});
+        let mut publisher = self.context_publisher();
         if let Some(peer) = self.identity.context_script.get("evidence_provider") {
             publisher["evidence_provider"] = peer.clone();
         }
@@ -1028,10 +1030,12 @@ impl Provider {
         let execution_features = (
             self.feature_negotiated("execution.context_revalidation"),
             self.feature_negotiated("execution.evidence_outputs"),
+            self.feature_negotiated("execution.claim_revalidation"),
         );
         let context_features = (
             self.feature_negotiated("context.shared_jobs"),
             self.feature_negotiated("context.updates"),
+            self.feature_negotiated("context.claims"),
         );
         let fail_commit =
             fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
@@ -1047,6 +1051,7 @@ impl Provider {
                     grant: grant_id.as_deref(),
                     revalidation: execution_features.0,
                     evidence_outputs: execution_features.1,
+                    claim_revalidation: execution_features.2,
                 };
                 let (revision, outcome, events, effect_refs) = match operation_name {
                     "execution.submit" => {
@@ -1079,6 +1084,7 @@ impl Provider {
                             principal: &principal,
                             shared_jobs: context_features.0,
                             updates: context_features.1,
+                            claims: context_features.2,
                             script: &context_script,
                             mutants,
                         };
@@ -1907,6 +1913,7 @@ impl Provider {
                     "source_included",
                     "evidence_included",
                     "authority_content_included",
+                    "claim_included",
                 ];
                 if !known.iter().any(|kind| item["check"]["kind"] == *kind) {
                     item["check"] = json!({"kind": "authority_content_included"});
@@ -2636,14 +2643,22 @@ impl Provider {
                     .map_err(storage)?
                     .ok_or_else(|| reject("not_found", json!({})))
             }
-            "context.packet.inspect" => crate::context::inspect_packet(
-                &self.store,
-                &params["payload"],
-                self.caller_frame_limit,
-                &self.mutants,
-            )
-            .map_err(storage)?
-            .ok_or_else(|| reject("not_found", json!({}))),
+            "context.packet.inspect" => {
+                let publisher = self.context_publisher();
+                let reader = crate::context::PacketReader {
+                    claims: self.feature_negotiated("context.claims"),
+                    publisher: &publisher,
+                };
+                crate::context::inspect_packet(
+                    &self.store,
+                    &params["payload"],
+                    self.caller_frame_limit,
+                    &reader,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                .ok_or_else(|| reject("not_found", json!({})))
+            }
             "context.expand" => {
                 // A citation the principal may not read, a nonexistent citation and one held at
                 // another provider are refused identically (CONTEXT section 6, CORE-12).
@@ -2795,6 +2810,19 @@ impl Provider {
             }
             _ => Err(reject("method_not_found", json!({"operation": operation}))),
         }
+    }
+
+    /// What the context provider reaches besides its store: evidence and knowledge sources.
+    fn context_publisher(&self) -> Value {
+        let mut publisher = json!({
+            "provider_id": self.identity.provider_id,
+            "knowledge": *self.identity.knowledge,
+            "evidence_store": *self.identity.evidence_store,
+        });
+        if let Some(peer) = self.identity.context_script.get("knowledge_provider") {
+            publisher["knowledge_provider"] = peer.clone();
+        }
+        publisher
     }
 
     fn verification_context(&self, order: i64) -> crate::verification::Context<'_> {

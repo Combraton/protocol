@@ -5,6 +5,42 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "label-promotes-claim",
+        "publishes a claim section labeled binding although the claim is not accepted for binding use",
+    ),
+    (
+        "unknown-applicability-marked-stale",
+        "marks claims whose applicability is not established as stale historical sections",
+    ),
+    (
+        "claim-latest-substituted",
+        "carries the claim's latest revision instead of the named one",
+    ),
+    (
+        "claim-digest-unchecked",
+        "carries a claim without recomputing its record digest",
+    ),
+    (
+        "claims-without-negotiation",
+        "shows claim snapshots to sessions without context.claims",
+    ),
+    (
+        "claim-invalidation-unreported",
+        "does not report required items whose claims lost their use or applicability",
+    ),
+    (
+        "unavailable-knowledge-valid",
+        "treats unreadable claim knowledge as still valid",
+    ),
+    (
+        "claim-revalidation-ignored",
+        "ignores claim invalidations and unverified items when revalidating",
+    ),
+    (
+        "advisory-blocked-by-claims",
+        "blocks advisory work when its packet's claims are invalidated",
+    ),
+    (
         "receipt-listing-incomplete-accepted",
         "records a receipt that does not list every contract property exactly once",
     ),

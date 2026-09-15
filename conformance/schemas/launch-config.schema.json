@@ -639,6 +639,30 @@
             }
           },
           "additionalProperties": false
+        },
+        "knowledge_provider": {
+          "type": "object",
+          "description": "A separately running knowledge provider the context provider reads claims at, as an ordinary authenticated reader (CONTEXT section 14).",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

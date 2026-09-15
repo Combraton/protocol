@@ -1421,3 +1421,65 @@ None of these is exercised by a fixture this participant runs (the composition f
 | Final run | 219 | 3 | 0 | 0 | 4 | 20 |
 
 Filtered final runs: `--filter evidence.` 14 fixtures, 11 pass, 3 fail; `--filter context.` 9 pass; `--filter revalidation` 3 pass. The full run was repeated once, and the `context.` and `execution.` subsets twice more, with identical results. The four `unsupported` fixtures are the backpressure fixtures; the 20 `skipped` are 12 `socket.*` and 8 `composition.*`. `tests/check_vectors.py`, `probe_provider.py`, `probe_m2.py` and `probe_f.py` pass as before.
+
+### H.7 Realignment (base 8500948)
+
+> Seventh spec-only pass. The branch was fast-forwarded to `8500948`, which resolves section H ([M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md)). Read first: that record, then `git diff 4a1d58a 8500948 -- docs/spec schemas conformance/README.md conformance/schemas` (CONTEXT, CORE, EVIDENCE, EXECUTION, the context common schema and the evidence inspect result schema; the README and conformance schemas did not change). The change list below was written from those alone, before the re-versioned and new fixtures were opened. The runner was rebuilt at this base. Read rules unchanged: no `conformance/reference/**`, `conformance/runner/src/**`, `conformance/crosscheck/**`, or their history.
+
+**What changed for this implementation, from the documents.**
+
+| # | Resolved text | Before | Change |
+|---|---|---|---|
+| 1 | CONTEXT §12 "Scripted content and checks", §3: the item's `check` decides satisfaction | H3-CTX-SATISFACTION: any section for the item | Back to H-CTX-SATISFACTION: `source_included` needs the section's `source` repository and path, `evidence_included` a citation of the exact artifact and digest, `authority_content_included` a section at the current authority revision. Live item results (H3-LIVE-ITEMS, now CONTEXT §3) follow the same test. |
+| 2 | CONTEXT §12 conventions: compiler `combraton-reference-context` | compiler `combraton-independent-python-core` | Adopted; job ID and packet artifact ID already matched. |
+| 3 | EVIDENCE §9: hold states `active`, `released`, `expired`; `evidence.hold.expired` at `expires_at`; an expired hold does not block purge; releasing it is `not_found` | H-HOLD-EXPIRY: expiry recorded as a provider-origin `evidence.hold.released` | Expiry sets state `expired` with provider-origin `evidence.hold.expired`. |
+| 4 | EVIDENCE §9: a hold on an artifact that is not sealed, or whose purge was requested, is `not_found` | staged artifacts could be held | Only sealed artifacts without a purge request can be held. |
+| 5 | EVIDENCE §9 "Visibility": owner, authority principals, readers of the held artifact; hold events alike | H3-HOLD-VISIBILITY also admitted `evidence.read` on the hold subject | That extra case removed. |
+| 6 | EVIDENCE §3: `not_before` after `not_after` is `invalid_envelope` at `/payload/capture/uncertainty` | path `/payload/capture/uncertainty/not_after` | Path changed. |
+| 7 | EVIDENCE §9 proof-loss record: `affected` in kind then ID order; candidate kind `context.packet_citation` | holds, then manifests; packets no longer tracked (H3-LOSS-KINDS) | Entries sorted by kind then ID. Packets citing the artifact are tracked again, as `context.packet_citation`, and `tracked` lists it. |
+| 8 | EXECUTION §13.1: `revalidation` is the state of the binding's latest check | H-REVAL-STATE-VIEW: evaluated at the read | Taken from the latest check; see H7-REVALIDATION-NO-CHECK for a binding without one. |
+| 9 | CORE §12 retry classes, runner fixed | H-RETRY-RUNNER | No change here; the classes were already `after_reconcile`. |
+
+**Already as resolved, so unchanged:** `chunk_limit` at step 2 as the largest multiple of 3 (H-CHUNK-STEP, H-CHUNK-LIMIT); purge appends the artifact's events before released holds, including an immediate `purged` (H-PURGE, H3-IMMEDIATE-DELETION); queue-reason priority stale, unsatisfied, unknown (H-REVAL-QUEUE-REASON); `artifact_digest_mismatch` for a readable citation with another digest (H-CTX-EXPAND); abandoned artifacts `unavailable` with their reason and staged ones `available` (H3-STAGED-AVAILABILITY); a foreign cursor `invalid_cursor` and query in ID order (H3-QUERY-ORDER); shared jobs only for the same principal (H-CTX-SHARED); `expires_at` later than the clock (H-HOLD-PLACE); content digests `sha256` and `sha512`, others `unsupported_digest_algorithm`, wrong lengths `invalid_envelope` (H-CONTENT-DIGEST-ALG); packet producer, one revision per publication and authority revisions after correction (H3-PACKET-PRODUCER, H3-PUBLISH-REVISION, H3-AUTHORITY-ENTRIES); `transition` exactly for `required_before_transition` (H-TRANSITION-EXACTLY, now also the schema).
+
+**Points the resolved documents still leave open, noted before the fixtures.**
+
+- **H7-SHA512-ADVERTISED.** EVIDENCE §3 accepts `sha512` content digests "when it advertises `core.digest-sha512`". This provider advertises that feature in `core.describe` (D-SHA512), but the participant descriptor has never claimed it, because the runner's feature claims gate fixtures. So the provider accepts sha512 content digests while the descriptor does not claim them. Kept; if a fixture depends on the claim, the descriptor gains `core.digest-sha512`. Basis: spec text.
+- **H7-DIGEST-ALG-STEP.** EVIDENCE §3 names `unsupported_digest_algorithm` for a descriptor digest, but not its CORE §10 step. CORE step 4 decides the *command* digest algorithm; this one depends on no subject either. Kept at step 7 after preconditions, as before, pending the fixture. Basis: own judgment.
+- **H7-REVALIDATION-NO-CHECK.** EXECUTION §13.1 says `revalidation` is "the state of the binding's latest check", but a `required_before_transition` binding has no check before its transition, and an execution admitted with no start bindings has none. Here such a binding omits `revalidation`, and its M3 `state` is `satisfied` only if an evaluation at the read would be `current`. Basis: own judgment.
+- **H7-HOLD-EXPIRY-INSPECT.** EVIDENCE §9 says expiry happens "when the provider clock reaches `expires_at`" and records an event, so it is a provider transaction. Here it runs before each request and on the idle re-check, like the staging timeout. Basis: spec text.
+
+**Runs** (249 fixtures at `8500948`, runner rebuilt).
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Sixth-pass code (`4a1d58a`) against `8500948`, from a scratch copy, before any change | 222 | 3 | 0 | 0 | 4 | 20 |
+| After changes 1–8 (`6e9bebf`), first run, and one repeat | 225 | 0 | 0 | 0 | 4 | 20 |
+
+Before the changes, the three failures were:
+- `context.items-are-satisfied-only-by-their-check`, step 7: `result/items/0/result: expected "unmet", found "satisfied"` (change 1);
+- `evidence.descriptor-provenance-coverage-and-locator-rules`, step 12: `details/path: expected "/payload/capture/uncertainty", found "/payload/capture/uncertainty/not_after"` (change 6);
+- `evidence.expired-hold-stops-protecting`, step 9: `result/holds/0/state: expected "expired", found "released"` (change 3).
+
+The H-RETRY-RUNNER failures are gone with the rebuilt runner. The sixth-pass code passes every other fixture at this base, so no fixture distinguishes changes 2, 4, 5, 7 and 8. Filtered runs after the changes: `--filter evidence.` 16 pass; `--filter context.` 10 pass; `--filter revalidation` 3 pass. The probes and the vector check pass as before.
+
+**Fixtures read after the run.** The re-versioned and new fixtures (`git diff --stat 4a1d58a 8500948 -- conformance/fixtures`, 24 files) agree with the change list. Nothing was changed after reading them. What they settle and what they leave:
+- `evidence.descriptor-provenance-coverage-and-locator-rules` v2 checks `unsupported_digest_algorithm` (`md5`, `details.algorithm`) and a short sha256 digest (`invalid_envelope` at `/payload/digest`) on fresh subjects, so the step of the algorithm refusal (H7-DIGEST-ALG-STEP) stays unobserved.
+- `evidence.chunk-limit-accounts-for-encoding-overhead` v2 sends an oversize chunk with a stale precondition and expects `limit_exceeded`: step 2 is now checked.
+- `evidence.integrity-failure-is-never-served` v2 pages with `limit: 2`, checks `next_cursor` present and then absent, and refuses a foreign cursor.
+- `evidence.expired-hold-stops-protecting` and `evidence.purge-appends-the-artifact-events-first` match changes 3 and H-PURGE.
+- `context.shared-job-survives-one-subscriber-cancelling` v2 checks that a request from another principal gets its own job.
+- `context.request-items-are-checkable-and-obligations-negotiated` v2 accepts `/payload/items/0/transition` or `/payload/items/0`.
+- `execution.revalidation-reports-match-mismatch-and-unavailable-by-obligation` v2 checks stale over unknown with two bindings.
+
+**Still open or contradictory after the resolution.** None fails a fixture.
+
+- **H7-SHA512-ADVERTISED** (above). Still open: EVIDENCE §3 ties sha512 content digests to advertising `core.digest-sha512`, and the descriptor's claims and the provider's `core.describe` can differ. No fixture uses a sha512 content digest. Suggested: say whether "advertises" means `core.describe` or the negotiated session. Basis: spec text.
+- **H7-DIGEST-ALG-STEP** (above). Unobserved, as noted. Basis: own judgment.
+- **H7-REVALIDATION-NO-CHECK** (above). Unobserved: the transition fixture inspects the binding only after its transition check. Suggested: EXECUTION §13.1 should say what `revalidation` shows before a binding's first check (omitted, or `unknown`). Basis: own judgment.
+- **H7-COMPILER-NAME.** CONTEXT §12 fixes the compiler as `combraton-reference-context` for "the conformance provider". An independent provider running under the conformance configuration then reports itself as the reference compiler in `provenance.compiler`, which reads as a false provenance claim, although no fixture checks the name. Adopted as written. Suggested: make the convention "a compiler name the provider chooses", or name it by role. Basis: spec text (tension with CONTEXT §5 "compiler … identity").
+- **H7-STAGED-INTEGRITY.** EVIDENCE §9 now says staged and sealed artifacts are `available` "while their stored bytes are intact". The `evidence_store.corrupt` control is described for stored bytes generally. Here it still applies only to sealed artifacts, so a staged artifact named in `corrupt` stays `available` and can be sealed if its bytes match. Whether a staged corrupt artifact should report `unavailable` and fail its seal is not stated. Unchecked. Basis: own judgment.
+- **H7-PARTIAL-UNREACHABLE.** EVIDENCE §9 defines `partial` as "some sealed bytes are known lost", but no store control or operation produces that state. It is never reported here. Basis: spec text (coverage limit).
+- **H7-EXPIRED-HOLD-IN-LOSS.** An expired hold on a purged artifact is listed in `affected` as `evidence.hold`, like a released one. §9 does not say whether expired holds count as dependencies. Unchecked. Basis: own judgment.
+- **H7-PACKET-CITATION-TRACKED.** Change 7 tracks `context.packet_citation`, a *candidate* kind, because this provider holds the citing packets; entries are visible under `context.packet.read` on the packet. `evidence.purge-requires-release-authority-for-holds` v2 now uses `$contains`, so this passes, but no fixture purges an artifact a packet cites. Basis: spec text (candidate kind).
+- **Owner point 4** (capacity while blocked at dispatch) remains open, and this implementation keeps the slot (H-REVAL-BLOCKS).

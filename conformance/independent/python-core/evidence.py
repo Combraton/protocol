@@ -44,7 +44,8 @@ DIGEST_ALGORITHMS = ("sha256", "sha512")  # H-CONTENT-DIGEST-ALG
 # H-LOSS-RECORD, H3-LOSS-KINDS (fixture-informed): the dependency kinds tracked.
 HOLD_DEPENDENCY = "evidence.hold"
 MANIFEST_DEPENDENCY = "evidence.manifest_child"
-TRACKED_DEPENDENCIES = [HOLD_DEPENDENCY, MANIFEST_DEPENDENCY]
+PACKET_DEPENDENCY = "context.packet_citation"  # candidate kind (EVIDENCE 9, H.7 #7)
+TRACKED_DEPENDENCIES = [PACKET_DEPENDENCY, HOLD_DEPENDENCY, MANIFEST_DEPENDENCY]
 CREDENTIAL_PARAM = re.compile(r"token|sig|signature|credential|password|secret|key|auth", re.I)
 
 
@@ -116,7 +117,7 @@ def _capture(v, path: str) -> None:
         E.instant(u["not_before"], ptr(ptr(path, "uncertainty"), "not_before"))
         E.instant(u["not_after"], ptr(ptr(path, "uncertainty"), "not_after"))
         if u["not_before"] > u["not_after"]:
-            raise Invalid(ptr(ptr(path, "uncertainty"), "not_after"), "not_after precedes not_before")
+            raise Invalid(ptr(path, "uncertainty"), "not_before is after not_after")  # EVIDENCE 3 (H.7 #6)
     if "anchors" in v:
         E.array(v["anchors"], ptr(path, "anchors"), max_items=64)
         for idx, anchor in enumerate(v["anchors"]):
@@ -407,15 +408,13 @@ class Evidence:
 
     # ------------------------------------------------------ visibility
     def hold_visible(self, auth, hid: str, hold: dict) -> bool:
-        """H-HOLD-VISIBILITY, widened by H3-HOLD-VISIBILITY (fixture-informed):
-        a reader of the held artifact sees its holds."""
+        """EVIDENCE 9 "Visibility": the owner, authority principals and
+        readers of the held artifact (H.7 #5)."""
         if auth.grant is None:
             return True
         if hold["owner"] == self.p.principal:
             return True
-        if self.artifact_readable(auth, hold["artifact"]):
-            return True
-        return "evidence.read" in auth.grant["rights"] and G.grant_covers(auth.grant, hold_subject(hid))
+        return self.artifact_readable(auth, hold["artifact"])
 
     def artifact_readable(self, auth, aid: str) -> bool:
         if auth.grant is None:
@@ -549,8 +548,8 @@ class Evidence:
         payload = env["payload"]
         aid = payload["artifact"]["id"]
         row = self.load(aid)
-        if row is None or row[1].get("purge") is not None:
-            raise ProtocolError("not_found")  # H-HOLD-PLACE
+        if row is None or row[1]["state"] != "sealed" or row[1].get("purge") is not None:
+            raise ProtocolError("not_found")  # EVIDENCE 9: nothing would be retained (H.7 #4)
         hid = env["subject"]["id"]
         hold = {"artifact": aid, "holder_ref": payload["holder_ref"], "reason": payload["reason"],
                 "owner": self.p.principal, "state": "active"}
@@ -632,7 +631,7 @@ class Evidence:
 
     def _dependencies(self, aid: str, rec: dict) -> list:
         """H-LOSS-RECORD: holds, manifests listing the artifact, packets citing it."""
-        affected = [{"kind": HOLD_DEPENDENCY, "subject": hold_subject(h)} for h in sorted(rec.get("holds", []))]
+        affected = [{"kind": HOLD_DEPENDENCY, "subject": hold_subject(h)} for h in rec.get("holds", [])]
         for mid in sorted(self.store.ids_of(ARTIFACT_KIND)):
             if mid == aid:
                 continue
@@ -646,7 +645,12 @@ class Evidence:
             if any(c["evidence"]["artifact"]["id"] == aid and c["evidence"].get("provider", self.p.provider_id) ==
                    self.p.provider_id for c in manifest["children"]):
                 affected.append({"kind": MANIFEST_DEPENDENCY, "subject": artifact_subject(mid)})
-        return affected
+        context = getattr(self.p, "context", None)
+        if context is not None:
+            for packet in context.packets_citing(aid):
+                affected.append({"kind": PACKET_DEPENDENCY, "subject": packet})
+        # EVIDENCE 9: kind then ID order.
+        return sorted(affected, key=lambda e: (e["kind"], e["subject"]["id"]))
 
     # -------------------------------------------------------- queries
     def op_inspect(self, env, auth) -> dict:
@@ -686,6 +690,9 @@ class Evidence:
             return row is not None and self.hold_visible(auth, subject["id"], row[1])
         if kind == MANIFEST_DEPENDENCY:
             return self.artifact_readable(auth, subject["id"])
+        if kind == PACKET_DEPENDENCY:
+            return auth.grant is None or ("context.packet.read" in auth.grant["rights"]
+                                          and G.grant_covers(auth.grant, subject))
         return False
 
     def _loss_view(self, aid: str, rec: dict, auth) -> dict:
@@ -822,7 +829,7 @@ class Evidence:
             hrow = self.load_hold(hid)
             hold = hrow[1]
             if hold["state"] == "active" and "expires_at" in hold and now >= hold["expires_at"]:
-                self._in_tx(lambda hid=hid: self._expire_hold(hid))  # H-HOLD-EXPIRY
+                self._in_tx(lambda hid=hid: self._expire_hold(hid))  # EVIDENCE 9 "Expiry" (H.7 #3)
                 progressed = True
         return progressed
 
@@ -851,7 +858,11 @@ class Evidence:
 
     def _expire_hold(self, hid: str) -> None:
         revision, hold = self.load_hold(hid)
-        self._release(hid, revision, hold, None)
+        hold["state"] = "expired"
+        revision += 1
+        self.store.put_json(HOLD_KIND, hid, revision, hold)
+        self._emit(None, "evidence.hold.expired", hold_subject(hid), revision,
+                   {"artifact": artifact_subject(hold["artifact"]), "holder_ref": hold["holder_ref"]})
 
     # ------------------------------------------- packets (CONTEXT 5, M4-Q2)
     def seal_internal(self, aid: str, data: bytes, media_type: str, source: dict, scope: str, coverage: dict,

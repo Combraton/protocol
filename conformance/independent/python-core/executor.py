@@ -610,9 +610,22 @@ class Executor:
             return "context_binding_stale"
         return "context_binding_unsatisfied" if not check["held"] else "context_binding_unknown"
 
+    @staticmethod
+    def latest_check(x: dict, binding: dict):
+        return next((c for c in reversed(x.get("checks", [])) if c["binding_id"] == binding["binding_id"]), None)
+
+    def revalidation_state(self, x: dict, binding: dict):
+        """EXECUTION 13.1: the state of the binding's latest check, or None
+        when it has none (H7-REVALIDATION-NO-CHECK)."""
+        check = self.latest_check(x, binding)
+        return check["state"] if check is not None else None
+
     def binding_state(self, x: dict, binding: dict) -> str:
         if x.get("revalidation"):
-            satisfied = self.check_binding(x, binding)["state"] == "current"
+            state = self.revalidation_state(x, binding)
+            if state is None:
+                state = self.check_binding(x, binding)["state"]
+            satisfied = state == "current"
         else:
             satisfied = self.held(binding)
         if satisfied:
@@ -1043,8 +1056,9 @@ class Executor:
             for b in x.get("context_bindings", []):
                 if revalidating:
                     entry = dict(b, state=self.binding_state(x, b))
-                    entry["revalidation"] = (self.check_binding(x, b)["state"] if x.get("revalidation")
-                                             else ("current" if self.held(b) else "unknown"))
+                    state = self.revalidation_state(x, b)
+                    if state is not None:
+                        entry["revalidation"] = state
                 else:
                     # EXECUTION 13.1 "Compatibility (CMP-8)": the M3 shape.
                     entry = {"binding_id": b["binding_id"], "packet": self.m3_packet(b["packet"]),

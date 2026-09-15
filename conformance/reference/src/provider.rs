@@ -312,8 +312,10 @@ const SUPPORTED: &[SupportedProfile] = &[
         requires_core_features: &[],
     },
 ];
-/// Optional `execution/1` features (EXECUTION section 11).
-const EXECUTION_FEATURES: [&str; 9] = [
+/// Optional `execution/1` features (EXECUTION sections 11 and 13).
+const EXECUTION_FEATURES: [&str; 11] = [
+    "execution.context_revalidation",
+    "execution.evidence_outputs",
     "execution.steering",
     "execution.actions",
     "execution.controller",
@@ -564,6 +566,9 @@ impl Provider {
         let mut publisher = json!({"provider_id": self.identity.provider_id});
         if let Some(peer) = self.identity.context_script.get("evidence_provider") {
             publisher["evidence_provider"] = peer.clone();
+        }
+        if let Some(peer) = self.identity.context_script.get("executor") {
+            publisher["executor"] = peer.clone();
         }
         if let Err(error) = crate::context::tick(&mut self.store, &now, &publisher, &self.mutants) {
             eprintln!("context tick: {error}");
@@ -886,6 +891,10 @@ impl Provider {
         let evidence_store = self.identity.evidence_store.clone();
         let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
         let context_script = self.identity.context_script.clone();
+        let execution_features = (
+            self.feature_negotiated("execution.context_revalidation"),
+            self.feature_negotiated("execution.evidence_outputs"),
+        );
         let context_features = (
             self.feature_negotiated("context.shared_jobs"),
             self.feature_negotiated("context.updates"),
@@ -902,6 +911,8 @@ impl Provider {
                     mutants,
                     principal: &principal,
                     grant: grant_id.as_deref(),
+                    revalidation: execution_features.0,
+                    evidence_outputs: execution_features.1,
                 };
                 let (revision, outcome, events, effect_refs) = match operation_name {
                     "execution.submit" => {
@@ -1546,10 +1557,30 @@ impl Provider {
                         } else {
                             rights(&grant).or_else(|| scopes(&grant))
                         };
-                        match first {
-                            Some(reason) => denied(reason),
-                            None => Ok(()),
+                        if let Some(reason) = first {
+                            return denied(reason);
                         }
+                        // A publish grant naming work subjects binds the artifact's work to one
+                        // of them (EVIDENCE section 10).
+                        if operation == "evidence.upload.prepare"
+                            && !self.mutants.on("work-binding-ignored")
+                        {
+                            let work: Vec<&Value> = grant["resources"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter(|r| r["kind"] != crate::evidence::ARTIFACT)
+                                .collect();
+                            let bound = &params["payload"]["work"];
+                            if !work.is_empty()
+                                && !work
+                                    .iter()
+                                    .any(|r| grants::resource_covers_subject(r, bound))
+                            {
+                                return denied("binding_violation");
+                            }
+                        }
+                        Ok(())
                     }
                 }
             }
@@ -1725,6 +1756,33 @@ impl Provider {
         if operation.name == "core.grant.issue" && self.mutants.on("issue-validation-before-dedupe")
         {
             self.validate_issue(&params["payload"])?;
+        }
+        if operation.name == "execution.submit"
+            && !self.mutants.on("feature-fields-accepted")
+            && !self.feature_negotiated("execution.context_revalidation")
+        {
+            // Revalidation members extend the M3 binding only under their feature (EXECUTION 13.1).
+            for (index, binding) in params["payload"]["context_bindings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                for member in ["conditions", "fetch", "request"] {
+                    if binding.get(member).is_some() {
+                        return invalid(
+                            &format!("/payload/context_bindings/{index}/{member}"),
+                            "feature execution.context_revalidation was not negotiated",
+                        );
+                    }
+                }
+                if binding["packet"].get("artifact").is_some() {
+                    return invalid(
+                        &format!("/payload/context_bindings/{index}/packet"),
+                        "feature execution.context_revalidation was not negotiated",
+                    );
+                }
+            }
         }
         if operation.name == "execution.submit" && !self.mutants.on("feature-fields-accepted") {
             for (field, feature) in FEATURE_FIELDS {
@@ -2164,7 +2222,8 @@ impl Provider {
             "execution.inspect" => {
                 let id = params["payload"]["execution"].as_str().unwrap_or_default();
                 let cursor = self.cursor(self.head()?, false)?;
-                crate::execution::inspect(&mut self.store, id, cursor)
+                let revalidation = self.feature_negotiated("execution.context_revalidation");
+                crate::execution::inspect(&mut self.store, id, cursor, revalidation, &self.mutants)
                     .map_err(storage)?
                     .ok_or_else(|| reject("not_found", json!({})))
             }

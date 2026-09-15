@@ -50,7 +50,9 @@
       "context.required_before_transition",
       "context.shared_jobs",
       "context.updates",
-      "context.expand"
+      "context.expand",
+      "execution.context_revalidation",
+      "execution.evidence_outputs"
     ],
     "test_controls": [
       "clock.file",
@@ -337,7 +339,14 @@
       "stale-derivation-current",
       "unobserved-frontier-claimed",
       "unlabeled-section",
-      "authority-revision-dropped"
+      "authority-revision-dropped",
+      "request-link-dropped",
+      "unavailable-treated-as-fresh",
+      "unavailable-reported-stale",
+      "admission-check-only",
+      "transition-binding-blocks-all",
+      "revalidation-exposed-without-negotiation",
+      "work-binding-ignored"
     ]
   }
 }

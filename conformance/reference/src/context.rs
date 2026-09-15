@@ -447,6 +447,13 @@ fn advance(
             "conditions" => {
                 job["conditions"] = argument.clone();
             }
+            "execute" => {
+                // The job's own investigation runs as an ordinary execution at a separate
+                // executor, with its origin, and is never enriched with context (CTX-18, CTX-19).
+                if !investigate(publisher, mutants, job_id, job, &argument) {
+                    break;
+                }
+            }
             "publish" => {
                 if !publish_all(
                     tx, now, publisher, mutants, job_id, job, false, None, drafts,
@@ -1071,4 +1078,105 @@ pub fn job_requests(store: &Store, job_id: &str) -> rusqlite::Result<Vec<String>
         requests.push(job_id);
     }
     Ok(requests)
+}
+
+/// Investigations in progress, by job and execution. The executor is called from a worker
+/// thread, never while this provider holds its processing lock: the executor may be checking a
+/// packet here at the same moment (the preparation/resource cycle, CTX-18).
+fn investigations() -> &'static std::sync::Mutex<std::collections::HashMap<String, Value>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Value>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+
+/// Start (once) and follow a job's investigation execution. Returns whether it has finished.
+fn investigate(
+    publisher: &Value,
+    mutants: &Mutants,
+    job_id: &str,
+    job: &mut Value,
+    step: &Value,
+) -> bool {
+    let execution = step["execution"].as_str().unwrap_or_default().to_string();
+    let key = format!("{job_id}/{execution}");
+    if job["investigations"][&execution]["state"] == "finished" {
+        return true;
+    }
+    let mut registry = investigations()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match registry.get(&key).map(|v| v["state"].clone()) {
+        Some(state) if state == "finished" => {
+            job["investigations"][&execution] = registry[&key].clone();
+            return true;
+        }
+        Some(state) if state == "running" => return false,
+        _ => {}
+    }
+    registry.insert(key.clone(), json!({"state": "running"}));
+    drop(registry);
+    let peer = publisher["executor"].clone();
+    let job_id = job_id.to_string();
+    let step = step.clone();
+    let re_enrich = mutants.on("job-execution-re-enriched");
+    std::thread::spawn(move || {
+        let outcome = run_investigation(&peer, &job_id, &execution, &step, re_enrich);
+        let mut registry = investigations()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match outcome {
+            Some(result) => registry.insert(key, json!({"state": "finished", "result": result})),
+            None => registry.remove(&key),
+        };
+    });
+    false
+}
+
+fn run_investigation(
+    peer: &Value,
+    job_id: &str,
+    execution: &str,
+    step: &Value,
+    re_enrich: bool,
+) -> Option<Value> {
+    let grant = peer["grant"].as_str();
+    let mut core = vec!["core.events", "core.capabilities", "core.effects"];
+    if grant.is_some() {
+        core.push("core.grants");
+    }
+    let profiles = json!([
+        {"name": "core", "majors": [1], "required": true, "required_features": core, "optional_features": []},
+        {"name": "execution", "majors": [1], "required": true, "required_features": ["execution.context"], "optional_features": []},
+    ]);
+    let mut client = crate::peer::Peer::connect(peer, profiles).ok()?;
+    let subject = json!({"kind": "execution.execution", "id": execution});
+    let mut payload = json!({
+        "brief": {"digest": crate::json::sha256_digest(step["brief"].as_str().unwrap_or("investigate").as_bytes()), "media_type": "text/plain"},
+        "origin": {"initiator": {"kind": JOB, "id": job_id}, "depth": step["depth"].as_u64().unwrap_or(1), "call_budget": step["call_budget"].as_u64().unwrap_or(1)},
+    });
+    if re_enrich {
+        payload["context_bindings"] = json!([{"binding_id": "job-context", "packet": {"ref": format!("job.{job_id}"), "digest": crate::json::sha256_digest(job_id.as_bytes())},
+            "obligation": "advisory", "selected_by": "context-provider"}]);
+    }
+    client
+        .command(
+            "execution.submit",
+            &format!("job.{job_id}.execute.{execution}"),
+            subject.clone(),
+            json!([{"subject": subject, "revision": 0}]),
+            payload,
+            grant,
+        )
+        .ok()?;
+    for _ in 0..600 {
+        let result = client
+            .query("execution.inspect", json!({"execution": execution}), grant)
+            .ok()?;
+        if result["result"] == "returned" || result["runtime"] == "exited" {
+            return Some(result["result"].clone());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    None
 }

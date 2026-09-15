@@ -33,6 +33,10 @@ pub struct Context<'a> {
     pub mutants: &'a Mutants,
     pub principal: &'a str,
     pub grant: Option<&'a str>,
+    /// The submitting session negotiated `execution.context_revalidation` (EXECUTION 13.1).
+    pub revalidation: bool,
+    /// The submitting session negotiated `execution.evidence_outputs` (EXECUTION 13.2).
+    pub evidence_outputs: bool,
 }
 
 /// What recovery needs to revalidate a resumable delivery.
@@ -337,6 +341,24 @@ fn running(tx: &Transaction) -> rusqlite::Result<i64> {
     Ok(count)
 }
 
+/// Capacity slots in use. Work queued for context holds none (CONTEXT section 4, CTX-18).
+fn occupied(tx: &Transaction, mutants: &Mutants) -> rusqlite::Result<i64> {
+    let mut count = running(tx)?;
+    if mutants.on("context-queued-holds-capacity") {
+        for id in execution_ids(tx)? {
+            if let Some((_, record)) = load(tx, &id)?
+                && record["admission"] == "queued"
+                && record["queue_reason"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("context_binding_"))
+            {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 /// Amount held in a budget pool: active reservations and settled consumption.
 fn held_in_pool(tx: &Transaction, pool: &str) -> rusqlite::Result<i64> {
     let mut held = 0;
@@ -466,6 +488,12 @@ pub fn submit(
     {
         record["correlation"] = correlation.clone();
     }
+    if let Some(origin) = payload.get("origin") {
+        record["origin"] = origin.clone();
+    }
+    if ctx.evidence_outputs {
+        record["evidence_outputs"] = json!(true);
+    }
     // Usage and liability (EXECUTION section 12).
     if let Some(budget) = payload.get("budget") {
         let pool_id = budget["pool"].as_str().unwrap_or_default();
@@ -508,8 +536,40 @@ pub fn submit(
         }
     }
     let mut queue_reason: Option<&str> = None;
-    // Context bindings (EXECUTION section 13).
-    if let Some(bindings) = payload["context_bindings"].as_array() {
+    let mut context_checks: Vec<Value> = Vec::new();
+    // Context bindings with revalidation (EXECUTION section 13.1): checked at admission.
+    if ctx.revalidation
+        && let Some(bindings) = payload["context_bindings"].as_array()
+    {
+        let mut states = Vec::new();
+        for binding in bindings {
+            let mut entry = binding.clone();
+            if mutants.on("request-link-dropped")
+                && let Some(map) = entry.as_object_mut()
+            {
+                map.remove("request");
+            }
+            let check = crate::revalidation::check(
+                ctx.executor,
+                &record,
+                &mut entry,
+                "admission",
+                &ctx.now,
+                mutants,
+            );
+            let held = check["held"] == true;
+            entry["state"] = json!(crate::revalidation::m3_state(&entry, held));
+            if blocks(&entry, "admission", mutants)
+                && check["state"] != "current"
+                && !mutants.on("required-binding-admitted")
+            {
+                queue_reason = Some(crate::revalidation::block_reason(&check));
+            }
+            context_checks.push(check);
+            states.push(entry);
+        }
+        record["context"] = json!({"bindings": states, "deliveries": [], "checks": context_checks, "revalidation": true});
+    } else if let Some(bindings) = payload["context_bindings"].as_array() {
         let held = ctx.executor["context_packets"]
             .as_array()
             .cloned()
@@ -567,7 +627,7 @@ pub fn submit(
         && queue_reason.is_none()
         && let Some(capacity) = ctx.executor["capacity"].as_i64()
         && !mutants.on("capacity-ignored")
-        && running(tx)? >= capacity
+        && occupied(tx, mutants)? >= capacity
     {
         queue_reason = Some("capacity");
     }
@@ -635,13 +695,77 @@ pub fn submit(
         outcome["continuation"] = continuation.clone();
     }
     save(tx, execution_id, 1, &record)?;
-    let events = vec![(
+    let mut events = vec![(
         "execution.admission.changed",
         subject(execution_id),
         1,
         event,
     )];
+    for check in context_checks {
+        events.push(("execution.context.checked", subject(execution_id), 1, check));
+    }
     Ok((1, outcome, events, effect_refs))
+}
+
+/// Whether a binding blocks the given boundary when it is not current (EXECUTION 13.1).
+fn blocks(binding: &Value, boundary: &str, mutants: &Mutants) -> bool {
+    match binding["obligation"].as_str() {
+        Some("required_before_start") => boundary != "transition",
+        Some("required_before_transition") => {
+            boundary == "transition" || mutants.on("transition-binding-blocks-all")
+        }
+        _ => false,
+    }
+}
+
+/// Revalidate the bindings that block `boundary` (and, for a transition, name it). Records new
+/// check results with events and returns the first blocking check that is not current.
+#[allow(clippy::too_many_arguments)]
+fn revalidate(
+    record: &mut Value,
+    executor: &Value,
+    boundary: &str,
+    transition: Option<&str>,
+    now: &str,
+    mutants: &Mutants,
+    revision: i64,
+    id: &str,
+    drafts: &mut Vec<Draft>,
+) -> Option<Value> {
+    let mut bindings = record["context"]["bindings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut first_block = None;
+    for binding in bindings.iter_mut() {
+        if !blocks(binding, boundary, mutants) {
+            continue;
+        }
+        if boundary == "transition" && transition.is_some_and(|t| binding["transition"] != t) {
+            continue;
+        }
+        let snapshot = record.clone();
+        let check =
+            crate::revalidation::check(executor, &snapshot, binding, boundary, now, mutants);
+        binding["state"] = json!(crate::revalidation::m3_state(
+            binding,
+            check["held"] == true
+        ));
+        if crate::revalidation::is_new(&record["context"], &check) {
+            push(&mut record["context"], "checks", check.clone());
+            drafts.push((
+                "execution.context.checked",
+                subject(id),
+                revision,
+                check.clone(),
+            ));
+        }
+        if check["state"] != "current" && first_block.is_none() {
+            first_block = Some(check);
+        }
+    }
+    record["context"]["bindings"] = json!(bindings);
+    first_block
 }
 
 fn predicate_status<'a>(adapter: &'a Value, name: &str) -> &'a str {
@@ -1060,10 +1184,52 @@ fn admit_from_queue(
     let tx = store.transaction()?;
     let mut queued = Vec::new();
     for id in execution_ids(&tx)? {
-        if let Some((revision, record)) = load(&tx, &id)?
-            && record["admission"] == "queued"
-            && record["queue_reason"] == "capacity"
-        {
+        let Some((revision, mut record)) = load(&tx, &id)? else {
+            continue;
+        };
+        if record["admission"] != "queued" {
+            continue;
+        }
+        let context_queue = record["queue_reason"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("context_binding_"));
+        if context_queue && record["context"]["revalidation"] == true {
+            // Revalidate at the admission boundary after queueing (EXECUTION 13.1).
+            let mut drafts = Vec::new();
+            let blocked = revalidate(
+                &mut record,
+                executor,
+                "admission",
+                None,
+                now,
+                mutants,
+                revision + 1,
+                &id,
+                &mut drafts,
+            );
+            match blocked {
+                Some(check) => {
+                    let reason = crate::revalidation::block_reason(&check);
+                    if !drafts.is_empty() || record["queue_reason"] != reason {
+                        record["queue_reason"] = json!(reason);
+                        save(&tx, &id, revision + 1, &record)?;
+                        for draft in drafts {
+                            provider_event(&tx, stream, now, draft)?;
+                        }
+                    }
+                }
+                None => {
+                    record["queue_reason"] = json!("capacity");
+                    save(&tx, &id, revision + 1, &record)?;
+                    for draft in drafts {
+                        provider_event(&tx, stream, now, draft)?;
+                    }
+                    queued.push((operation_sequence(&record), id, revision + 1, record));
+                }
+            }
+            continue;
+        }
+        if record["queue_reason"] == "capacity" {
             queued.push((operation_sequence(&record), id, revision, record));
         }
     }
@@ -1072,7 +1238,7 @@ fn admit_from_queue(
     for (_, id, revision, mut record) in queued {
         if executor["capacity"]
             .as_i64()
-            .is_some_and(|capacity| running(&tx).is_ok_and(|n| n >= capacity))
+            .is_some_and(|capacity| occupied(&tx, mutants).is_ok_and(|n| n >= capacity))
         {
             break;
         }
@@ -1173,6 +1339,63 @@ fn step(
     let mut effect = load_effect(tx, &delivery_id)?.unwrap_or(Value::Null);
     let revision = revision + 1;
     let mut drafts: Vec<Draft> = Vec::new();
+    // Revalidation at the dispatch boundary and at named transitions (EXECUTION 13.1): an
+    // earlier check never makes a later boundary current.
+    let boundary = if step.get("deliver").is_some() && record["delivery"] == "pending" {
+        Some(("dispatch", None))
+    } else {
+        step["transition"]
+            .as_str()
+            .map(|t| ("transition", Some(t.to_string())))
+    };
+    if record["context"]["revalidation"] == true
+        && !mutants.on("admission-check-only")
+        && let Some((boundary, transition)) = boundary
+    {
+        let before = record["context"]["blocked"].clone();
+        match revalidate(
+            &mut record,
+            executor,
+            boundary,
+            transition.as_deref(),
+            now,
+            mutants,
+            revision,
+            id,
+            &mut drafts,
+        ) {
+            Some(check) => {
+                let mut blocked = json!({"boundary": boundary, "binding_id": check["binding_id"], "reason": crate::revalidation::block_reason(&check)});
+                if let Some(transition) = &transition {
+                    blocked["transition"] = json!(transition);
+                }
+                if blocked != before {
+                    if boundary == "transition" {
+                        drafts.push((
+                            "execution.transition.blocked",
+                            subject(id),
+                            revision,
+                            blocked.clone(),
+                        ));
+                    }
+                    record["context"]["blocked"] = blocked;
+                }
+                if drafts.is_empty() {
+                    return Ok(false);
+                }
+                save(tx, id, revision, &record)?;
+                for draft in drafts {
+                    provider_event(tx, stream, now, draft)?;
+                }
+                return Ok(false);
+            }
+            None => {
+                if let Some(map) = record["context"].as_object_mut() {
+                    map.remove("blocked");
+                }
+            }
+        }
+    }
     record["script_position"] = json!(position + 1);
     let generation = record["host"]["generation"].clone();
     let may_dispatch = record["delivery"] == "pending";
@@ -1522,9 +1745,13 @@ fn step(
                 _ => "unknown",
             }
         };
+        let digest = match binding["packet"].get("artifact") {
+            Some(artifact) => artifact["digest"].clone(),
+            None => binding["packet"]["digest"].clone(),
+        };
         let entry = json!({
             "binding_id": delivery["binding_id"],
-            "digest": binding["packet"]["digest"],
+            "digest": digest,
             "target": {"execution": subject(id)},
             "boundary": boundary,
             "outcome": outcome,
@@ -1633,8 +1860,27 @@ fn step(
             revision,
             json!({"host": record["host"]}),
         ));
+    } else if let Some(basis) = step.get("observe_basis") {
+        // The executor's observation of its own basis changed (EXECUTION 15 test control).
+        let mut observed = record["observed_basis"].clone();
+        if !observed.is_object() {
+            observed = json!({});
+        }
+        for (key, value) in basis.as_object().into_iter().flatten() {
+            if key == "repositories" {
+                for (repository, state) in value.as_object().into_iter().flatten() {
+                    observed["repositories"][repository] = state.clone();
+                }
+            } else {
+                observed[key] = value.clone();
+            }
+        }
+        record["observed_basis"] = observed;
     } else if let Some(completion) = step.get("complete") {
         complete(&mut record, completion, mutants, id, revision, &mut drafts);
+        if record["evidence_outputs"] == true {
+            publish_output(&mut record, completion, executor, id, now, mutants);
+        }
     } else if let Some(exit) = step.get("exit") {
         record["exit"] = exit.clone();
         record["runtime"] = json!("exited");
@@ -1933,6 +2179,62 @@ fn complete(
     ));
 }
 
+/// Seal a completion's content at the executor's evidence provider and list it as an output of
+/// the completion record (EXECUTION 13.2, EXE-21). Nothing unsealed is listed.
+fn publish_output(
+    record: &mut Value,
+    completion: &Value,
+    executor: &Value,
+    id: &str,
+    now: &str,
+    mutants: &Mutants,
+) {
+    let peer = &executor["evidence_outputs"];
+    let completion_id = completion["completion_id"].as_str().unwrap_or_default();
+    let content = completion["content"]
+        .as_str()
+        .unwrap_or_default()
+        .as_bytes();
+    let digest = crate::json::sha256_digest(content);
+    let artifact = format!("output.{id}.{completion_id}");
+    let descriptor = json!({
+        "digest": digest,
+        "size": content.len(),
+        "media_type": "text/plain",
+        "producer": {"producer_id": "reference-executor"},
+        "source": {"kind": "execution.completion", "id": format!("{id}.{completion_id}")},
+        "scope": "execution",
+        "capture": {"captured_at": now, "anchors": []},
+        "coverage": {"completeness": "complete"},
+        "work": {"kind": KIND, "id": id},
+        "retention_class": "execution-output",
+    });
+    let sealed = crate::peer::publish_artifact(peer, &artifact, descriptor, content);
+    let listed_digest = if mutants.on("output-digest-differs") {
+        crate::json::sha256_digest(&[content, b"\n"].concat())
+    } else {
+        digest
+    };
+    let provider = match sealed {
+        Ok(provider) => provider,
+        Err(_) if mutants.on("output-listed-unsealed") => {
+            peer["provider_id"].as_str().unwrap_or_default().to_string()
+        }
+        Err(failure) => {
+            eprintln!("output {artifact} not sealed: {}", failure.describe());
+            return;
+        }
+    };
+    let reference = json!({"role": "completion", "evidence": {"provider": provider, "artifact": {"kind": crate::evidence::ARTIFACT, "id": artifact}, "digest": listed_digest}});
+    if let Some(entry) = record["completions"].as_array_mut().and_then(|list| {
+        list.iter_mut()
+            .rev()
+            .find(|c| c["completion_id"] == completion_id)
+    }) {
+        entry["outputs"] = json!([reference]);
+    }
+}
+
 fn timeouts(
     tx: &Transaction,
     stream: &str,
@@ -2165,7 +2467,13 @@ fn public_entries(list: &Value) -> Value {
 }
 
 /// `execution.inspect`.
-pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<Option<Value>> {
+pub fn inspect(
+    store: &mut Store,
+    id: &str,
+    cursor: String,
+    revalidation: bool,
+    mutants: &Mutants,
+) -> rusqlite::Result<Option<Value>> {
     let tx = store.transaction()?;
     let Some((revision, record)) = load(&tx, id)? else {
         return Ok(None);
@@ -2223,6 +2531,7 @@ pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<
         "runtime_detail",
         "continuation",
         "context",
+        "origin",
     ] {
         if let Some(value) = record.get(key) {
             result[key] = value.clone();
@@ -2234,6 +2543,10 @@ pub fn inspect(store: &mut Store, id: &str, cursor: String) -> rusqlite::Result<
     {
         cancellation.remove("effect");
     }
+    present_context(
+        &mut result,
+        revalidation || mutants.on("revalidation-exposed-without-negotiation"),
+    );
     for key in ["steering", "actions"] {
         if record[key].as_array().is_some_and(|list| !list.is_empty()) {
             result[key] = public_entries(&record[key]);
@@ -2342,4 +2655,45 @@ pub fn effect(store: &mut Store, id: &str, mutants: &Mutants) -> rusqlite::Resul
         "attempts": effect["attempts"].as_array().cloned().unwrap_or_default(),
         "obligations": effect["obligations"],
     })))
+}
+
+/// Present context bindings to a session: revalidation members only when it negotiated
+/// `execution.context_revalidation`; otherwise the M3 shape and states (CMP-8).
+fn present_context(result: &mut Value, revalidation: bool) {
+    let Some(context) = result.get_mut("context").and_then(Value::as_object_mut) else {
+        return;
+    };
+    context.remove("revalidation");
+    for binding in context
+        .get_mut("bindings")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(map) = binding.as_object_mut() {
+            map.remove("held_digest");
+            if !revalidation {
+                for member in ["revalidation", "conditions", "fetch", "request"] {
+                    map.remove(member);
+                }
+                if let Some(artifact) = map.get("packet").and_then(|p| p.get("artifact")).cloned() {
+                    let packet = map["packet"]["packet"]["id"].clone();
+                    map.insert(
+                        "packet".into(),
+                        json!({"ref": packet, "digest": artifact["digest"]}),
+                    );
+                }
+            }
+        }
+    }
+    if !revalidation {
+        context.remove("checks");
+        context.remove("blocked");
+        if result["queue_reason"]
+            .as_str()
+            .is_some_and(|r| r == "context_binding_stale" || r == "context_binding_unknown")
+        {
+            result["queue_reason"] = json!("context_binding_unsatisfied");
+        }
+    }
 }

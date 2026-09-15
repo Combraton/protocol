@@ -157,7 +157,8 @@ Resources name kind `evidence.artifact` or `evidence.hold`, with optional `id` o
 ## 10. Work bindings
 
 - A grant issued for a unit of work names the destination through its resources (for example an `id_prefix` for that work's artifacts) and the producer through its holder. The artifact's `work` names the bound work.
-- A prepare outside the grant's resources is `permission_denied` with `out_of_scope`. A prepare whose `work` differs from the work the grant is bound to is `permission_denied` with reason `binding_violation` (*candidate*).
+- A prepare outside the grant's resources is `permission_denied` with `out_of_scope`.
+- **Bound work.** A grant whose resources include subjects of a kind other than `evidence.artifact`, for example `{ kind: "execution.execution", id }`, is bound to that work. A prepare under it must name one of those subjects as `work`; otherwise it is `permission_denied` with reason `binding_violation` (*candidate*), decided at step 6 after rights and scope.
 - An executor that publishes its output as evidence is an ordinary producer under such a grant.
 
 ## 11. Execution outcome references (EXE-21)

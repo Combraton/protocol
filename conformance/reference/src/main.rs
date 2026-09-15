@@ -16,6 +16,7 @@ mod mutants;
 mod outbox;
 mod peer;
 mod provider;
+mod revalidation;
 mod store;
 
 use std::collections::HashMap;

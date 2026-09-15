@@ -6,7 +6,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-15, M4 steps 2–4 done: the Evidence and Context reference providers and the multi-participant runner. Owner decisions M4-Q1 to M4-Q7 are incorporated.
+- **Checkpoint:** 2026-09-15, M4 steps 2–6 done: the Evidence and Context reference providers, the multi-participant runner, Execution integration and the cross-profile scenarios. Owner decisions M4-Q1 to M4-Q7 are incorporated.
 - **Status:** M0–M3 merged. M4 in progress on `release-0.1/m4` ([M4 task](M4.md)). Protocol 0.1 is not released.
 
 ## Goal, decisions and constraints
@@ -63,6 +63,13 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - independent: 196 pass, 14 skipped, 26 unsupported;
   - Unix-socket `check-mutants` passes, and so does the per-group mutant check for Evidence and Context;
   - each composition fixture ran as intended in 15 of 15 repeated runs.
+- **M4 steps 5 and 6 (local, macOS):**
+  - `check-fixtures`: 246 fixtures ok;
+  - reference: stdio 226 pass and 20 skipped (compositions need the Unix-socket binding); Unix socket 246 pass;
+  - independent: 196 pass, 20 skipped, 30 unsupported;
+  - `check-mutants` passes on both bindings;
+  - each new composition scenario ran as intended 10 of 10 times;
+  - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass.
 - CI evidence: [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
 
 ## What remains uncertain
@@ -87,5 +94,5 @@ None.
 
 ## Next action
 
-1. M4 step 5: Execution integration: `execution.context_revalidation`, with packet fetch through per-audience grants, typed condition checks at admission, dispatch and transition, and CMP-8 compatibility fixtures. It also covers `execution.evidence_outputs` (EXE-21, with the EVD-8 work binding), and origin without re-enrichment.
-2. Then steps 6–8 of the [M4 work plan](M4.md#work-plan).
+1. M4 step 7: independent pass. A spec-only helper, in a separate worktree, extends the independent Python provider to `evidence/1`, `context/1` and `execution.context_revalidation` over stdio. Divergences are resolved as in M3.
+2. M4 step 8: close-out. Update state, handoff, the PR and the issue checkpoint, gather CI evidence, and present M4 for acceptance, including the [points for the owner](M4.md#points-for-the-owner-at-acceptance).

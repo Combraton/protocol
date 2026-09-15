@@ -322,20 +322,30 @@ Owner decision M4-Q4 (2026-09-15). A **negotiated, versioned extension** of the 
 - **Binding members.**
   - `packet` is a packet reference `{ packet, revision, artifact: { provider, artifact, digest } }` (CONTEXT §2).
   - `conditions` lists typed conditions copied from the packet's applicability: `{ condition_id, kind, ... expected }` with kinds `repository_tree`, `dirty_snapshot`, `environment_digest`, `authority_revision` (*candidate*).
-  - `fetch` names the per-audience read grants the executor uses (CONTEXT §7). Submitting any of these members without the feature is `invalid_envelope`.
+  - `fetch` names the per-audience read grants the executor uses (CONTEXT §7): `{ context?: { provider, grant }, evidence: { provider, grant } }`. Without `fetch`, the executor holds only packets its host was given.
+  - `request` names the context request the packet answers (`{ kind: "context.request", id }`), so the causal link from request to execution is kept (CTX-1).
+  - Submitting any of these members, or a packet reference, without the feature is `invalid_envelope` at that member.
+- **Packet facts at each check.** When the binding names a context fetch grant, every check reads the bound revision's result facts at the context provider:
+  - the implicit condition `packet.current` is `match` while the bound revision is the request's current revision, `mismatch` once it is superseded, and `unavailable` when the context provider cannot be read (SCN-5, SCN-8);
+  - a context provider's reference that differs from the binding (SCN-9), or facts reporting a required item `unmet` (SCN-4), mean the packet is not held for this binding.
 - **What the executor checks.** Only conditions it can actually observe, against the basis it holds, for example its workspace tree. Each check result is `match`, `mismatch` or `unavailable`, with the observed value where there is one, and evidence. An unobservable condition is `unavailable`: never treated as fresh, and not necessarily stale. The executor decides nothing about semantic truth, does not accept project direction, and is not an applicability engine.
-- **Binding revalidation state:** `current` (every condition matches and the exact packet bytes are held), `stale` (some condition mismatches), or `unknown` (none mismatches, some unavailable). These add to the M3 states `satisfied`, `gap` and `unsatisfied`, only under this feature.
+- **Binding revalidation state:** `current` (every condition matches and the exact packet bytes are held), `stale` (some condition mismatches), or `unknown` (nothing mismatches, but a condition is unavailable or the bytes are not held). Each binding carries it as `revalidation`, only under this feature. Its M3 `state` stays: `satisfied` only while `current`, otherwise `gap` or `unsatisfied` by obligation.
 - **Effect by obligation:**
   - `advisory`: follow the declared fallback and show the gap; a stale or unknown advisory binding never blocks.
-  - `required_before_start`: block the start boundary until the binding is `current`. The execution is `queued` with `queue_reason` `context_binding_stale` or `context_binding_unknown` (*candidate*).
-  - `required_before_transition`: block **only** the named transition until the binding is `current`. Work before it continues, and the executor records `execution.transition.blocked` with the binding.
+  - `required_before_start`: block the start boundary until the binding is `current`. At admission the execution is `queued` with `queue_reason` `context_binding_stale` (a condition mismatches), `context_binding_unsatisfied` (the bytes are not held) or `context_binding_unknown` (otherwise). At dispatch an admitted execution is not dispatched, and `context.blocked` is `{ boundary: "dispatch", binding_id, reason }` until the binding is current.
+  - `required_before_transition`: block **only** the named transition until the binding is `current`. Work before it continues. The executor records `execution.transition.blocked` with `{ boundary: "transition", binding_id, transition, reason }`, which `context.blocked` also shows.
 - **Boundaries.** Revalidate at each relevant boundary: admission, dispatch of the initial brief (including after queueing or after restart recovery), and each named transition. An earlier check never guarantees a later boundary is current.
-- **Records.** Each check appends `{ binding_id, boundary, checked_at, observed_basis, results: [ { condition_id, result, observed?, evidence } ], state }` to `context.checks` in `execution.inspect`, with event `execution.context.checked`. Checks never rewrite the packet or earlier checks.
+- **Records.** A check appends `{ binding_id, boundary, transition?, checked_at, observed_basis, held, fetch?, results: [ { condition_id, result, observed?, evidence } ], state }` to `context.checks` in `execution.inspect`, with event `execution.context.checked`. `fetch` gives the reason packet bytes could not be obtained. An executor re-evaluating a blocked boundary records a new check when its result differs from the last check of that binding at that boundary. Checks never rewrite the packet or earlier checks.
+- **Compatibility (CMP-8).** A session that did not negotiate the feature sees the M3 shape of every binding, including bindings submitted by another session under the feature: no `revalidation`, `conditions`, `fetch`, `request`, `checks` or `blocked`; a packet reference shown as `{ ref: <packet id>, digest }`; and `context_binding_stale` or `context_binding_unknown` shown as `context_binding_unsatisfied`.
 - **Fetch.** When the executor fetches the packet itself, it verifies the fetched digest against the binding. Bytes with another digest leave the binding `unsatisfied` and are never delivered.
 
 ### 13.2 Evidence outputs (`execution.evidence_outputs`, proposed M4)
 
 EXE-21, with EVIDENCE §11. A completion record may carry `outputs: [ { role, evidence: { provider, artifact, digest } } ]`. They name artifacts the executor sealed under its work binding; `execution.inspect` lists them. A reference authorizes nothing.
+
+- Outputs are listed only for executions submitted in a session that negotiated the feature, and only after the evidence provider confirmed the seal. An output that could not be sealed is not listed.
+- The reference executor seals each recorded completion's content as artifact `output.<execution>.<completion_id>`, with `work` naming the execution, under a grant bound to that work (EVIDENCE §10).
+- **Origin.** A submit may carry `origin: { initiator, depth, call_budget }` for work a context job initiated (CONTEXT §4, CTX-19); `execution.inspect` preserves it.
 
 ## 14. Output telemetry and backpressure
 

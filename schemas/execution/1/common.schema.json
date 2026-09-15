@@ -249,6 +249,28 @@
             "conflict",
             "superseded_attempt"
           ]
+        },
+        "outputs": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "evidence"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "evidence": {
+                "$ref": "../../evidence/1/common.schema.json#/$defs/reference"
+              }
+            },
+            "unevaluatedProperties": false
+          }
         }
       },
       "unevaluatedProperties": false
@@ -335,7 +357,9 @@
     "queue_reason": {
       "enum": [
         "capacity",
-        "context_binding_unsatisfied"
+        "context_binding_unsatisfied",
+        "context_binding_stale",
+        "context_binding_unknown"
       ]
     },
     "steering_entry": {
@@ -796,20 +820,27 @@
           "$ref": "../../core/1/common.schema.json#/$defs/identifier"
         },
         "packet": {
-          "type": "object",
-          "required": [
-            "ref",
-            "digest"
-          ],
-          "properties": {
-            "ref": {
-              "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "ref",
+                "digest"
+              ],
+              "properties": {
+                "ref": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                },
+                "digest": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/digest"
+                }
+              },
+              "unevaluatedProperties": false
             },
-            "digest": {
-              "$ref": "../../core/1/common.schema.json#/$defs/digest"
+            {
+              "$ref": "../../context/1/common.schema.json#/$defs/packet_reference"
             }
-          },
-          "unevaluatedProperties": false
+          ]
         },
         "obligation": {
           "enum": [
@@ -825,6 +856,57 @@
         },
         "selected_by": {
           "$ref": "../../core/1/common.schema.json#/$defs/principal"
+        },
+        "request": {
+          "$ref": "../../context/1/common.schema.json#/$defs/request_subject"
+        },
+        "conditions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "../../context/1/common.schema.json#/$defs/condition"
+          }
+        },
+        "fetch": {
+          "type": "object",
+          "required": [
+            "evidence"
+          ],
+          "properties": {
+            "context": {
+              "type": "object",
+              "required": [
+                "provider",
+                "grant"
+              ],
+              "properties": {
+                "provider": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                },
+                "grant": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                }
+              },
+              "unevaluatedProperties": false
+            },
+            "evidence": {
+              "type": "object",
+              "required": [
+                "provider",
+                "grant"
+              ],
+              "properties": {
+                "provider": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                },
+                "grant": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                }
+              },
+              "unevaluatedProperties": false
+            }
+          },
+          "unevaluatedProperties": false
         }
       },
       "unevaluatedProperties": false,
@@ -855,20 +937,27 @@
           "$ref": "../../core/1/common.schema.json#/$defs/identifier"
         },
         "packet": {
-          "type": "object",
-          "required": [
-            "ref",
-            "digest"
-          ],
-          "properties": {
-            "ref": {
-              "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "ref",
+                "digest"
+              ],
+              "properties": {
+                "ref": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                },
+                "digest": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/digest"
+                }
+              },
+              "unevaluatedProperties": false
             },
-            "digest": {
-              "$ref": "../../core/1/common.schema.json#/$defs/digest"
+            {
+              "$ref": "../../context/1/common.schema.json#/$defs/packet_reference"
             }
-          },
-          "unevaluatedProperties": false
+          ]
         },
         "obligation": {
           "enum": [
@@ -890,6 +979,64 @@
             "satisfied",
             "gap",
             "unsatisfied"
+          ]
+        },
+        "request": {
+          "$ref": "../../context/1/common.schema.json#/$defs/request_subject"
+        },
+        "conditions": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "../../context/1/common.schema.json#/$defs/condition"
+          }
+        },
+        "fetch": {
+          "type": "object",
+          "required": [
+            "evidence"
+          ],
+          "properties": {
+            "context": {
+              "type": "object",
+              "required": [
+                "provider",
+                "grant"
+              ],
+              "properties": {
+                "provider": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                },
+                "grant": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                }
+              },
+              "unevaluatedProperties": false
+            },
+            "evidence": {
+              "type": "object",
+              "required": [
+                "provider",
+                "grant"
+              ],
+              "properties": {
+                "provider": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                },
+                "grant": {
+                  "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+                }
+              },
+              "unevaluatedProperties": false
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        "revalidation": {
+          "enum": [
+            "current",
+            "stale",
+            "unknown"
           ]
         }
       },
@@ -1024,6 +1171,148 @@
         },
         "coverage": {
           "const": "incomplete"
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "context_check": {
+      "type": "object",
+      "required": [
+        "binding_id",
+        "boundary",
+        "checked_at",
+        "observed_basis",
+        "held",
+        "results",
+        "state"
+      ],
+      "properties": {
+        "binding_id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "boundary": {
+          "enum": [
+            "admission",
+            "dispatch",
+            "transition"
+          ]
+        },
+        "transition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "checked_at": {
+          "$ref": "../../core/1/common.schema.json#/$defs/instant"
+        },
+        "observed_basis": {
+          "type": "object"
+        },
+        "held": {
+          "type": "boolean"
+        },
+        "fetch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "results": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "condition_id",
+              "result",
+              "evidence"
+            ],
+            "properties": {
+              "condition_id": {
+                "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+              },
+              "result": {
+                "enum": [
+                  "match",
+                  "mismatch",
+                  "unavailable"
+                ]
+              },
+              "observed": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "unevaluatedProperties": false
+          }
+        },
+        "state": {
+          "enum": [
+            "current",
+            "stale",
+            "unknown"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "context_block": {
+      "type": "object",
+      "required": [
+        "boundary",
+        "binding_id",
+        "reason"
+      ],
+      "properties": {
+        "boundary": {
+          "enum": [
+            "dispatch",
+            "transition"
+          ]
+        },
+        "binding_id": {
+          "$ref": "../../core/1/common.schema.json#/$defs/identifier"
+        },
+        "transition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reason": {
+          "enum": [
+            "context_binding_stale",
+            "context_binding_unknown",
+            "context_binding_unsatisfied"
+          ]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "origin": {
+      "type": "object",
+      "required": [
+        "initiator",
+        "depth",
+        "call_budget"
+      ],
+      "properties": {
+        "initiator": {
+          "$ref": "../../core/1/common.schema.json#/$defs/subject"
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "call_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "unevaluatedProperties": false

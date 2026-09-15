@@ -244,6 +244,33 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         participants: BTreeMap::new(),
         session_participant: BTreeMap::new(),
     };
+    // Named participants' sockets and principals' credentials are known before any starts, so
+    // participants that reach each other can be configured in any order.
+    if ctx.descriptor.binding == "unix" {
+        for step in fixture["steps"].as_array().into_iter().flatten() {
+            if step["step"] != "start_participant" {
+                continue;
+            }
+            if let Some(name) = step["name"].as_str() {
+                let socket = ctx.work_dir.join(format!("n-{name}")).join("p.sock");
+                state.vars.insert(
+                    format!("socket.{name}"),
+                    json!(socket.display().to_string()),
+                );
+            }
+            for principal in step["credential_principals"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                state.vars.insert(
+                    format!("credential.{principal}"),
+                    json!(credential_for(&ctx.work_dir, principal)),
+                );
+            }
+        }
+    }
     let mut failure = None;
     for (index, step) in fixture["steps"]
         .as_array()
@@ -423,6 +450,25 @@ impl State<'_> {
                     });
                 if step["await"] == json!(false) {
                     return self.send_pending(&method, params, step);
+                }
+                if let Some(bound) = step["eventually_ms"].as_u64() {
+                    // For asynchronous compositions: repeat the query until the expectation holds
+                    // or the real-time bound passes; only the last mismatch is reported.
+                    let deadline = Instant::now() + Duration::from_millis(bound);
+                    loop {
+                        let params = self.query_envelope(step)?;
+                        match self.call(&method, params, step) {
+                            Ok(_) => return Ok(()),
+                            Err(Fail(reason)) if Instant::now() < deadline => {
+                                self.note("eventually_retry", json!({"reason": reason}));
+                                std::thread::sleep(Duration::from_millis(50));
+                            }
+                            Err(Fail(reason)) => {
+                                return Err(Fail(format!("not within {bound} ms: {reason}")));
+                            }
+                            Err(other) => return Err(other),
+                        }
+                    }
                 }
                 self.call(&method, params, step).map(|_| ())
             }

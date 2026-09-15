@@ -50,7 +50,9 @@
       "context.required_before_transition",
       "context.shared_jobs",
       "context.updates",
-      "context.expand"
+      "context.expand",
+      "execution.context_revalidation",
+      "execution.evidence_outputs"
     ],
     "test_controls": [
       "clock.file",
@@ -108,7 +110,17 @@
       "room-wait-unbounded",
       "packet-reported-before-seal",
       "foreign-grant-honored",
-      "packet-grant-covers-all-packets"
+      "packet-grant-covers-all-packets",
+      "packet-reference-unchecked",
+      "output-listed-unsealed",
+      "output-digest-differs",
+      "context-outage-fails-open",
+      "unmet-packet-satisfies",
+      "context-queued-holds-capacity",
+      "job-execution-re-enriched",
+      "cancel-ends-job",
+      "admission-check-only",
+      "no-late-state"
     ]
   }
 }

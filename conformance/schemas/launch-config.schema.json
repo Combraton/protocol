@@ -280,9 +280,18 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": [
-              "ref",
-              "digest"
+            "oneOf": [
+              {
+                "required": [
+                  "ref",
+                  "digest"
+                ]
+              },
+              {
+                "required": [
+                  "reference"
+                ]
+              }
             ],
             "properties": {
               "ref": {
@@ -290,11 +299,14 @@
               },
               "digest": {
                 "type": "string"
+              },
+              "reference": {
+                "type": "object"
               }
             },
             "additionalProperties": false
           },
-          "description": "Context packets the executor holds, by reference and exact digest."
+          "description": "Context packets the executor holds, by M3 reference and exact digest, or by packet reference (EXECUTION 13.1)."
         },
         "installations": {
           "type": "array",
@@ -358,6 +370,82 @@
           "type": "integer",
           "minimum": 1,
           "description": "Bytes of output the executor keeps per execution (default 65536)."
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider_id",
+              "socket",
+              "credential"
+            ],
+            "properties": {
+              "provider_id": {
+                "type": "string"
+              },
+              "socket": {
+                "type": "string"
+              },
+              "credential": {
+                "type": "string"
+              },
+              "grant": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Separately running providers the executor reaches over their public sockets to fetch packets (owner decision M4-Q3)."
+        },
+        "evidence_outputs": {
+          "type": "object",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "The evidence provider where the executor seals completion outputs under its work-bound grant (EXECUTION 13.2)."
+        },
+        "observed_basis": {
+          "type": "object",
+          "properties": {
+            "repositories": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "tree": {
+                    "type": "string"
+                  },
+                  "dirty_snapshot": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "environment_digest": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
         }
       },
       "additionalProperties": false
@@ -458,6 +546,30 @@
         "evidence_provider": {
           "type": "object",
           "description": "A separately running evidence provider that seals this provider's packets, reached over its public socket (owner decision M4-Q3).",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "executor": {
+          "type": "object",
+          "description": "A separately running executor where the context provider runs its own investigation executions (CTX-18, CTX-19).",
           "required": [
             "provider_id",
             "socket",
@@ -755,6 +867,31 @@
             "type": "integer",
             "minimum": 1,
             "description": "Emit this many alternating runtime observations at once."
+          },
+          "observe_basis": {
+            "type": "object",
+            "properties": {
+              "repositories": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "tree": {
+                      "type": "string"
+                    },
+                    "dirty_snapshot": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "environment_digest": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
           }
         },
         "additionalProperties": false
@@ -819,6 +956,29 @@
         },
         "stall": {
           "const": true
+        },
+        "execute": {
+          "type": "object",
+          "required": [
+            "execution"
+          ],
+          "properties": {
+            "execution": {
+              "type": "string"
+            },
+            "brief": {
+              "type": "string"
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "call_budget": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

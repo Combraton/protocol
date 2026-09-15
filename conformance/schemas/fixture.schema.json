@@ -427,6 +427,12 @@
               "name": {
                 "type": "string",
                 "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+              },
+              "eventually_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000,
+                "description": "Repeat the query until its expectation holds, within this real-time bound (asynchronous compositions)."
               }
             },
             "additionalProperties": false

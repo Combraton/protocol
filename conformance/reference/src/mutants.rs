@@ -89,6 +89,62 @@ pub const ALL: &[(&str, &str)] = &[
         "drops the authority revision of authority-supplied content",
     ),
     (
+        "request-link-dropped",
+        "drops the context request link from a binding at admission",
+    ),
+    (
+        "unavailable-treated-as-fresh",
+        "treats an unobservable condition as a match",
+    ),
+    (
+        "unavailable-reported-stale",
+        "reports an unobservable condition as a mismatch",
+    ),
+    (
+        "admission-check-only",
+        "checks context bindings only at admission, never at dispatch or transitions",
+    ),
+    (
+        "transition-binding-blocks-all",
+        "lets a required-before-transition binding block admission and dispatch",
+    ),
+    (
+        "packet-reference-unchecked",
+        "accepts packet facts whose reference differs from the binding",
+    ),
+    (
+        "revalidation-exposed-without-negotiation",
+        "shows revalidation states and checks to sessions that did not negotiate them",
+    ),
+    (
+        "output-listed-unsealed",
+        "lists an output reference whose artifact was not sealed",
+    ),
+    (
+        "output-digest-differs",
+        "lists an output reference with a digest other than the sealed bytes'",
+    ),
+    (
+        "work-binding-ignored",
+        "accepts a publish whose work differs from the work the grant is bound to",
+    ),
+    (
+        "context-outage-fails-open",
+        "treats an unreachable context provider as confirming the bound revision is current",
+    ),
+    (
+        "unmet-packet-satisfies",
+        "lets a packet that reports required items unmet satisfy a required binding",
+    ),
+    (
+        "context-queued-holds-capacity",
+        "counts executions queued for context as holding capacity",
+    ),
+    (
+        "job-execution-re-enriched",
+        "binds a context job's own investigation execution to context again",
+    ),
+    (
         "packet-reported-before-seal",
         "reports a packet revision whose artifact the evidence provider did not seal",
     ),

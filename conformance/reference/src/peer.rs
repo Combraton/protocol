@@ -106,7 +106,6 @@ impl Peer {
         }
     }
 
-    #[allow(dead_code)] // used by executor packet checks (M4 step 5)
     pub fn query(
         &mut self,
         operation: &str,

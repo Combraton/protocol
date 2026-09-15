@@ -5,6 +5,95 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "chunk-limit-ignores-overhead",
+        "declares a chunk limit that ignores base64 and envelope overhead",
+    ),
+    (
+        "append-overwrites-received",
+        "accepts an append at an already received offset, overwriting bytes",
+    ),
+    (
+        "release-without-authority",
+        "lets any principal release a hold it does not own",
+    ),
+    (
+        "duplicate-chunk-accepted",
+        "accepts an identical chunk resent under a new command with a stale precondition",
+    ),
+    ("coverage-optional", "accepts a descriptor without coverage"),
+    (
+        "locator-as-identity",
+        "serves the bytes of the first artifact sharing the requested artifact's locator",
+    ),
+    (
+        "seal-unverified",
+        "seals without verifying the received size and digest",
+    ),
+    (
+        "seal-twice-appends-event",
+        "gives an already sealed artifact a new revision and event on a second seal",
+    ),
+    (
+        "locator-credentials-accepted",
+        "accepts a locator that carries credentials",
+    ),
+    (
+        "producer-principal-from-payload",
+        "records a producer principal named in the payload instead of the session principal",
+    ),
+    (
+        "terminal-output-complete-accepted",
+        "accepts terminal output declared as a complete tool trace",
+    ),
+    (
+        "fetch-leaks-existence",
+        "answers not_found for a nonexistent artifact before authorization",
+    ),
+    (
+        "mismatched-reference-serves-bytes",
+        "serves bytes for a reference whose digest differs from the artifact's",
+    ),
+    (
+        "query-returns-unreadable",
+        "lists artifacts the reader may not read",
+    ),
+    (
+        "corrupted-bytes-served",
+        "serves stored bytes that no longer match their digest",
+    ),
+    (
+        "manifest-incomplete-reported-complete",
+        "reports a manifest complete although a required child is not present",
+    ),
+    (
+        "withheld-child-reported-missing",
+        "evaluates children the reader may not read instead of withholding them",
+    ),
+    (
+        "manifest-children-by-digest",
+        "resolves a manifest child by digest alone when the named artifact is absent",
+    ),
+    (
+        "purge-bypasses-holds",
+        "purges an artifact although active holds remain",
+    ),
+    (
+        "release-holds-as-authorization",
+        "releases named holds without checking release authority",
+    ),
+    (
+        "purged-before-confirmation",
+        "reports purged before physical deletion is confirmed",
+    ),
+    (
+        "loss-report-unfiltered",
+        "shows proof-loss dependencies the reader may not inspect",
+    ),
+    (
+        "purge-ignores-hold-revisions",
+        "accepts a purge without revision preconditions on the holds it releases",
+    ),
+    (
         "notice-budget-per-subscription",
         "restarts the ending-notice budget for each subscription",
     ),

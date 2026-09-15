@@ -5,6 +5,7 @@
 
 mod barriers;
 mod clock;
+mod evidence;
 mod execution;
 mod features;
 mod frames;
@@ -241,6 +242,7 @@ fn run(args: Args) -> Result<(), String> {
             clock,
             executor: std::sync::Arc::new(config["executor"].clone()),
             faults: std::sync::Arc::new(std::sync::Mutex::new(config["faults"].clone())),
+            evidence_store: std::sync::Arc::new(config["evidence_store"].clone()),
             capabilities,
             authorities,
             principal,

@@ -1247,6 +1247,7 @@
       "items": {
         "enum": [
           "clock.file",
+          "evidence.store",
           "executor.script",
           "store.faults"
         ]

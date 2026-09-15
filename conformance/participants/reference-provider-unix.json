@@ -18,6 +18,10 @@
       {
         "name": "execution",
         "major": 1
+      },
+      {
+        "name": "evidence",
+        "major": 1
       }
     ],
     "features": [
@@ -34,12 +38,15 @@
       "execution.discovery",
       "execution.continuation",
       "core.events.backpressure",
-      "execution.output"
+      "execution.output",
+      "evidence.manifests",
+      "evidence.retention_control"
     ],
     "test_controls": [
       "clock.file",
       "executor.script",
-      "store.faults"
+      "store.faults",
+      "evidence.store"
     ],
     "test_barriers": [
       "subscription.recheck.after_authorization",

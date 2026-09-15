@@ -156,6 +156,56 @@ const OPERATIONS: &[Operation] = &[
         command: true,
     },
     Operation {
+        name: "evidence.upload.prepare",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.upload.append",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.seal",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.upload.abandon",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.inspect",
+        profile: "evidence",
+        command: false,
+    },
+    Operation {
+        name: "evidence.query",
+        profile: "evidence",
+        command: false,
+    },
+    Operation {
+        name: "evidence.fetch",
+        profile: "evidence",
+        command: false,
+    },
+    Operation {
+        name: "evidence.hold",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.release",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.purge",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -207,6 +257,13 @@ const SUPPORTED: &[SupportedProfile] = &[
         features: &EXECUTION_FEATURES,
         depends_on: &["core"],
         requires_core_features: &["core.events", "core.capabilities", "core.effects"],
+    },
+    SupportedProfile {
+        name: "evidence",
+        majors: &[1],
+        features: &["evidence.manifests", "evidence.retention_control"],
+        depends_on: &["core"],
+        requires_core_features: &["core.events"],
     },
     SupportedProfile {
         name: "core-test",
@@ -317,6 +374,8 @@ pub struct Identity {
     pub executor: std::sync::Arc<Value>,
     /// Injected store faults remaining in this process (test environment; decision 007).
     pub faults: std::sync::Arc<std::sync::Mutex<Value>>,
+    /// Scripted evidence store controls (test environment; decision 007).
+    pub evidence_store: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -457,6 +516,10 @@ impl Provider {
         {
             eprintln!("executor tick: {error}");
         }
+        let evidence_store = self.identity.evidence_store.clone();
+        if let Err(error) = crate::evidence::tick(&mut self.store, &now, &evidence_store) {
+            eprintln!("evidence tick: {error}");
+        }
     }
 
     fn process(&mut self, id: &Value, method: &str, params: Value) -> Result<Value, Reject> {
@@ -542,6 +605,9 @@ impl Provider {
                 "execution.workspace.checkpoint" => Some("execution.workspaces"),
                 "execution.discovery.list" => Some("execution.discovery"),
                 "execution.output.read" => Some("execution.output"),
+                "evidence.hold" | "evidence.release" | "evidence.purge" => {
+                    Some("evidence.retention_control")
+                }
                 _ => None,
             };
             if let Some(feature) = feature
@@ -751,6 +817,8 @@ impl Provider {
             .and_then(Value::as_str)
             .map(String::from);
         let fault = self.take_fault(operation_name);
+        let evidence_store = self.identity.evidence_store.clone();
+        let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
         let fail_commit =
             fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
         let mutants = &self.mutants;
@@ -789,6 +857,16 @@ impl Provider {
                     }
                     "core.effects.abort_obligation" => {
                         crate::features::abort_obligation(tx, &subject_id, &payload, &context)?
+                    }
+                    name if name.starts_with("evidence.") => {
+                        let evidence_context = crate::evidence::Context {
+                            now: recorded_at.clone(),
+                            principal: &principal,
+                            chunk_limit,
+                            store_config: &evidence_store,
+                            mutants,
+                        };
+                        crate::evidence::apply(tx, name, &subject_id, &payload, &evidence_context)?
                     }
                     _ => {
                         let (revision, outcome, events) = apply_change(
@@ -996,6 +1074,55 @@ impl Provider {
             "core.effects.get" => {
                 self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
             }
+            "evidence.release" => {
+                let id = params["subject"]["id"].as_str().unwrap_or_default();
+                let owner = crate::evidence::hold_owner(&self.store, id).map_err(storage)?;
+                if owner.as_deref() == Some(self.identity.principal.as_str())
+                    || self.mutants.on("release-without-authority")
+                {
+                    return Ok(Some(Vec::new()));
+                }
+                return Ok(Some(vec![(
+                    "evidence.release".to_string(),
+                    params["subject"].clone(),
+                )]));
+            }
+            "evidence.purge" => {
+                let mut needed = vec![("evidence.purge".to_string(), params["subject"].clone())];
+                if !self.mutants.on("release-holds-as-authorization") {
+                    for hold in params["payload"]["release_holds"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        let id = hold.as_str().unwrap_or_default();
+                        let owner =
+                            crate::evidence::hold_owner(&self.store, id).map_err(storage)?;
+                        if owner.as_deref() != Some(self.identity.principal.as_str()) {
+                            needed.push((
+                                "evidence.release".to_string(),
+                                json!({"kind": crate::evidence::HOLD, "id": id}),
+                            ));
+                        }
+                    }
+                }
+                return Ok(Some(needed));
+            }
+            "evidence.fetch" | "evidence.inspect"
+                if self.mutants.on("fetch-leaks-existence")
+                    && self
+                        .store
+                        .subject(
+                            crate::evidence::ARTIFACT,
+                            params["payload"]["artifact"]["id"]
+                                .as_str()
+                                .unwrap_or_default(),
+                        )
+                        .map_err(storage)?
+                        .is_none() =>
+            {
+                return Err(reject("not_found", json!({})));
+            }
             "core.effects.abort_obligation" => {
                 let execution =
                     self.effect_execution(params["subject"]["id"].as_str().unwrap_or_default())?;
@@ -1033,6 +1160,19 @@ impl Provider {
 
     fn effect_execution(&self, effect: &str) -> Result<Option<String>, Reject> {
         self.store.effect_execution(effect).map_err(storage)
+    }
+
+    /// Which subjects this request's principal may read, as a reusable predicate (CORE section 16.6).
+    fn reader_filter(&self, params: &Value) -> impl Fn(&Value) -> bool + '_ {
+        let grant = match params.get("grant").and_then(Value::as_str) {
+            Some(id) => self.usable_grant(id).ok().map(Some),
+            None if self.is_authority() => Some(None),
+            None => Some(Some(json!({"rights": [], "resources": []}))),
+        };
+        move |subject: &Value| match &grant {
+            None => false,
+            Some(grant) => self.visible(subject, &None, grant).unwrap_or(false),
+        }
     }
 
     /// Whether a profile feature was negotiated in this session.
@@ -1413,6 +1553,16 @@ impl Provider {
         let ignore_unknown = self.mutants.on("accept-unknown-fields");
         // Mutant `ignore-unique-items` validates a copy with duplicate requires entries removed.
         let mut deduplicated = params.clone();
+        if self.mutants.on("coverage-optional")
+            && operation == "evidence.upload.prepare"
+            && let Some(payload) = deduplicated
+                .get_mut("payload")
+                .and_then(Value::as_object_mut)
+        {
+            payload
+                .entry("coverage")
+                .or_insert_with(|| json!({"completeness": "unknown"}));
+        }
         if self.mutants.on("ignore-unique-items")
             && let Some(requires) = deduplicated
                 .get_mut("requires")
@@ -1491,8 +1641,64 @@ impl Provider {
                 );
             }
         }
+        if operation.name == "evidence.upload.prepare" {
+            let payload = &params["payload"];
+            if let Some(locator) = payload["locator"].as_str()
+                && crate::evidence::locator_has_credentials(locator)
+                && !self.mutants.on("locator-credentials-accepted")
+            {
+                return invalid("/payload/locator", "locator carries credentials");
+            }
+            if payload["producer"]
+                .get("principal")
+                .is_some_and(|p| p != self.identity.principal.as_str())
+                && !self.mutants.on("producer-principal-from-payload")
+            {
+                return invalid(
+                    "/payload/producer/principal",
+                    "the producer principal is the session principal",
+                );
+            }
+            if payload["source"]["kind"] == "terminal_output"
+                && payload["coverage"]["completeness"] == "complete"
+                && !self.mutants.on("terminal-output-complete-accepted")
+            {
+                return invalid(
+                    "/payload/coverage/completeness",
+                    "terminal output is never a complete tool trace",
+                );
+            }
+        }
         if !operation.command {
             return Ok(());
+        }
+        if matches!(operation.name, "evidence.upload.prepare" | "evidence.hold")
+            && params["preconditions"][0]["revision"] != 0
+        {
+            return invalid(
+                "/preconditions/0/revision",
+                "creating an artifact or hold needs revision 0",
+            );
+        }
+        if operation.name == "evidence.purge" {
+            for hold in params["payload"]["release_holds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                let hold_subject = json!({"kind": crate::evidence::HOLD, "id": hold});
+                let named = params["preconditions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|p| p["subject"] == hold_subject);
+                if !named && !self.mutants.on("purge-ignores-hold-revisions") {
+                    return invalid(
+                        "/preconditions",
+                        "every hold named in release_holds needs a precondition on its revision",
+                    );
+                }
+            }
         }
         if let Some((algorithm, hex)) = params["command_digest"]
             .as_str()
@@ -1662,6 +1868,42 @@ impl Provider {
             "execution.controller.claim" => {
                 id == crate::execution::host_id(&self.identity.executor)
             }
+            name if name.starts_with("evidence.") => {
+                let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
+                return match crate::evidence::check(
+                    &reader,
+                    name,
+                    params,
+                    &self.mutants,
+                    chunk_limit,
+                )
+                .map_err(storage)?
+                {
+                    Ok(()) => Ok(()),
+                    Err(("hold_active", details)) => {
+                        let visible: Vec<Value> = details["holds"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|h| {
+                                self.may_read(
+                                    &json!({"kind": crate::evidence::HOLD, "id": h}),
+                                    params,
+                                )
+                                .unwrap_or(false)
+                            })
+                            .cloned()
+                            .collect();
+                        let filtered =
+                            visible.len() < details["holds"].as_array().map_or(0, Vec::len);
+                        Err(reject(
+                            "hold_active",
+                            json!({"holds": visible, "filtered": filtered}),
+                        ))
+                    }
+                    Err((code, details)) => Err(reject(code, details)),
+                };
+            }
             "core.effects.abort_obligation" => self
                 .store
                 .effect_record(id)
@@ -1712,7 +1954,10 @@ impl Provider {
             if self.mutants.on("first-precondition-failure-only") && !failed.is_empty() {
                 break;
             }
-            if self.mutants.on("ignore-preconditions") {
+            if self.mutants.on("ignore-preconditions")
+                || (self.mutants.on("duplicate-chunk-accepted")
+                    && params["operation"] == "evidence.upload.append")
+            {
                 break;
             }
             if self.mutants.on("partial-preconditions") && entry["subject"] != params["subject"] {
@@ -1839,6 +2084,75 @@ impl Provider {
                 )
                 .map_err(storage)?
                 .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "evidence.inspect" => {
+                let id = params["payload"]["artifact"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let manifests = self.feature_negotiated("evidence.manifests");
+                let can_read = self.reader_filter(params);
+                crate::evidence::inspect(
+                    &self.store,
+                    &id,
+                    &self.identity.provider_id,
+                    &self.identity.evidence_store,
+                    manifests,
+                    &can_read,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "evidence.fetch" => {
+                let id = params["payload"]["artifact"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let budget = self.caller_frame_limit;
+                match crate::evidence::fetch(
+                    &self.store,
+                    &id,
+                    &params["payload"],
+                    &self.identity.evidence_store,
+                    budget,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                {
+                    Ok(result) => Ok(result),
+                    Err(code) => Err(reject(code, json!({}))),
+                }
+            }
+            "evidence.query" => {
+                let can_read = self.reader_filter(params);
+                let restricted =
+                    match params.get("grant").and_then(Value::as_str) {
+                        None => !self.is_authority(),
+                        Some(id) => !self.usable_grant(id).is_ok_and(|grant| {
+                            grant["rights"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|r| r == "evidence.read")
+                                && grant["resources"].as_array().into_iter().flatten().any(
+                                    |resource| {
+                                        resource["kind"] == crate::evidence::ARTIFACT
+                                            && resource.get("id").is_none()
+                                            && resource.get("id_prefix").is_none()
+                                    },
+                                )
+                        }),
+                    };
+                crate::evidence::query(
+                    &self.store,
+                    &params["payload"],
+                    &self.identity.evidence_store,
+                    restricted,
+                    &can_read,
+                    &self.mutants,
+                )
+                .map_err(storage)
             }
             "execution.discovery.list" => Ok(crate::features::discovery(
                 &self.identity.executor,
@@ -2250,6 +2564,27 @@ impl Provider {
                     .into_iter()
                     .flatten()
                     .any(|right| right == "execution.read")
+        } else if kind == crate::evidence::ARTIFACT {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "evidence.read")
+        } else if kind == crate::evidence::HOLD {
+            let id = subject["id"].as_str().unwrap_or_default();
+            if crate::evidence::hold_owner(&self.store, id)
+                .map_err(storage)?
+                .as_deref()
+                == Some(self.identity.principal.as_str())
+            {
+                true
+            } else {
+                match crate::evidence::hold_artifact(&self.store, id).map_err(storage)? {
+                    Some(artifact) => self.visible(&artifact, &None, &Some(grant.clone()))?,
+                    None => false,
+                }
+            }
         } else if kind == "core.effect" {
             // An effect is visible exactly when its target execution is (CORE section 19.2).
             let id = subject["id"].as_str().unwrap_or_default();

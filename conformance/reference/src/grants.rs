@@ -38,6 +38,21 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "execution.discovery.list".to_string(),
             serde_json::json!({"kind": "execution.discovery", "id": "installations"}),
         )]),
+        "evidence.upload.prepare"
+        | "evidence.upload.append"
+        | "evidence.seal"
+        | "evidence.upload.abandon" => Some(vec![(
+            "evidence.publish".to_string(),
+            params["subject"].clone(),
+        )]),
+        "evidence.hold" => Some(vec![(
+            "evidence.hold".to_string(),
+            serde_json::json!({"kind": "evidence.artifact", "id": params["payload"]["artifact"]["id"]}),
+        )]),
+        "evidence.inspect" | "evidence.fetch" => Some(vec![(
+            "evidence.read".to_string(),
+            serde_json::json!({"kind": "evidence.artifact", "id": params["payload"]["artifact"]["id"]}),
+        )]),
         "execution.inspect" | "execution.output.read" => Some(vec![(
             "execution.read".to_string(),
             serde_json::json!({"kind": crate::execution::KIND, "id": params["payload"]["execution"]}),

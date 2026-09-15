@@ -408,6 +408,33 @@
         }
       },
       "additionalProperties": false
+    },
+    "evidence_store": {
+      "type": "object",
+      "description": "Scripted evidence store controls (decision 007): corrupt stored bytes, unavailable artifacts, staging timeout, deferred physical deletion.",
+      "properties": {
+        "corrupt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unavailable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "staging_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "deletion_delay_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,

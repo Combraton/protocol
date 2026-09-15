@@ -35,7 +35,7 @@ Fixed at `prepare`, immutable once sealed:
 | Field | Meaning |
 |---|---|
 | `digest`, `size`, `media_type` | The declared content, verified at seal (§4) |
-| `producer` | `{ principal, producer_id? }`. `principal` is always the session principal of the `prepare` command (EVD-4); a prepare naming another principal is refused. |
+| `producer` | `{ principal, producer_id? }`. `principal` is always the session principal of the `prepare` command (EVD-4); a prepare naming another principal is `invalid_envelope` at `/payload/producer/principal`. |
 | `source` | What was captured: `{ kind, id }`, for example a terminal stream, a test report, or a build log of a named execution |
 | `scope` | The visibility scope the artifact belongs to; opaque to this profile |
 | `capture` | `{ captured_at, uncertainty?: { not_before, not_after }, anchors }`. Anchors identify code trees, dirty snapshots, build and environment identities (EVD-4). Capture time is metadata, never ordering. |
@@ -55,8 +55,10 @@ Bytes travel **in-band**, in bounded base64 chunks over the negotiated binding. 
 | `evidence.seal` | command | Precondition on the current revision. Verifies size and digest, then makes the artifact `sealed`. Outcome `{ state: "sealed", digest, size, already_sealed }`. |
 | `evidence.upload.abandon` | command | Precondition on the current revision. Ends a staged upload: state `abandoned`, staged bytes discarded, descriptor kept as a tombstone. |
 
+Append and abandon need a staged upload, and seal needs a staged or sealed artifact. On an artifact without one (sealed for append and abandon, abandoned for all three) they are `not_found`: the upload they act on does not exist. `evidence.inspect` still reports the artifact and its state.
+
 **Chunk sizing.**
-- `chunk_limit` is the largest number of **decoded** bytes one append may carry. A provider MUST choose it so that an append of that size, base64-encoded, with the envelope overhead the provider declares (`chunk_overhead_bytes`, in the prepare outcome), fits its own negotiated frame limit. Base64 grows data by 4/3.
+- `chunk_limit` is the largest number of **decoded** bytes one append may carry. A provider MUST choose it so that an append of that size, base64-encoded, with the envelope overhead the provider declares (`chunk_overhead_bytes`, in the prepare outcome), fits its negotiated payload and frame limits, and so that the base64 string fits its string limit. Base64 grows data by 4/3.
 - An append with more than `chunk_limit` decoded bytes is `limit_exceeded` with `limit: "chunk_limit"`, even if its frame fits.
 - A frame over the frame limit is handled by the binding (`frame_too_large`) before any of this.
 - `evidence.fetch` returns fewer bytes than requested when the encoded response would exceed the caller's receive limit, and at least one byte whenever one fits (as CORE §16.4 does for items).
@@ -86,9 +88,13 @@ Bytes travel **in-band**, in bounded base64 chunks over the negotiated binding. 
 | `evidence.query` | query | Filters on producer, source, work, media type, digest and scope; bounded page; opaque cursor; readable artifacts only, with `filtered` |
 | `evidence.fetch` | query | `{ artifact, digest, offset?, max_bytes? }` → `{ artifact, digest, offset, data_base64, next_offset, size }` for a sealed, available artifact |
 
+- **Query filtering.** `filtered` is `true` whenever the reader's authorization does not cover every artifact, whether or not an unreadable artifact matched. It never reveals that an unreadable artifact matches the filters, which a digest filter would otherwise turn into an existence test.
+- **Not sealed.** Fetch of a staged or abandoned artifact is `not_found` to an authorized reader: no sealed content exists. `evidence.inspect` reports its state.
 - **Exact bytes.** Fetched bytes are the sealed bytes; a provider MUST NOT regenerate, re-encode or normalize them.
 - **Reference mismatch.** A fetch whose `digest` differs from the artifact's sealed digest is refused with `artifact_digest_mismatch` and no bytes. Sealed content is immutable, so this never means "fetch the latest content": the reference names other bytes, or a different artifact, than the one requested.
 - **Integrity on read.** Stored bytes that no longer match the digest are never served; availability becomes `unavailable` with reason `integrity_failed`.
+- **Not available.** For a sealed artifact whose availability is not `available`, fetch returns `{ artifact, digest, offset, size, availability }` with empty `data_base64` and `next_offset` equal to `offset`. It never serves partial, pending or unverified bytes as the sealed content.
+- `evidence.inspect` and `evidence.query` report availability as observed at the read, including an integrity failure. A query records nothing, so a failure detected during a read is reported, not recorded as an event.
 
 ## 6. Errors
 
@@ -110,7 +116,7 @@ All are decided at CORE §10 step 7, **after** authorization (step 6) and after 
 - **Format.** A manifest artifact has media type `application/vnd.combraton.evidence-manifest+json` and content `{ "format": "combraton-evidence-manifest/1", "children": [ { role, evidence: { provider?, artifact, digest }, required } ] }`. Children name the exact artifact **and** digest. A later format is a new `format` value, never a silent change.
 - **Validation at seal.** Content that is not a valid manifest of a supported format is refused with `invalid_envelope` at `/payload` of the seal.
 - **Completeness is per reader.** `evidence.inspect` on a manifest reports, for that reader:
-  - each child's state: `present` (sealed, available, digest matches, readable by this reader), `missing` (known absent to a reader who may know: no such artifact, purged, abandoned, or the artifact's digest differs), `unverified` (held at another provider, or availability not established), or `withheld` (the reader may not read the child, whether or not it exists);
+  - each child's state: `present` (sealed, available, digest matches, readable by this reader), `missing` (known absent to a reader who may know: no such artifact, purge pending or purged, abandoned or unsealed, or the artifact's digest differs), `unverified` (held at another provider, or not currently available: unavailable, partial, or failing integrity), or `withheld` (the reader may not read the child, whether or not it exists);
   - `completeness`: `complete` when every required child is `present`; `incomplete` when a required child is `missing`; otherwise `undetermined`.
 - A provider MUST NOT report a manifest `complete` when a required child is not present, and MUST NOT turn `withheld` or `unverified` into `missing`, which would leak existence or claim knowledge it lacks.
 - A manifest authorizes nothing about its children.
@@ -143,6 +149,7 @@ Resources name kind `evidence.artifact` or `evidence.hold`, with optional `id` o
   - **Commit, one owner transaction:** release every named hold (each gets a revision and an event), make availability `purge_pending`, and record the durable proof-loss record.
   - **Physical deletion** is confirmed separately. When the store confirms it, availability becomes `purged` with its own event. Until then the provider reports `purge_pending`: deletion requested, not yet confirmed.
   - The descriptor remains as a tombstone. A purged artifact is never `not_found` to a principal who may read it, and never silently disappears from `query`.
+  - **Repeated purge.** A new purge command on an artifact already `purge_pending` or `purged`, with a precondition on its current revision, returns its current availability with empty `released_holds` at the unchanged revision and appends no event. Holds it names are still authorized at step 6.
 - **Proof-loss record** (EVD-6): `{ artifact, digest, requested_at, confirmed_at?, released_holds, affected, coverage }`.
   - `affected` lists the known dependencies the **reader** may inspect: holds, manifests listing the artifact, packets citing it, outcome references.
   - `coverage` declares the dependency kinds the provider tracks, and `filtered: true` when readable dependencies were withheld from this reader. It never exposes a dependency the reader cannot inspect.
@@ -171,8 +178,9 @@ Subjects `evidence.artifact` or `evidence.hold`. *Candidate* types:
 | `evidence.artifact.sealed` | `{ digest, size }` |
 | `evidence.artifact.abandoned` | `{ reason }` |
 | `evidence.hold.placed` / `evidence.hold.released` | `{ artifact, holder_ref }` |
-| `evidence.availability.changed` | `{ availability, reason? }` |
-| `evidence.artifact.purge_requested` / `evidence.artifact.purged` | the proof-loss record as the reader may see it |
+| `evidence.availability.changed` | `{ availability, reason? }`, when the provider records an availability change outside a command, for example from a store integrity scan |
+| `evidence.artifact.purge_requested` | `{ requested_at }` |
+| `evidence.artifact.purged` | `{ confirmed_at }`; the proof-loss record is read through `evidence.inspect`, filtered for the reader |
 
 ## 13. What evidence does not establish
 
@@ -185,4 +193,4 @@ A sealed artifact establishes that these exact bytes were received from this aut
 ## 14. Conformance and test controls
 
 - **Reference participants only.** Fixtures use a reference evidence provider with a scripted store; no fixture depends on CBR's storage.
-- **Store controls** in launch configuration (decision 007): corrupt stored bytes, make an artifact unavailable, expire staging, and defer or confirm physical deletion. Holds and purges run through the protocol operations; no operation is reserved for testing.
+- **Store controls** in launch configuration (decision 007), `evidence_store`: `corrupt` (stored bytes that fail integrity), `unavailable` (artifacts the store cannot serve), `staging_timeout_seconds`, and `deletion_delay_seconds` (physical deletion is confirmed that long after the purge request, on the controlled clock). Participants declare `claims.test_controls: ["evidence.store"]`. Holds and purges run through the protocol operations; no operation is reserved for testing.

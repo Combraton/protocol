@@ -737,16 +737,21 @@ class Context:
             iid = item["item_id"]
             if claims and item["check"]["kind"] == "claim_included":
                 ref = item["check"]["claim"]
-                carried = next((c for c in included if c[0].get("item_id") == iid and c[3] is not None
-                                and K.Knowledge.same_revision(c[0]["claim"], ref)), None)
-                if carried is not None:
-                    outcome = self.claim_item_outcome(item, carried[3])
-                    results.append(self._result(item, outcome is None, outcome))
+                # CONTEXT 14: a section for the item that is not historical carries exactly its
+                # reference and meets the table (HM5B-HISTORICAL-CLAIM-REASON).
+                outcomes = [self.claim_item_outcome(item, c[3], c[1]) for c in included
+                            if c[0].get("item_id") == iid and c[3] is not None
+                            and K.Knowledge.same_revision(c[0]["claim"], ref)]
+                if None in outcomes:
+                    results.append(self._result(item, True, None))
                     continue
-                failure = next((f for sec, f in claim_failures if sec.get("item_id") == iid
-                                and K.Knowledge.same_revision(sec["claim"], ref)), None)
+                failure = outcomes[0] if outcomes else next(
+                    (f for sec, f in claim_failures if sec.get("item_id") == iid
+                     and K.Knowledge.same_revision(sec["claim"], ref)), None)
                 if failure is not None:
-                    results.append(self._result(item, False, failure))
+                    # CONTEXT 12 "Scripted unmet reasons": a scripted reason takes precedence
+                    # over the claim check's (HM5B-SCRIPTED-UNMET-SCOPE).
+                    results.append(self._result(item, False, job["unmet"].get(iid, failure)))
                     continue
             elif any(c[0].get("item_id") == iid and not c[1] and self._satisfies(item, c[0], current_authority)
                      for c in included):
@@ -801,9 +806,11 @@ class Context:
         return snap, reason
 
     @staticmethod
-    def claim_item_outcome(item: dict, snap: dict):
+    def claim_item_outcome(item: dict, snap: dict, historical: bool):
         """CONTEXT 14 "What a claim section can satisfy": None when satisfied,
-        otherwise the unmet reason."""
+        otherwise the unmet reason. A historical section never satisfies; for
+        hypothesis and reference items its reason is invalid_for_target
+        (HM5B-HISTORICAL-CLAIM-REASON)."""
         rel = snap["reliance"]
         if item["reliance"] in ("binding", "evidence"):
             if (rel["state"] != "accepted_for_use"
@@ -815,7 +822,9 @@ class Context:
             if result != "applicable":
                 return "applicability_not_established"
             return None
-        return "not_accepted" if rel["state"] == "rejected" else None
+        if rel["state"] == "rejected":
+            return "not_accepted"
+        return "invalid_for_target" if historical else None
 
     def claim_reads(self, rec: dict, facts: dict):
         """CONTEXT 14 "At the read": claim_changes, claim invalidations and
@@ -834,8 +843,8 @@ class Context:
             kinds = []
             if V.canonical(old["reliance"]) != V.canonical(snap["reliance"]):
                 kinds.append("reliance_changed")
-            if V.canonical(old["applicability"]) != V.canonical(snap["applicability"]):
-                kinds.append("applicability_changed")
+            if old["applicability"]["result"] != snap["applicability"]["result"]:
+                kinds.append("applicability_changed")  # CONTEXT 14: the result only
             known = {c["conflict"] for c in old["conflicts"]}
             if any(c["conflict"] not in known for c in snap["conflicts"]):
                 kinds.append("conflict_opened")
@@ -859,7 +868,7 @@ class Context:
             if snap is None:
                 unverified.append(dict(entry, reason=reason))
                 continue
-            outcome = self.claim_item_outcome(item, snap)
+            outcome = self.claim_item_outcome(item, snap, snap["applicability"]["result"] == "invalid_for_target")
             if outcome == "not_accepted":
                 invalidated.append(dict(entry, reason="permitted_use_lost"))
             elif outcome == "invalid_for_target":

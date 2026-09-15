@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.executor-fetches-bound-packet-and-seals-outputs",
-  "version": 1,
+  "version": 2,
   "title": "The executor fetches the bound packet's facts at the context provider and bytes at the evidence provider under per-audience grants, admits only the exact current revision, keeps the request link, and lists only outputs it sealed under its work-bound grant",
   "requirements": [
     "CTX-1",
@@ -91,7 +91,12 @@
                   "section_id": "s-1",
                   "item_id": "i-1",
                   "label": "source_inspected",
-                  "content": "fn main() {}"
+                  "content": "fn main() {}",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/main.rs",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

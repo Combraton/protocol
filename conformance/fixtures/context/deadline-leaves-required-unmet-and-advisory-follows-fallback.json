@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.deadline-leaves-required-unmet-and-advisory-follows-fallback",
-  "version": 1,
+  "version": 2,
   "title": "At the deadline a missing required item is unmet, never satisfied or downgraded; advisory items degrade at publication under proceed_with_gap and wait for the deadline under wait_until_deadline",
   "requirements": [
     "CTX-7"
@@ -45,7 +45,12 @@
                   "section_id": "s-adv",
                   "label": "observation",
                   "content": "advisory note",
-                  "item_id": "i-adv"
+                  "item_id": "i-adv",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-adv",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -58,7 +63,12 @@
                   "section_id": "s-req2",
                   "label": "binding",
                   "content": "required content",
-                  "item_id": "i-req2"
+                  "item_id": "i-req2",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-req2",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -71,7 +81,12 @@
                   "section_id": "s-req3",
                   "label": "binding",
                   "content": "required content",
-                  "item_id": "i-req3"
+                  "item_id": "i-req3",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-req3",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

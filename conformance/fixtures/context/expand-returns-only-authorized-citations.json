@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.expand-returns-only-authorized-citations",
-  "version": 1,
+  "version": 2,
   "title": "context.expand returns cited content the principal may read; a citation outside its grant and a nonexistent citation are refused identically; a packet grant authorizes no read of the packet artifact",
   "requirements": [
     "CTX-11",
@@ -48,6 +48,11 @@
                   "label": "observation",
                   "content": "see the design note",
                   "item_id": "i-1",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  },
                   "citations": [
                     {
                       "citation_id": "c-pub",

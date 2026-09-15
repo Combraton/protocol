@@ -305,8 +305,6 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `content_digest_mismatch` | `no` | Evidence: received bytes do not match the declared digest | `computed` |
 | `artifact_digest_mismatch` | `no` | Evidence: a reference's digest differs from the artifact's sealed digest; sealed content is immutable | — |
 | `hold_active` | `after_reconcile` | Evidence: purge while an active hold is not released by this command | `holds`, `filtered` |
-
-Profile error codes are raised only after authorization (§15.5), so an unauthorized principal never receives them or their details.
 | `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
@@ -319,6 +317,8 @@ Profile error codes are raised only after authorization (§15.5), so an unauthor
 | `permission_denied` | `no` | The principal is not authorized for this operation on this subject (§15.5) | `reason` |
 | `unavailable` | `same_command` | Provider temporarily cannot process; nothing was bound | — |
 | `internal_error` | `after_reconcile` | Provider failed in an undefined way; outcome unknown | — |
+
+Profile error codes are raised only after authorization (§15.5), so an unauthorized principal never receives them or their details. A profile limit that names no subject, such as Evidence's `chunk_limit`, is decided with the Core limits at step 2 and reveals nothing.
 
 `retry: same_command` means retransmitting the identical command, with the same `command_id`, is safe. It never means "send a new command". A caller that loses a response retransmits the same command; `unavailable` and `internal_error` do not tell the caller whether the command was bound.
 

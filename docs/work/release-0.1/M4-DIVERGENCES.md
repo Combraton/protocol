@@ -1,0 +1,66 @@
+# M4 divergences — independent pass resolution record
+
+- **Task:** M4 step 7 of [Protocol 0.1](PLAN.md), [issue #1](https://github.com/Combraton/protocol/issues/1).
+- **Source:** section H of the independent implementation's [divergence log](../../../conformance/independent/python-core/DIVERGENCES.md). A spec-only helper wrote it from the documents at `39e9dc8`, without reading the reference provider, the runner source or the cross-checks.
+- **Result before resolution:**
+  - Before the pass: 196 pass, 30 unsupported, 20 skipped.
+  - First complete run from the documents alone (`cd411d5`): 205 pass, 17 fail, 4 unsupported, 20 skipped.
+  - After the helper aligned with fixtures where the documents are silent: 219 pass, 3 fail, 4 unsupported, 20 skipped. All three failures were the runner's retry classes.
+
+Each entry is resolved in the specification, the schemas, the fixtures, the reference provider or the runner, and often in several of these. Where a fixture had encoded an expectation the documents did not state, the documents now state it, or the fixture was loosened. Fixtures whose meaning changed were re-versioned.
+
+## A. Real defects
+
+| Tag | Defect | Resolution |
+|---|---|---|
+| H-RETRY-RUNNER | The runner and the reference sent and required retry `no` for `upload_offset_mismatch`, `upload_incomplete` and `hold_active`, against CORE §12 and M4-Q5 | **runner and reference:** retry class `after_reconcile` for the three codes. The runner checks retry classes itself, so any provider sending another class fails. |
+| H-CORE12-TABLE | A sentence inside the CORE §12 table ended it, so the rows after `hold_active` no longer rendered as registry rows | **spec:** the sentence follows the table, with the rule for subject-free profile limits |
+| H-CHUNK-LIMIT | The reference computed `chunk_limit` as three quarters of the smallest limit, which is not always a multiple of 3, so base64 of a full chunk could exceed the string limit by one character | **reference:** the largest multiple of 3 whose base64 fits. **spec:** EVIDENCE §4 states it. |
+| H-PURGE (event order) | CORE §16.3 puts a command's primary subject first; the reference appended released holds before the artifact's purge events | **reference:** artifact events first. **fixture:** `evidence.purge-appends-the-artifact-events-first`. **mutant:** `purge-events-holds-first`. **spec:** EVIDENCE §9 event order. |
+| H3-CTX-SATISFACTION | The reference satisfied an item by any section for it, ignoring the item's `check`; CONTEXT §3 says the check decides | **reference:** checks decide (`source_included`, `evidence_included`, `authority_content_included`). **fixtures:** scripted sections name their source; new `context.items-are-satisfied-only-by-their-check`; context and composition fixtures re-versioned. **mutant:** `check-ignored`. **spec:** CONTEXT §12 states how scripted content meets checks. |
+| H-CTX-SHARED | The reference attached a request from another principal to an existing job; CONTEXT §4 requires the same access scope | **reference:** same submitting principal. **fixture:** `context.shared-job-survives-one-subscriber-cancelling` v2. **mutant:** `shared-job-across-principals`. **spec:** CONTEXT §4. |
+| H-HOLD-EXPIRY, H-HOLD-EXPIRED-STATE | EVIDENCE §9 mentioned expired holds, but no state, event or behavior existed; the reference ignored `expires_at` | **spec:** hold states `active`, `released`, `expired`; event `evidence.hold.expired`; an expired hold no longer blocks purge; `expires_at` must be in the future. **schema:** hold state `expired`. **reference:** expiry at the clock. **fixture:** `evidence.expired-hold-stops-protecting`. **mutant:** `hold-expiry-ignored`. |
+| H-TRANSITION-EXACTLY | CONTEXT §3 says `transition` is present exactly for `required_before_transition`; the item schema only required it there | **schema:** `transition` forbidden for other obligations. **fixture:** `context.request-items-are-checkable-and-obligations-negotiated` v2 accepts the member or the item as the error path. |
+| H-REVAL-QUEUE-REASON | With several bindings not current, the reference reported the last one's reason | **reference:** stale, then unsatisfied, then unknown. **spec:** EXECUTION §13.1. **fixture:** `execution.revalidation-reports-match-mismatch-and-unavailable-by-obligation` v2. |
+
+## B. Documents silent where fixtures expected an answer
+
+The documents now state what the fixtures, the reference and, after section H.3, the independent implementation agree on.
+
+| Tag | Resolution |
+|---|---|
+| H3-STAGED-AVAILABILITY | **spec:** staged and sealed artifacts are `available` while stored bytes are intact; `partial` means sealed bytes are known lost. Abandoned artifacts are `unavailable` with their reason; **reference** aligned; **fixture** `evidence.seal-refuses-digest-mismatch-and-is-idempotent` v2. |
+| H3-ABANDON-REASON | **spec:** `abandoned_by_producer` |
+| H3-QUERY-ORDER, H-QUERY | **spec:** artifact ID order; `next_cursor` only when more remain; a foreign cursor is `invalid_cursor`. **reference:** `next_cursor` and `invalid_cursor` aligned. **fixture:** `evidence.integrity-failure-is-never-served` v2 pages through results. |
+| H3-HOLD-VISIBILITY, H3-HOLD-ORDER, H3-HOLD-ACTIVE-DETAILS | **spec:** holds are visible to their owner, authorities and readers of the held artifact; listed in ID order; `hold_active` lists hold IDs |
+| H3-LOSS-KINDS | **spec:** named dependency kinds (`evidence.hold`, `evidence.manifest_child`; *candidate* `context.packet_citation`, `execution.output`); `tracked` says which a provider tracks. **fixture:** `evidence.purge-requires-release-authority-for-holds` v2 no longer requires an exact `tracked` list. |
+| H3-IMMEDIATE-DELETION | **spec:** a store confirming deletion within the purge transaction reports `purged` in the outcome, with both events |
+| H3-PACKET-PRODUCER | **spec:** CONTEXT §5 names the producer of self-sealed and remotely sealed packets |
+| H3-LIVE-ITEMS | **spec:** while preparing, items already met report `satisfied` |
+| H3-AUTHORITY-ENTRIES | **spec:** `authority_revision` is the revision the packet was prepared against, after corrections; older content is historical |
+| H3-PUBLISH-REVISION | **spec:** one request revision per publication |
+| H3-JOB-ID, H-CTX-IDS | **spec:** job ID, packet artifact ID and compiler name are conformance conventions in CONTEXT §12, not requirements on callers |
+| H-SUBMIT-STATES | **spec:** a submit outcome is `preparing` or `refused` |
+| H-ARTIFACT-PROVIDER-OPTIONAL | **spec:** a reference without `provider` means the provider asked; references carried to other participants always name it |
+| H-CONTENT-DIGEST-ALG | **spec:** content digests use the algorithms the provider supports for digests; others are `unsupported_digest_algorithm`, and wrong lengths `invalid_envelope`. **reference** aligned. **fixture:** `evidence.descriptor-provenance-coverage-and-locator-rules` v2. |
+| H-CHUNK-STEP | **spec:** `chunk_limit` is decided at step 2 with the Core limits; undecodable base64 is `invalid_envelope`. **reference** moved it. **fixture:** `evidence.chunk-limit-accounts-for-encoding-overhead` v2 (an oversize chunk with a stale precondition). |
+| H-PREPARE-VALIDATION (uncertainty) | **spec and reference:** `not_before` after `not_after` is `invalid_envelope`; **fixture** step added |
+| H-HOLD-PLACE | **spec and reference:** a hold on an artifact whose purge was requested is `not_found`, and so is releasing a hold that is not active. **fixture:** step added to the purge fixture. |
+| H-RELEASE-AUTH | **spec:** the "delegated by" clause now defers to CORE §15, which already bounds delegation |
+| H-CTX-EXPAND | **spec and reference:** a readable citation with a digest other than the sealed one is `artifact_digest_mismatch` |
+| H-CTX-PACKET-INSPECT-RIGHTS | **spec:** the packet-inspect excerpt belongs to the result facts under `context.packet.read`; complete bytes need `evidence.read` at the evidence provider |
+| H-REVAL-STATE-VIEW | **spec:** a binding's `revalidation` is its latest check's state. Evaluating at every read would make queries call other providers. |
+
+## C. Readings kept as the independent implementation chose, with no change needed
+
+H-EVD-NEG, H-CTX-NEG, H-EVD-FEATURE-OPS, H-TERMINAL-COVERAGE, H-STAGING-TIMEOUT, H-SEAL-REPEAT, H-FETCH, H-DELETION, H-MANIFEST, H-BOUND-WORK, H-EVD-READ-RIGHTS, H-CTX-OBLIGATION-STEP, H-CTX-BUDGET, H-CTX-UNSATISFIED-REASONS, H-CTX-DEADLINE, H-CTX-INVESTIGATE, H-CTX-JOB-END, H-CTX-CANCEL, H-CTX-PUBLISH-EVENTS, H-CTX-UPDATES, H-CTX-CORRECTION, H-CTX-EVENT-VISIBILITY, H-REVAL-SCOPE, H-REVAL-HELD, H-REVAL-OBSERVE and H-REVAL-BLOCKS match the documents and the reference, or differ only where the documents leave the choice to the provider.
+
+H-REVAL-BOUNDARIES: whether advisory bindings are also checked at dispatch is left to the provider. Advisory bindings never block, and checks are recorded only when their result changes.
+
+## D. Still unchecked by fixtures (coverage limits)
+
+From H.5, after this resolution:
+- **Evidence:** `evidence.availability.changed`; fetch and excerpt shrinking to small receive limits; a manifest child that is sealed but unavailable; `released_holds` filtering; the less common credential-locator forms.
+- **Context:** script steps `end` and `unmet`; `omit` naming an item; conditions of kind `dirty_snapshot` and `environment_digest`; a cancel that leaves no subscriber; job-event visibility; shared jobs with different fallbacks; corrections on advisory items.
+- **Revalidation:** a dispatch or transition block clearing when the binding becomes current again; advisory checks at dispatch.
+- **Owner point 4 is open:** whether an execution blocked at dispatch releases its capacity slot ([M4](M4.md#points-for-the-owner-at-acceptance)).

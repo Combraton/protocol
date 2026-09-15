@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "evidence.integrity-failure-is-never-served",
-  "version": 1,
+  "version": 2,
   "title": "Stored bytes that fail their digest are reported unavailable with integrity_failed and never served; bytes the store cannot serve are unavailable without data",
   "requirements": [
     "EVD-6"
@@ -502,6 +502,73 @@
             }
           ]
         }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "evidence.query",
+      "payload": {
+        "limit": 2
+      },
+      "expect": {
+        "ok": {
+          "items": [
+            {
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "c-1"
+              }
+            },
+            {
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "ok-1"
+              }
+            }
+          ],
+          "next_cursor": {
+            "$type": "string"
+          }
+        }
+      },
+      "capture": {
+        "page": "/result/next_cursor"
+      },
+      "note": "results are in artifact ID order"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.query",
+      "payload": {
+        "limit": 2,
+        "cursor": {
+          "$var": "page"
+        }
+      },
+      "expect": {
+        "ok": {
+          "items": [
+            {
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "u-1"
+              }
+            }
+          ],
+          "next_cursor": {
+            "$absent": true
+          }
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "evidence.query",
+      "payload": {
+        "cursor": "not-a-cursor-from-this-provider"
+      },
+      "expect": {
+        "error": "invalid_cursor"
       }
     },
     {

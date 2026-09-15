@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.updates-are-new-revisions-and-old-bytes-stay-historical",
-  "version": 1,
+  "version": 2,
   "title": "An update is a new packet revision with its own artifact and digest that supersedes the earlier one; the earlier revision stays retrievable, keeps its artifact and is never current again; requests without context.updates keep revision 1",
   "requirements": [
     "CTX-12",
@@ -48,7 +48,12 @@
                   "section_id": "s-1",
                   "label": "observation",
                   "content": "first finding",
-                  "item_id": "i-1"
+                  "item_id": "i-1",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -62,7 +67,12 @@
                   "section_id": "s-2",
                   "label": "observation",
                   "content": "second finding",
-                  "item_id": "i-1"
+                  "item_id": "i-1",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -75,7 +85,12 @@
                   "section_id": "s-1",
                   "label": "observation",
                   "content": "first finding",
-                  "item_id": "i-2"
+                  "item_id": "i-2",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-2",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -89,7 +104,12 @@
                   "section_id": "s-2",
                   "label": "observation",
                   "content": "second finding",
-                  "item_id": "i-2"
+                  "item_id": "i-2",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-2",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -263,7 +283,12 @@
                   "section_id": "s-1",
                   "label": "observation",
                   "content": "first finding",
-                  "item_id": "i-1"
+                  "item_id": "i-1",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -277,7 +302,12 @@
                   "section_id": "s-2",
                   "label": "observation",
                   "content": "second finding",
-                  "item_id": "i-1"
+                  "item_id": "i-1",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -290,7 +320,12 @@
                   "section_id": "s-1",
                   "label": "observation",
                   "content": "first finding",
-                  "item_id": "i-2"
+                  "item_id": "i-2",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-2",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -304,7 +339,12 @@
                   "section_id": "s-2",
                   "label": "observation",
                   "content": "second finding",
-                  "item_id": "i-2"
+                  "item_id": "i-2",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-2",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

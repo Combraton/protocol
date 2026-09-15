@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "evidence.seal-refuses-digest-mismatch-and-is-idempotent",
-  "version": 1,
+  "version": 2,
   "title": "A digest mismatch at seal is content_digest_mismatch and the artifact stays staged until abandoned; a sealed artifact reseals with already_sealed and no new revision or event",
   "requirements": [
     "EVD-2"
@@ -229,6 +229,10 @@
           "revision": 3,
           "descriptor": {
             "digest": "sha256:17c28b9181e04bc25b28dfce94263b8a1c4bd8911004ced32a0db4ca9a0e60eb"
+          },
+          "availability": {
+            "state": "unavailable",
+            "reason": "abandoned_by_producer"
           }
         }
       }

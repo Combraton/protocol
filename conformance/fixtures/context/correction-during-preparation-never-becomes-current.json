@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.correction-during-preparation-never-becomes-current",
-  "version": 1,
+  "version": 2,
   "title": "A derivation from a binding corrected during preparation is historical and stale; the item is unmet with corrected_during_preparation until content at the corrected authority revision is published",
   "requirements": [
     "CTX-13",

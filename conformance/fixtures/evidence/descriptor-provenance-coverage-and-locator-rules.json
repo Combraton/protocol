@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "evidence.descriptor-provenance-coverage-and-locator-rules",
-  "version": 1,
+  "version": 2,
   "title": "Credential-bearing locators, another producer principal, missing coverage and complete terminal output are refused; locators are never identity; equal bytes keep separate provenance",
   "requirements": [
     "EVD-1",
@@ -477,6 +477,163 @@
       },
       "expect": {
         "error": "invalid_envelope"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.prepare",
+      "command_id": "prepare-l-7",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "l-7"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "l-7"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "digest": "md5:00000000000000000000000000000000",
+        "size": 29,
+        "media_type": "text/plain",
+        "producer": {
+          "producer_id": "fixture-producer"
+        },
+        "source": {
+          "kind": "test_report",
+          "id": "run-1"
+        },
+        "scope": "project-a",
+        "capture": {
+          "captured_at": "2030-01-01T00:00:00Z",
+          "uncertainty": {
+            "not_before": "2029-12-31T23:59:58Z",
+            "not_after": "2030-01-01T00:00:00Z"
+          },
+          "anchors": [
+            {
+              "kind": "code_tree",
+              "id": "tree-1"
+            }
+          ]
+        },
+        "coverage": {
+          "completeness": "complete"
+        },
+        "retention_class": "standard"
+      },
+      "expect": {
+        "error": "unsupported_digest_algorithm",
+        "details": {
+          "algorithm": "md5"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.prepare",
+      "command_id": "prepare-l-8",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "l-8"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "l-8"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "digest": "sha256:0000000000000000000000000000000000000000",
+        "size": 29,
+        "media_type": "text/plain",
+        "producer": {
+          "producer_id": "fixture-producer"
+        },
+        "source": {
+          "kind": "test_report",
+          "id": "run-1"
+        },
+        "scope": "project-a",
+        "capture": {
+          "captured_at": "2030-01-01T00:00:00Z",
+          "uncertainty": {
+            "not_before": "2029-12-31T23:59:58Z",
+            "not_after": "2030-01-01T00:00:00Z"
+          },
+          "anchors": [
+            {
+              "kind": "code_tree",
+              "id": "tree-1"
+            }
+          ]
+        },
+        "coverage": {
+          "completeness": "complete"
+        },
+        "retention_class": "standard"
+      },
+      "expect": {
+        "error": "invalid_envelope",
+        "details": {
+          "path": "/payload/digest"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.prepare",
+      "command_id": "prepare-l-9",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "l-9"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "l-9"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "digest": "sha256:d110d677596c77e768b4ea6beab17f528d961ef04503a83746b7198696d3b702",
+        "size": 29,
+        "media_type": "text/plain",
+        "producer": {
+          "producer_id": "fixture-producer"
+        },
+        "source": {
+          "kind": "test_report",
+          "id": "run-1"
+        },
+        "scope": "project-a",
+        "capture": {
+          "captured_at": "2030-01-01T00:00:00Z",
+          "uncertainty": {
+            "not_before": "2030-01-01T00:00:00Z",
+            "not_after": "2029-12-31T23:59:58Z"
+          },
+          "anchors": []
+        },
+        "coverage": {
+          "completeness": "complete"
+        },
+        "retention_class": "standard"
+      },
+      "expect": {
+        "error": "invalid_envelope",
+        "details": {
+          "path": "/payload/capture/uncertainty"
+        }
       }
     },
     {

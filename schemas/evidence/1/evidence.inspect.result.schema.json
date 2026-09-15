@@ -60,7 +60,8 @@
           "state": {
             "enum": [
               "active",
-              "released"
+              "released",
+              "expired"
             ]
           },
           "owner": {

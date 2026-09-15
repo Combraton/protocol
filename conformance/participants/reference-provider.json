@@ -346,7 +346,11 @@
       "admission-check-only",
       "transition-binding-blocks-all",
       "revalidation-exposed-without-negotiation",
-      "work-binding-ignored"
+      "work-binding-ignored",
+      "purge-events-holds-first",
+      "hold-expiry-ignored",
+      "check-ignored",
+      "shared-job-across-principals"
     ]
   }
 }

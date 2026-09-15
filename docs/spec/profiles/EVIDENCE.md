@@ -21,7 +21,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 |---|---|---|
 | Artifact subject `{ "kind": "evidence.artifact", "id" }` | One published descriptor at one provider. The producer chooses the ID and creates it with precondition revision 0. | The content's identity |
 | `digest` | Algorithm-qualified digest of the sealed bytes (ENCODING §3) | Proof of provenance or authorization |
-| Evidence reference `{ provider?, artifact, digest }` | How other profiles cite evidence. `provider` is the evidence provider's `provider_id`, required whenever the reference may be read at another provider. A consumer MUST check the artifact **and** the exact digest. | A reference by locator, or an authorization |
+| Evidence reference `{ provider?, artifact, digest }` | How other profiles cite evidence. `provider` is the evidence provider's `provider_id`. A reference without it means the provider being asked; references carried to other participants (packet references, execution outputs) always name it. A consumer MUST check the artifact **and** the exact digest. | A reference by locator, or an authorization |
 | Hold subject `{ "kind": "evidence.hold", "id" }` | One retention obligation on one artifact (§9) | A copy of the artifact |
 | `locator` | Where the provider stores or serves the bytes. Informative only (§3). | Identity, or something to fetch |
 
@@ -34,11 +34,11 @@ Fixed at `prepare`, immutable once sealed:
 
 | Field | Meaning |
 |---|---|
-| `digest`, `size`, `media_type` | The declared content, verified at seal (§4) |
+| `digest`, `size`, `media_type` | The declared content, verified at seal (§4). The digest uses an algorithm this provider supports for digests (ENCODING §3: `sha256`, and `sha512` when it advertises `core.digest-sha512`); another algorithm is `unsupported_digest_algorithm` with `algorithm` and `supported`, and a digest of the wrong length is `invalid_envelope` at `/payload/digest`. |
 | `producer` | `{ principal, producer_id? }`. `principal` is always the session principal of the `prepare` command (EVD-4); a prepare naming another principal is `invalid_envelope` at `/payload/producer/principal`. |
 | `source` | What was captured: `{ kind, id }`, for example a terminal stream, a test report, or a build log of a named execution |
 | `scope` | The visibility scope the artifact belongs to; opaque to this profile |
-| `capture` | `{ captured_at, uncertainty?: { not_before, not_after }, anchors }`. Anchors identify code trees, dirty snapshots, build and environment identities (EVD-4). Capture time is metadata, never ordering. |
+| `capture` | `{ captured_at, uncertainty?: { not_before, not_after }, anchors }`; `not_before` after `not_after` is `invalid_envelope` at `/payload/capture/uncertainty`. Anchors identify code trees, dirty snapshots, build and environment identities (EVD-4). Capture time is metadata, never ordering. |
 | `coverage` | Required (EVD-7): `{ completeness: "complete" \| "partial" \| "unknown", covered, gaps }`. A source of kind `terminal_output` MUST NOT declare `complete` coverage of a tool trace. |
 | `work` | Optional work binding reference, for example an execution subject (§10) |
 | `retention_class` | Provider-defined class name, reported, never inferred |
@@ -53,13 +53,14 @@ Bytes travel **in-band**, in bounded base64 chunks over the negotiated binding. 
 | `evidence.upload.prepare` | command | Creates the artifact in state `staged` (precondition revision 0). Outcome `{ artifact, state: "staged", received: 0, chunk_limit }`. |
 | `evidence.upload.append` | command | Precondition on the artifact's current revision. Payload `{ offset, data_base64 }`. Appends the decoded bytes; each append raises the revision by one. Outcome `{ received }`. |
 | `evidence.seal` | command | Precondition on the current revision. Verifies size and digest, then makes the artifact `sealed`. Outcome `{ state: "sealed", digest, size, already_sealed }`. |
-| `evidence.upload.abandon` | command | Precondition on the current revision. Ends a staged upload: state `abandoned`, staged bytes discarded, descriptor kept as a tombstone. |
+| `evidence.upload.abandon` | command | Precondition on the current revision. Ends a staged upload: state `abandoned` with reason `abandoned_by_producer`, staged bytes discarded, descriptor kept as a tombstone. |
 
 Append and abandon need a staged upload, and seal needs a staged or sealed artifact. On an artifact without one (sealed for append and abandon, abandoned for all three) they are `not_found`: the upload they act on does not exist. `evidence.inspect` still reports the artifact and its state.
 
 **Chunk sizing.**
 - `chunk_limit` is the largest number of **decoded** bytes one append may carry. A provider MUST choose it so that an append of that size, base64-encoded, with the envelope overhead the provider declares (`chunk_overhead_bytes`, in the prepare outcome), fits its negotiated payload and frame limits, and so that the base64 string fits its string limit. Base64 grows data by 4/3.
-- An append with more than `chunk_limit` decoded bytes is `limit_exceeded` with `limit: "chunk_limit"`, even if its frame fits.
+- An append with more than `chunk_limit` decoded bytes is `limit_exceeded` with `{ limit: "chunk_limit", maximum }`, even if its frame fits. Like the Core limits it names no subject, so it is decided at CORE §10 step 2, before authorization and preconditions. Data that is not valid padded base64 is `invalid_envelope` at `/payload/data_base64`.
+- `chunk_limit` is the largest multiple of 3 whose base64 form fits every one of those limits.
 - A frame over the frame limit is handled by the binding (`frame_too_large`) before any of this.
 - `evidence.fetch` returns fewer bytes than requested when the encoded response would exceed the caller's receive limit, and at least one byte whenever one fits (as CORE §16.4 does for items).
 
@@ -84,8 +85,8 @@ Append and abandon need a staged upload, and seal needs a staged or sealed artif
 
 | Operation | Kind | Semantics |
 |---|---|---|
-| `evidence.inspect` | query | `{ artifact }` → descriptor, state, revision, `received` while staged, availability (§9), holds the reader may see, and completeness for manifests (§7) |
-| `evidence.query` | query | Filters on producer, source, work, media type, digest and scope; bounded page; opaque cursor; readable artifacts only, with `filtered` |
+| `evidence.inspect` | query | `{ artifact }` → descriptor, state, revision, `received` while staged, availability (§9), holds the reader may see in hold ID order, and completeness for manifests (§7) |
+| `evidence.query` | query | Filters on producer, source, work, media type, digest and scope; readable artifacts in artifact ID order, staged, abandoned and purged ones included; bounded page with `next_cursor` only when more remain; a cursor this provider did not issue is `invalid_cursor`; `filtered` as below |
 | `evidence.fetch` | query | `{ artifact, digest, offset?, max_bytes? }` → `{ artifact, digest, offset, data_base64, next_offset, size }` for a sealed, available artifact |
 
 - **Query filtering.** `filtered` is `true` whenever the reader's authorization does not cover every artifact, whether or not an unreadable artifact matched. It never reveals that an unreadable artifact matches the filters, which a digest filter would otherwise turn into an existence test.
@@ -107,7 +108,7 @@ All are decided at CORE §10 step 7, **after** authorization (step 6) and after 
 | `upload_incomplete` | `after_reconcile` | seal | none | `received`, `size` |
 | `content_digest_mismatch` | `no` | seal | none; the artifact stays `staged` | `computed` |
 | `artifact_digest_mismatch` | `no` | fetch, and any operation taking an evidence reference | none | — |
-| `hold_active` | `after_reconcile` | purge | none | `holds`: the active holds the caller may inspect; `filtered: true` when others exist |
+| `hold_active` | `after_reconcile` | purge | none | `holds`: IDs of the blocking active holds the caller may see, in ID order; `filtered: true` when others exist |
 
 **After `upload_incomplete`.** A rejection binds nothing (CORE §10), but the original seal command cannot simply be retransmitted. The caller must first append the missing bytes, and each append raises the artifact's revision, so the seal's revision precondition is then stale. The caller seals with a precondition on the new current revision. Reusing the original `command_id` is allowed, because the rejection bound nothing, but its intent has changed; callers SHOULD use a new `command_id`. The same seal command remains valid only if nothing has been appended since, and then it can only fail the same way. Fixture `evidence.partial-upload-then-append-then-seal` covers this.
 
@@ -137,22 +138,25 @@ Resources name kind `evidence.artifact` or `evidence.hold`, with optional `id` o
 
 ## 9. Availability and retention (owner decision M4-Q6)
 
-- **Availability**, observed separately from state: `available`, `partial`, `unavailable` (with `reason`), `purge_pending`, `purged`.
+- **Availability**, observed separately from state: `available`, `partial`, `unavailable` (with `reason`), `purge_pending`, `purged`. Staged and sealed artifacts are `available` while their stored bytes are intact; an abandoned artifact is `unavailable` with its abandonment reason; `partial` means some sealed bytes are known lost and nothing is served as the sealed content.
 - **Holds** (`evidence.retention_control`).
-  - `evidence.hold` (command) creates a hold subject on an artifact (precondition revision 0 on the hold), with `{ artifact, holder_ref, reason, expires_at? }`. The creating principal is the hold's **owner**.
-  - `evidence.release` (command) releases a hold, with a precondition on the hold's revision. It may be issued by the owner, by an authority principal, or under a grant with `evidence.release` covering that hold, delegated by the owner or an authority.
-  - A released or expired hold stays inspectable to those who may see it.
+  - `evidence.hold` (command) creates a hold subject on an artifact (precondition revision 0 on the hold), with `{ artifact, holder_ref, reason, expires_at? }`. The creating principal is the hold's **owner**. `expires_at` must be later than the provider clock, otherwise `invalid_envelope` at `/payload/expires_at`. A hold on an artifact that is not sealed, or whose purge was already requested, is `not_found`: nothing would be retained.
+  - **Visibility.** A hold is visible to its owner, to authority principals, and to any reader of the held artifact; hold events follow the same rule.
+  - **Expiry.** When the provider clock reaches `expires_at`, the hold becomes `expired` with the provider-origin event `evidence.hold.expired`. It no longer blocks a purge, and releasing it is `not_found`.
+  - `evidence.release` (command) releases a hold, with a precondition on the hold's revision. It may be issued by the owner, by an authority principal, or under a grant with `evidence.release` covering that hold (grants are issued and delegated under CORE §15). Releasing a hold that is not active is `not_found`.
+  - A released or expired hold stays inspectable to those who may see it; hold states are `active`, `released` and `expired`.
 - **Purge.** `evidence.purge` (command) on an artifact.
   - **Preconditions:** the artifact's current revision, and each hold named in `release_holds` at its current revision, so concurrent hold changes are detected.
   - **Authorization, step 6:** `evidence.purge` on the artifact, and release authority for **every** named hold. Naming a hold is intent, not authorization: purge permission never bypasses another holder's retention.
   - **Active holds, step 7:** if any active hold remains that is not named, the purge is refused with `hold_active`.
   - **Commit, one owner transaction:** release every named hold (each gets a revision and an event), make availability `purge_pending`, and record the durable proof-loss record.
-  - **Physical deletion** is confirmed separately. When the store confirms it, availability becomes `purged` with its own event. Until then the provider reports `purge_pending`: deletion requested, not yet confirmed.
+  - **Physical deletion** is confirmed separately. When the store confirms it, availability becomes `purged` with its own event. Until then the provider reports `purge_pending`: deletion requested, not yet confirmed. A store that confirms deletion within the purge's own transaction reports `purged` in the outcome, with both events.
+  - **Event order.** The purge appends the artifact's own events first (`purge_requested`, then `purged` when confirmed at once), then one `evidence.hold.released` per named hold, as CORE §16.3 orders a command's events.
   - The descriptor remains as a tombstone. A purged artifact is never `not_found` to a principal who may read it, and never silently disappears from `query`.
   - **Repeated purge.** A new purge command on an artifact already `purge_pending` or `purged`, with a precondition on its current revision, returns its current availability with empty `released_holds` at the unchanged revision and appends no event. Holds it names are still authorized at step 6.
 - **Proof-loss record** (EVD-6): `{ artifact, digest, requested_at, confirmed_at?, released_holds, affected, coverage }`.
-  - `affected` lists the known dependencies the **reader** may inspect: holds, manifests listing the artifact, packets citing it, outcome references.
-  - `coverage` declares the dependency kinds the provider tracks, and `filtered: true` when readable dependencies were withheld from this reader. It never exposes a dependency the reader cannot inspect.
+  - `affected` lists the known dependencies the **reader** may inspect, as `{ kind, subject }` in kind then ID order. Kinds: `evidence.hold`, `evidence.manifest_child` (a manifest listing the artifact), and *candidate* `context.packet_citation` and `execution.output` for packets citing it and outcome references.
+  - `coverage` declares the dependency kinds the provider tracks (`tracked`), and `filtered: true` when dependencies were withheld from this reader. It never exposes a dependency the reader cannot inspect. A provider may track more kinds than another; `tracked` says which.
 
 ## 10. Work bindings
 
@@ -178,7 +182,7 @@ Subjects `evidence.artifact` or `evidence.hold`. *Candidate* types:
 | `evidence.artifact.appended` | `{ received }` |
 | `evidence.artifact.sealed` | `{ digest, size }` |
 | `evidence.artifact.abandoned` | `{ reason }` |
-| `evidence.hold.placed` / `evidence.hold.released` | `{ artifact, holder_ref }` |
+| `evidence.hold.placed` / `evidence.hold.released` / `evidence.hold.expired` | `{ artifact, holder_ref }` |
 | `evidence.availability.changed` | `{ availability, reason? }`, when the provider records an availability change outside a command, for example from a store integrity scan |
 | `evidence.artifact.purge_requested` | `{ requested_at }` |
 | `evidence.artifact.purged` | `{ confirmed_at }`; the proof-loss record is read through `evidence.inspect`, filtered for the reader |

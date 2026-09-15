@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.packet-is-an-exact-sealed-evidence-artifact",
-  "version": 1,
+  "version": 2,
   "title": "A published packet revision maps to one sealed Evidence artifact whose fetched bytes match its digest; result facts carry labels, citations, per-producer coverage and authority revisions; the excerpt has no digest",
   "requirements": [
     "CTX-5",

@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "evidence.purge-requires-release-authority-for-holds",
-  "version": 1,
+  "version": 2,
   "title": "Purge is refused while unnamed holds remain; naming another owner's hold needs release authority for it; hold revisions are checked; an authorized purge releases named holds, reports purge_pending until deletion is confirmed, and its loss record is filtered per reader",
   "requirements": [
     "EVD-6",
@@ -1343,14 +1343,46 @@
               }
             ],
             "coverage": {
-              "tracked": [
-                "evidence.hold",
-                "evidence.manifest_child"
-              ],
+              "tracked": {
+                "$contains": "evidence.manifest_child"
+              },
               "filtered": false
             }
           }
         }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.hold",
+      "command_id": "hold-h-late",
+      "subject": {
+        "kind": "evidence.hold",
+        "id": "h-late"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.hold",
+            "id": "h-late"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "a-1"
+        },
+        "holder_ref": {
+          "kind": "fixture.case",
+          "id": "h-late"
+        },
+        "reason": "audit"
+      },
+      "note": "nothing is retained once a purge was requested",
+      "expect": {
+        "error": "not_found"
       }
     },
     {

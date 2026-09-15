@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.requires-core-events-and-gates-optional-features",
-  "version": 1,
+  "version": 2,
   "title": "context/1 needs core.events at negotiation; obligations and context.expand need their features",
   "requirements": [
     "CTX-9",

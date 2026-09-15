@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.request-items-are-checkable-and-obligations-negotiated",
-  "version": 1,
+  "version": 2,
   "title": "Unknown obligations, reliance labels and check kinds, missing selecting authority, misplaced transitions and a commit-only basis declared complete are refused; each repository keeps its tree; an obligation whose feature was not negotiated is unsupported",
   "requirements": [
     "CTX-2",
@@ -424,11 +424,22 @@
           }
         }
       },
+      "note": "the item schema forbids transition here; the path is the member or its item",
       "expect": {
-        "error": "invalid_envelope",
-        "details": {
-          "path": "/payload/items/0/transition"
-        }
+        "any_of": [
+          {
+            "error": "invalid_envelope",
+            "details": {
+              "path": "/payload/items/0/transition"
+            }
+          },
+          {
+            "error": "invalid_envelope",
+            "details": {
+              "path": "/payload/items/0"
+            }
+          }
+        ]
       }
     },
     {

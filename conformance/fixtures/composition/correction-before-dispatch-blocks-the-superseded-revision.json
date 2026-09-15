@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.correction-before-dispatch-blocks-the-superseded-revision",
-  "version": 1,
+  "version": 2,
   "title": "A revision current at admission is superseded before dispatch: the dispatch check sees it is no longer current and blocks the start; an update delivered after its dependent transition is recorded late",
   "requirements": [
     "SCN-5",
@@ -175,7 +175,12 @@
                   "section_id": "s-old",
                   "item_id": "i-1",
                   "label": "binding",
-                  "content": "retries are unlimited"
+                  "content": "retries are unlimited",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -199,7 +204,12 @@
                   "section_id": "s-new",
                   "item_id": "i-1",
                   "label": "binding",
-                  "content": "retries are capped at three"
+                  "content": "retries are capped at three",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.cancelling-one-consumer-leaves-the-other",
-  "version": 1,
+  "version": 2,
   "title": "Two consumers share a context job and each runs an execution; one cancels its request and its execution, and the other consumer's packet and execution continue",
   "requirements": [
     "SCN-11",
@@ -156,7 +156,12 @@
                   "section_id": "s-1",
                   "item_id": "i-1",
                   "label": "source_inspected",
-                  "content": "fn main() {}"
+                  "content": "fn main() {}",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

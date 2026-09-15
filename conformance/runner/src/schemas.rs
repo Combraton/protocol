@@ -138,7 +138,10 @@ pub fn retry_class(code: &str) -> &'static str {
         | "effect_history_unavailable"
         | "stale_authority_epoch"
         | "precondition_failed"
-        | "internal_error" => "after_reconcile",
+        | "internal_error"
+        | "upload_offset_mismatch"
+        | "upload_incomplete"
+        | "hold_active" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
         "capability_unavailable" => "after_reconcile",
         _ => "no",

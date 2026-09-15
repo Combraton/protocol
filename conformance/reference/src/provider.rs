@@ -362,7 +362,10 @@ pub fn retry_class(code: &str) -> &'static str {
         | "effect_history_unavailable"
         | "stale_authority_epoch"
         | "precondition_failed"
-        | "internal_error" => "after_reconcile",
+        | "internal_error"
+        | "upload_offset_mismatch"
+        | "upload_incomplete"
+        | "hold_active" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
         "capability_unavailable" => "after_reconcile",
         _ => "no",
@@ -560,7 +563,9 @@ impl Provider {
             eprintln!("executor tick: {error}");
         }
         let evidence_store = self.identity.evidence_store.clone();
-        if let Err(error) = crate::evidence::tick(&mut self.store, &now, &evidence_store) {
+        if let Err(error) =
+            crate::evidence::tick(&mut self.store, &now, &evidence_store, &self.mutants)
+        {
             eprintln!("evidence tick: {error}");
         }
         let mut publisher = json!({"provider_id": self.identity.provider_id});
@@ -1845,6 +1850,55 @@ impl Provider {
                     "terminal output is never a complete tool trace",
                 );
             }
+            let uncertainty = &payload["capture"]["uncertainty"];
+            if uncertainty.is_object()
+                && uncertainty["not_before"].as_str() > uncertainty["not_after"].as_str()
+            {
+                return invalid(
+                    "/payload/capture/uncertainty",
+                    "not_before is after not_after",
+                );
+            }
+            // Content digests use the digest algorithms this provider supports (EVIDENCE 3).
+            let (algorithm, hex) = payload["digest"]
+                .as_str()
+                .and_then(|d| d.split_once(':'))
+                .unwrap_or(("", ""));
+            if algorithm != "sha256" {
+                return Err(reject(
+                    "unsupported_digest_algorithm",
+                    json!({"algorithm": algorithm, "supported": ["sha256"]}),
+                ));
+            }
+            if hex.len() != 64 {
+                return invalid(
+                    "/payload/digest",
+                    "a sha256 digest has 64 hexadecimal digits",
+                );
+            }
+        }
+        if operation.name == "evidence.hold"
+            && params["payload"]["expires_at"]
+                .as_str()
+                .is_some_and(|expiry| expiry <= self.identity.clock.now().as_str())
+        {
+            return invalid("/payload/expires_at", "a hold must expire in the future");
+        }
+        if operation.name == "evidence.upload.append" {
+            // The chunk limit is a declared limit, decided with the others (EVIDENCE section 4).
+            let text = params["payload"]["data_base64"]
+                .as_str()
+                .unwrap_or_default();
+            let Some(data) = crate::evidence::decode_base64(text) else {
+                return invalid("/payload/data_base64", "not valid padded base64");
+            };
+            let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
+            if data.len() as i64 > chunk_limit {
+                return Err(reject(
+                    "limit_exceeded",
+                    json!({"limit": "chunk_limit", "maximum": chunk_limit}),
+                ));
+            }
         }
         if !operation.command {
             return Ok(());
@@ -2352,9 +2406,20 @@ impl Provider {
                 {
                     return Err(denied());
                 }
-                crate::context::expand(&self.store, payload, &reference, self.caller_frame_limit)
-                    .map_err(storage)?
-                    .ok_or_else(denied)
+                match crate::context::expand(
+                    &self.store,
+                    payload,
+                    &reference,
+                    self.caller_frame_limit,
+                )
+                .map_err(storage)?
+                {
+                    Ok(result) => Ok(result),
+                    Err("artifact_digest_mismatch") => {
+                        Err(reject("artifact_digest_mismatch", json!({})))
+                    }
+                    Err(_) => Err(denied()),
+                }
             }
             "evidence.query" => {
                 let can_read = self.reader_filter(params);
@@ -2384,7 +2449,8 @@ impl Provider {
                     &can_read,
                     &self.mutants,
                 )
-                .map_err(storage)
+                .map_err(storage)?
+                .map_err(|code| reject(code, json!({"reason": "malformed"})))
             }
             "execution.discovery.list" => Ok(crate::features::discovery(
                 &self.identity.executor,

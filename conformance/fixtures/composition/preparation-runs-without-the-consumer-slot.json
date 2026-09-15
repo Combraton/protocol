@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.preparation-runs-without-the-consumer-slot",
-  "version": 1,
+  "version": 2,
   "title": "On a capacity-one executor, a consumer queued for context holds no slot, so the context job's own investigation execution is admitted and completes; it carries its origin and is never enriched with context; the consumer is then admitted",
   "requirements": [
     "SCN-6",
@@ -160,7 +160,12 @@
                   "section_id": "s-1",
                   "item_id": "i-1",
                   "label": "source_inspected",
-                  "content": "fn main() {}"
+                  "content": "fn main() {}",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -190,7 +195,12 @@
                   "section_id": "s-1",
                   "item_id": "i-1",
                   "label": "source_inspected",
-                  "content": "fn main() {}"
+                  "content": "fn main() {}",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

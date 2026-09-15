@@ -197,6 +197,8 @@ pub fn submit(
             if let Some((revision, mut job)) = evidence::load(tx, JOB, &other)?
                 && job["state"] == "running"
                 && job["published"] != true
+                && (job["principal"] == session.principal
+                    || mutants.on("shared-job-across-principals"))
                 && job["basis"] == payload["basis"]
                 && job["items"] == payload["items"]
             {
@@ -214,6 +216,7 @@ pub fn submit(
         None => {
             let job = json!({
                 "state": "running",
+                "principal": session.principal,
                 "requests": [id],
                 "basis": payload["basis"],
                 "items": payload["items"],
@@ -602,6 +605,7 @@ fn item_results(
                 s["item_id"] == item_id
                     && (s["historical"] == false || mutants.on("stale-derivation-current"))
                     && included.contains(&s["section_id"])
+                    && check_passes(item, s, record, job, mutants)
             });
             let mut result = json!({"item_id": item_id, "obligation": obligation});
             if let Some(unmet) = job["unmet"].get(item_id) {
@@ -635,6 +639,52 @@ fn item_results(
             result
         })
         .collect()
+}
+
+/// Whether a section meets the item's check (CONTEXT section 3): satisfaction is decided by the
+/// check, not by the section's presence.
+fn check_passes(
+    item: &Value,
+    section: &Value,
+    record: &Value,
+    job: &Value,
+    mutants: &Mutants,
+) -> bool {
+    if mutants.on("check-ignored") {
+        return true;
+    }
+    let check = &item["check"];
+    match check["kind"].as_str() {
+        Some("source_included") => {
+            section["source"]["repository"] == check["repository"]
+                && section["source"]["path"] == check["path"]
+        }
+        Some("evidence_included") => {
+            section["citations"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|c| {
+                    c["evidence"]["artifact"] == check["evidence"]["artifact"]
+                        && c["evidence"]["digest"] == check["evidence"]["digest"]
+                })
+        }
+        Some("authority_content_included") => {
+            let item_id = item["item_id"].as_str().unwrap_or_default();
+            let supplied = record["authority_content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|c| c["item_id"] == item_id)
+                .map(|c| c["authority_revision"].clone());
+            let Some(supplied) = supplied else {
+                return false;
+            };
+            let current = job["corrections"].get(item_id).cloned().unwrap_or(supplied);
+            section["authority_revision"] == current || mutants.on("stale-derivation-current")
+        }
+        _ => false,
+    }
 }
 
 /// Which sections fit the output capacity, and the omissions that follows (CTX-4, CTX-8).
@@ -1039,23 +1089,28 @@ pub fn citation(
         .map(|c| c["evidence"].clone()))
 }
 
-/// `context.expand` after authorization: a range of the cited artifact.
+/// `context.expand` after authorization: a range of the cited artifact. `Err(code)` is
+/// `permission_denied` when the citation cannot be read here, or `artifact_digest_mismatch` when the
+/// cited digest is not the artifact's sealed digest.
 pub fn expand(
     store: &Store,
     payload: &Value,
     reference: &Value,
     frame_budget: usize,
-) -> rusqlite::Result<Option<Value>> {
+) -> rusqlite::Result<Result<Value, &'static str>> {
     let tx = store.reader()?;
     let artifact = reference["artifact"]["id"].as_str().unwrap_or_default();
     let Some((_, record)) = evidence::load(&tx, evidence::ARTIFACT, artifact)? else {
-        return Ok(None);
+        return Ok(Err("permission_denied"));
     };
-    if record["state"] != "sealed" || record["descriptor"]["digest"] != reference["digest"] {
-        return Ok(None);
+    if record["state"] != "sealed" {
+        return Ok(Err("permission_denied"));
+    }
+    if record["descriptor"]["digest"] != reference["digest"] {
+        return Ok(Err("artifact_digest_mismatch"));
     }
     let data = evidence::sealed_bytes(&tx, artifact)?;
-    Ok(Some(
+    Ok(Ok(
         json!({"citation": payload["citation"], "evidence": reference, "excerpt": excerpt(&data, payload, frame_budget)}),
     ))
 }

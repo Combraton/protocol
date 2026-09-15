@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.context-provider-outage-advisory-proceeds-required-waits",
-  "version": 1,
+  "version": 2,
   "title": "With the context provider down, the bound revision's currency is unavailable: required work waits at admission as unknown and advisory work proceeds with a visible gap; after the provider returns, the required work is admitted",
   "requirements": [
     "SCN-8",
@@ -141,7 +141,12 @@
                   "section_id": "s-1",
                   "item_id": "i-1",
                   "label": "source_inspected",
-                  "content": "fn main() {}"
+                  "content": "fn main() {}",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {
@@ -800,7 +805,12 @@
                   "section_id": "s-1",
                   "item_id": "i-1",
                   "label": "source_inspected",
-                  "content": "fn main() {}"
+                  "content": "fn main() {}",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-1",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

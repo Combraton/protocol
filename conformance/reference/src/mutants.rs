@@ -129,6 +129,22 @@ pub const ALL: &[(&str, &str)] = &[
         "accepts a publish whose work differs from the work the grant is bound to",
     ),
     (
+        "purge-events-holds-first",
+        "appends released holds' events before the purged artifact's own events",
+    ),
+    (
+        "hold-expiry-ignored",
+        "keeps an expired hold active, so it still blocks purge",
+    ),
+    (
+        "check-ignored",
+        "satisfies an item by any section for it, whatever the item's check says",
+    ),
+    (
+        "shared-job-across-principals",
+        "attaches a request from another principal to an existing job",
+    ),
+    (
         "context-outage-fails-open",
         "treats an unreachable context provider as confirming the bound revision is current",
     ),

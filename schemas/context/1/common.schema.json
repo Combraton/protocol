@@ -172,7 +172,26 @@
           "$ref": "common.schema.json#/$defs/check"
         }
       },
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "if": {
+        "properties": {
+          "obligation": {
+            "const": "required_before_transition"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "transition"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "transition"
+          ]
+        }
+      }
     },
     "basis": {
       "type": "object",

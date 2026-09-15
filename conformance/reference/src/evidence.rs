@@ -95,10 +95,13 @@ pub fn chunk_limit(limits: &crate::provider::Limits, mutants: &Mutants) -> i64 {
     if mutants.on("chunk-limit-ignores-overhead") {
         return limits.max_string_bytes;
     }
-    let by_string = limits.max_string_bytes * 3 / 4;
-    let by_payload = (limits.max_payload_bytes - CHUNK_OVERHEAD_BYTES).max(0) * 3 / 4;
-    let by_frame = (limits.max_frame_bytes - CHUNK_OVERHEAD_BYTES).max(0) * 3 / 4;
-    by_string.min(by_payload).min(by_frame).max(1)
+    // The largest multiple of 3 bytes whose base64 form, 4 characters per 3 bytes, fits.
+    let encoded = limits
+        .max_string_bytes
+        .min(limits.max_payload_bytes - CHUNK_OVERHEAD_BYTES)
+        .min(limits.max_frame_bytes - CHUNK_OVERHEAD_BYTES)
+        .max(4);
+    encoded / 4 * 3
 }
 
 pub fn decode_base64(text: &str) -> Option<Vec<u8>> {
@@ -205,12 +208,9 @@ pub fn check(
             let data = decode_base64(payload["data_base64"].as_str().unwrap_or_default())
                 .unwrap_or_default();
             let offset = payload["offset"].as_i64().unwrap_or(-1);
-            if data.len() as i64 > chunk_limit {
-                Err((
-                    "limit_exceeded",
-                    json!({"limit": "chunk_limit", "maximum": chunk_limit}),
-                ))
-            } else if mutants.on("duplicate-chunk-accepted")
+            // The chunk limit is decided with the other limits at step 2 (EVIDENCE section 4).
+            let _ = chunk_limit;
+            if mutants.on("duplicate-chunk-accepted")
                 && offset < received
                 && bytes(tx, id)?
                     .get(offset as usize..(offset as usize + data.len()).min(received as usize))
@@ -271,7 +271,12 @@ pub fn check(
         "evidence.hold" => {
             let target = payload["artifact"]["id"].as_str().unwrap_or_default();
             match load(tx, ARTIFACT, target)? {
-                Some((_, record)) if record["state"] == "sealed" => Ok(()),
+                // Nothing is retained once a purge was requested.
+                Some((_, record))
+                    if record["state"] == "sealed" && record.get("loss").is_none() =>
+                {
+                    Ok(())
+                }
                 _ => Err(("not_found", json!({}))),
             }
         }
@@ -541,17 +546,18 @@ pub fn apply(
                 "coverage": {"tracked": TRACKED_DEPENDENCIES},
             });
             let revision = revision + 1;
-            events.push((
+            // The primary subject's events come first (CORE section 16.3), then the released holds.
+            let mut primary: Vec<Draft> = vec![(
                 "evidence.artifact.purge_requested",
                 artifact_subject.clone(),
                 revision,
                 json!({"requested_at": ctx.now}),
-            ));
+            )];
             if immediate {
                 set_bytes(tx, id, &[])?;
                 loss["confirmed_at"] = json!(ctx.now);
                 record["availability"] = json!({"state": "purged"});
-                events.push((
+                primary.push((
                     "evidence.artifact.purged",
                     artifact_subject.clone(),
                     revision,
@@ -559,6 +565,12 @@ pub fn apply(
                 ));
             } else {
                 record["availability"] = json!({"state": "purge_pending"});
+            }
+            if mutants.on("purge-events-holds-first") {
+                events.append(&mut primary);
+            } else {
+                primary.append(&mut events);
+                events = primary;
             }
             record["loss"] = loss;
             save(tx, ARTIFACT, id, revision, &record)?;
@@ -624,9 +636,40 @@ fn dependencies(tx: &Transaction, artifact: &str) -> rusqlite::Result<Vec<Value>
 }
 
 /// Scripted store maintenance: staging timeouts and confirmation of deferred deletion.
-pub fn tick(store: &mut Store, now: &str, config: &Value) -> rusqlite::Result<()> {
+pub fn tick(
+    store: &mut Store,
+    now: &str,
+    config: &Value,
+    mutants: &Mutants,
+) -> rusqlite::Result<()> {
     let stream = store.stream_id()?;
     let tx = store.transaction()?;
+    // An active hold past its expiry stops protecting the artifact (EVIDENCE section 9).
+    for hold_id in ids(&tx, HOLD)? {
+        let Some((revision, mut hold)) = load(&tx, HOLD, &hold_id)? else {
+            continue;
+        };
+        if hold["state"] == "active"
+            && hold["expires_at"]
+                .as_str()
+                .is_some_and(|expiry| expiry <= now)
+            && !mutants.on("hold-expiry-ignored")
+        {
+            hold["state"] = json!("expired");
+            save(&tx, HOLD, &hold_id, revision + 1, &hold)?;
+            provider_event(
+                &tx,
+                &stream,
+                now,
+                (
+                    "evidence.hold.expired",
+                    subject(HOLD, &hold_id),
+                    revision + 1,
+                    json!({"artifact": hold["artifact"], "holder_ref": hold["holder_ref"]}),
+                ),
+            )?;
+        }
+    }
     for id in ids(&tx, ARTIFACT)? {
         let Some((revision, mut record)) = load(&tx, ARTIFACT, &id)? else {
             continue;
@@ -696,6 +739,9 @@ fn observed(
     mutants: &Mutants,
 ) -> rusqlite::Result<Value> {
     let recorded = record["availability"].clone();
+    if record["state"] == "abandoned" {
+        return Ok(json!({"state": "unavailable", "reason": record["abandoned_reason"]}));
+    }
     if record["state"] != "sealed" || recorded["state"] != "available" {
         return Ok(recorded);
     }
@@ -942,16 +988,21 @@ pub fn query(
     restricted: bool,
     can_read: &dyn Fn(&Value) -> bool,
     mutants: &Mutants,
-) -> rusqlite::Result<Value> {
+) -> rusqlite::Result<Result<Value, &'static str>> {
     let tx = store.reader()?;
     let limit = payload["limit"].as_u64().unwrap_or(100) as usize;
-    let after = payload["cursor"]
-        .as_str()
-        .and_then(|c| c.strip_prefix("evq1:"))
-        .unwrap_or("");
+    // Results are in artifact ID order; a cursor continues after the last ID it names.
+    let after = match payload["cursor"].as_str() {
+        None => "",
+        Some(cursor) => match cursor.strip_prefix("evq1:") {
+            Some(after) => after,
+            None => return Ok(Err("invalid_cursor")),
+        },
+    };
     let filters = &payload["filters"];
     let mut items = Vec::new();
     let mut last = String::new();
+    let mut more = false;
     for id in ids(&tx, ARTIFACT)? {
         if id.as_str() <= after {
             continue;
@@ -977,16 +1028,17 @@ pub fn query(
             continue;
         }
         if items.len() == limit {
+            more = true;
             break;
         }
         last = id.clone();
         items.push(json!({"artifact": subject(ARTIFACT, &id), "digest": d["digest"], "state": record["state"], "availability": observed(&tx, &id, &record, config, mutants)?}));
     }
     let mut result = json!({"items": items, "filtered": restricted});
-    if !last.is_empty() {
+    if more {
         result["next_cursor"] = json!(format!("evq1:{last}"));
     }
-    Ok(result)
+    Ok(Ok(result))
 }
 
 /// Seal bytes the provider itself produced (for example a context packet revision) as one

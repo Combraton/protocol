@@ -563,7 +563,17 @@ pub fn submit(
                 && check["state"] != "current"
                 && !mutants.on("required-binding-admitted")
             {
-                queue_reason = Some(crate::revalidation::block_reason(&check));
+                // With several bindings not current: stale, then unsatisfied, then unknown.
+                let reason = crate::revalidation::block_reason(&check);
+                let rank = |r: Option<&str>| match r {
+                    Some("context_binding_stale") => 3,
+                    Some("context_binding_unsatisfied") => 2,
+                    Some(_) => 1,
+                    None => 0,
+                };
+                if rank(Some(reason)) > rank(queue_reason) {
+                    queue_reason = Some(reason);
+                }
             }
             context_checks.push(check);
             states.push(entry);

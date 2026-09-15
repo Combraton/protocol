@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.missing-required-context-blocks-bound-work",
-  "version": 1,
+  "version": 2,
   "title": "The deadline passes with a required item missing: the packet reports it unmet, work bound to it as required is not admitted, and advisory-bound work proceeds with a visible gap",
   "requirements": [
     "SCN-4",
@@ -134,7 +134,12 @@
                   "section_id": "s-adv",
                   "item_id": "i-adv",
                   "label": "observation",
-                  "content": "advisory note"
+                  "content": "advisory note",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "src/i-adv",
+                    "tree": "tree-1"
+                  }
                 }
               },
               {

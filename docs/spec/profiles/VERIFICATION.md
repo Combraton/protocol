@@ -206,7 +206,7 @@ Reading a contract or cited evidence needs Evidence rights at its provider.
   - `scripts`, mapping job IDs to steps: `wait_until` (instant), `property` (`property_id`, `result`, and `reason` exactly for `not_evaluated` and `indeterminate`), `observe` (`anchors` the evaluator observed), `valid_until` (instant) and `complete`;
   - `default_script` for other jobs.
 
-  Steps advance no later than the provider's next request, as EXECUTION §15. A job with no script completes at once; a script that runs out without `complete` leaves the job `running`. Restarting with different `evaluators` simulates an upgraded or lost evaluator (SCN-7).
+  Steps advance no later than the provider's next request, as EXECUTION §15. A job with no script completes at once; a script that runs out without `complete` leaves the job `running`. A job stays `queued` while its script waits at a leading `wait_until`: its first evaluation, which makes it `running`, is the first step other than `wait_until`. So a job whose evaluator is lost during that wait never ran (§4). Restarting with different `evaluators` simulates an upgraded or lost evaluator (SCN-7).
 - No fixture depends on a real browser, CI system or model reviewer.
 
 ## 12. What verification does not establish

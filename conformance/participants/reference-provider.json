@@ -442,7 +442,11 @@
       "issued-scope-from-job",
       "historical-claim-reason-unavailable",
       "hypothesis-invalidation-unreported",
-      "scripted-unmet-overrides-satisfied"
+      "scripted-unmet-overrides-satisfied",
+      "decision-claim-read-unchecked",
+      "queued-loss-passes-through-running",
+      "queued-loss-observed-from-submission",
+      "freshness-boundary-inclusive"
     ]
   }
 }

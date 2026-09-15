@@ -1350,6 +1350,13 @@ impl Provider {
             {
                 return Ok(Some(Vec::new()));
             }
+            // Deciding needs read on the claim it names (KNOWLEDGE section 10).
+            "knowledge.decision.record" if self.mutants.on("decision-claim-read-unchecked") => {
+                let mut needed =
+                    crate::grants::required_rights(operation, params).unwrap_or_default();
+                needed.retain(|(right, _)| right != "knowledge.read");
+                return Ok(Some(needed));
+            }
             // Evaluating reads the claims its local dependencies name (KNOWLEDGE section 10).
             "knowledge.applicability.evaluate" => {
                 let mut needed =

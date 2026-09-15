@@ -85,6 +85,22 @@ pub const ALL: &[(&str, &str)] = &[
         "lets a scripted unmet step override an item its check satisfies",
     ),
     (
+        "decision-claim-read-unchecked",
+        "records a decision without knowledge.read on the claim it names",
+    ),
+    (
+        "queued-loss-passes-through-running",
+        "moves a queued job whose evaluator is lost through running before completing it",
+    ),
+    (
+        "queued-loss-observed-from-submission",
+        "dates a never-run job's observation period from its submission",
+    ),
+    (
+        "freshness-boundary-inclusive",
+        "treats a receipt exactly at observed_until plus max_age_seconds as stale",
+    ),
+    (
         "dependency-digest-ignored",
         "resolves a dependency by claim and revision whatever its digest",
     ),

@@ -736,8 +736,12 @@ pub fn check(
             };
             let record = &entry["record"];
             let scope = record["scope"]["id"].as_str().unwrap_or_default();
-            if let Err(refusal) =
-                authority_checks(tx, scope, principal, epoch, Some(record), mutants)?
+            let receipts_cited = payload["validation_basis"]["receipts"]
+                .as_array()
+                .is_some_and(|r| !r.is_empty());
+            if !(receipts_cited && mutants.on("receipt-authorizes-decision"))
+                && let Err(refusal) =
+                    authority_checks(tx, scope, principal, epoch, Some(record), mutants)?
             {
                 return Ok(Err(refusal));
             }

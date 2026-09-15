@@ -5,6 +5,74 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "receipt-listing-incomplete-accepted",
+        "records a receipt that does not list every contract property exactly once",
+    ),
+    (
+        "results-in-outcome",
+        "returns property results in the evaluate_contract outcome",
+    ),
+    (
+        "evaluator-version-substituted",
+        "pins another supported version when the requested evaluator version is unavailable",
+    ),
+    (
+        "lost-evaluator-reports-pass",
+        "reports unfinished properties as pass when the pinned evaluator is lost",
+    ),
+    (
+        "lost-evaluator-switches-version",
+        "continues a job under another version when its pinned evaluator is lost",
+    ),
+    (
+        "recorded-results-rewritten",
+        "rewrites recorded property results when the pinned evaluator is lost",
+    ),
+    (
+        "not-evaluated-satisfied",
+        "assesses a not_evaluated property as satisfied",
+    ),
+    (
+        "contract-digest-only",
+        "compares contract digests instead of exact contract references",
+    ),
+    (
+        "subject-digest-ignored",
+        "assesses a receipt without comparing subject digests",
+    ),
+    (
+        "time-basis-ignored",
+        "reports present validity for a caller-selected time",
+    ),
+    (
+        "before-observation-ignored",
+        "assesses a time before the observation as if the result were known",
+    ),
+    (
+        "stale-ignored",
+        "ignores validity and freshness when assessing",
+    ),
+    (
+        "environment-unverified-satisfied",
+        "treats a missing required environment anchor as matching",
+    ),
+    (
+        "assess-roles-incomplete-accepted",
+        "assesses a request that does not name every contract role",
+    ),
+    (
+        "receipt-bytes-unchecked",
+        "assesses a receipt whose sealed bytes are unavailable",
+    ),
+    (
+        "failure-marks-execution",
+        "lets a failing receipt request cancellation of the execution it names",
+    ),
+    (
+        "receipt-authorizes-decision",
+        "lets a principal decide when its decision cites a receipt",
+    ),
+    (
         "claim-revision-overwritten",
         "replaces the previous claim revision instead of keeping it",
     ),

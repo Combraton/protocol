@@ -30,6 +30,10 @@
       {
         "name": "knowledge",
         "major": 1
+      },
+      {
+        "name": "verification",
+        "major": 1
       }
     ],
     "features": [
@@ -57,7 +61,9 @@
       "context.expand",
       "execution.context_revalidation",
       "execution.evidence_outputs",
-      "evidence.work_binding"
+      "evidence.work_binding",
+      "verification.jobs",
+      "verification.record"
     ],
     "test_controls": [
       "clock.file",
@@ -65,7 +71,8 @@
       "store.faults",
       "evidence.store",
       "context.script",
-      "knowledge.store"
+      "knowledge.store",
+      "verifier.script"
     ],
     "test_barriers": [
       "backpressure.limit.reached",
@@ -385,7 +392,24 @@
       "normative-implies-binding",
       "decision-epoch-optional",
       "decision-supersession-unchecked",
-      "bind-by-grant"
+      "bind-by-grant",
+      "receipt-listing-incomplete-accepted",
+      "results-in-outcome",
+      "evaluator-version-substituted",
+      "lost-evaluator-reports-pass",
+      "lost-evaluator-switches-version",
+      "recorded-results-rewritten",
+      "not-evaluated-satisfied",
+      "contract-digest-only",
+      "subject-digest-ignored",
+      "time-basis-ignored",
+      "before-observation-ignored",
+      "stale-ignored",
+      "environment-unverified-satisfied",
+      "assess-roles-incomplete-accepted",
+      "receipt-bytes-unchecked",
+      "failure-marks-execution",
+      "receipt-authorizes-decision"
     ]
   }
 }

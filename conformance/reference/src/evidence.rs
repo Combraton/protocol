@@ -1073,17 +1073,52 @@ pub fn publish_sealed(
     media_type: &str,
     now: &str,
 ) -> rusqlite::Result<Vec<Draft>> {
+    publish_artifact(
+        tx,
+        &Publication {
+            id,
+            provider,
+            producer_id: "reference-context-provider",
+            source: json!({"kind": "context.packet", "id": source}),
+            scope: "context",
+            retention_class: "context-packet",
+            media_type,
+            now,
+        },
+        content,
+    )
+}
+
+/// How a provider publishes one of its own records as a sealed artifact in its own store.
+pub struct Publication<'a> {
+    pub id: &'a str,
+    pub provider: &'a str,
+    pub producer_id: &'a str,
+    pub source: Value,
+    pub scope: &'a str,
+    pub retention_class: &'a str,
+    pub media_type: &'a str,
+    pub now: &'a str,
+}
+
+/// Seal `content` as a new artifact with its staged and sealed events.
+pub fn publish_artifact(
+    tx: &Transaction,
+    publication: &Publication,
+    content: &[u8],
+) -> rusqlite::Result<Vec<Draft>> {
+    let (id, provider, now) = (publication.id, publication.provider, publication.now);
     let digest = crate::json::sha256_digest(content);
     let descriptor = json!({
         "digest": digest,
         "size": content.len(),
-        "media_type": media_type,
-        "producer": {"principal": provider, "producer_id": "reference-context-provider"},
-        "source": {"kind": "context.packet", "id": source},
-        "scope": "context",
+        "media_type": publication.media_type,
+        "producer": {"principal": provider, "producer_id": publication.producer_id},
+        "source": publication.source,
+        "scope": publication.scope,
         "capture": {"captured_at": now, "anchors": []},
         "coverage": {"completeness": "complete"},
-        "retention_class": "context-packet",
+        "retention_class": publication.retention_class,
     });
     let record = json!({
         "descriptor": descriptor,

@@ -43,7 +43,7 @@ A contract is a sealed Evidence artifact in format `combraton-verification-contr
 
 - **Reading a contract.** A holder reads a contract at its named provider, as an ordinary reader, and checks the digest. In the reference, a holder reads contracts only from its own store.
 - A command whose contract cannot be read is refused with `contract_unavailable` and `details.reason`: `not_found`, `not_sealed`, `unavailable`, `unreachable` or `invalid_format`. A readable contract whose digest differs is `artifact_digest_mismatch`.
-- A caller must be authorized to read a contract held at this provider (`evidence.read` on the artifact); otherwise the operation is `permission_denied`, identical for a nonexistent contract.
+- A caller must be authorized to read the contract: `evidence.read` on the contract's artifact subject at this provider. Otherwise the operation is `permission_denied`, identical for a nonexistent contract.
 
 ## 4. Evaluating a contract (`verification.jobs`, VER-3, M5-Q9)
 
@@ -57,7 +57,7 @@ A contract is a sealed Evidence artifact in format `combraton-verification-contr
 | `evaluator` | `{ id, version }` |
 
 - **Outcome: a job reference only.** `{ job, state: "queued" }`. A command never returns property results; the report is a separate receipt (VER-3).
-- **Evaluator capability.** Each installed evaluator version is advertised as the capability predicate `verification.evaluator.<id>.<version>` (CORE §17). If that predicate's status is not `supported`, the command is refused with `capability_unavailable` at step 7. The provider never substitutes another version.
+- **Evaluator capability.** Each installed evaluator version is advertised as the capability predicate `verification.evaluator.<id>.v<version>` (CORE §17). Evaluator IDs match `[a-z][a-z0-9_-]*` and versions `[a-z0-9_-]+`, so every predicate name is a Core dotted name. If that predicate's status is not `supported`, the command is refused with `capability_unavailable` at step 7. The provider never substitutes another version.
 - **Order at step 7.**
   1. Evaluator capability.
   2. Contract readability (§3).
@@ -149,11 +149,11 @@ Receipt content, the canonical JSON sealed in format `combraton-verification-rec
 **Property status.**
 - If any check is `failed` or `unverifiable`, every property is `not_satisfied`, with those reasons, whatever its recorded result.
 - Otherwise `pass` is `satisfied`, `fail` is `failed`, and `not_evaluated` or `indeterminate` is `not_satisfied`, with the result as its reason.
-- When the contract cannot be read, `properties` is empty and `overall` is `not_satisfied`.
+- When the contract or the receipt's bytes cannot be read, `properties` is empty and `overall` is `not_satisfied`: no property result is presented without both.
 
 **Overall.** `failed` if any required property is `failed`; otherwise `not_satisfied` if any required property is not `satisfied`; otherwise `satisfied`.
 
-**Authorization.** A receipt the reader may not read is `permission_denied`, identical to a nonexistent receipt (CORE-12). Assessment needs `verification.read` on the receipt and, for a contract at this provider, `evidence.read` on the contract.
+**Authorization.** A receipt the reader may not read is `permission_denied`, identical to a nonexistent receipt (CORE-12). Assessment needs `verification.read` on the receipt and `evidence.read` on the contract's artifact subject.
 
 ## 8. Rights
 

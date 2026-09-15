@@ -682,6 +682,162 @@
         }
       },
       "additionalProperties": false
+    },
+    "verifier": {
+      "type": "object",
+      "description": "Scripted evaluator (decision 007; VERIFICATION section 11).",
+      "properties": {
+        "evaluators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "version"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[a-z0-9_-]{1,32}$"
+              },
+              "status": {
+                "enum": [
+                  "supported",
+                  "unsupported",
+                  "unknown"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 1,
+              "properties": {
+                "wait_until": {
+                  "type": "string"
+                },
+                "property": {
+                  "type": "object",
+                  "required": [
+                    "property_id",
+                    "result"
+                  ],
+                  "properties": {
+                    "property_id": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "enum": [
+                        "pass",
+                        "fail",
+                        "not_evaluated",
+                        "indeterminate"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "observe": {
+                  "type": "object",
+                  "required": [
+                    "anchors"
+                  ],
+                  "properties": {
+                    "anchors": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "valid_until": {
+                  "type": "string"
+                },
+                "complete": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "default_script": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "wait_until": {
+                "type": "string"
+              },
+              "property": {
+                "type": "object",
+                "required": [
+                  "property_id",
+                  "result"
+                ],
+                "properties": {
+                  "property_id": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "not_evaluated",
+                      "indeterminate"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "observe": {
+                "type": "object",
+                "required": [
+                  "anchors"
+                ],
+                "properties": {
+                  "anchors": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "valid_until": {
+                "type": "string"
+              },
+              "complete": {
+                "const": true
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,

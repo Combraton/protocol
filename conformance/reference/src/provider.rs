@@ -286,6 +286,31 @@ const OPERATIONS: &[Operation] = &[
         command: true,
     },
     Operation {
+        name: "verification.evaluate_contract",
+        profile: "verification",
+        command: true,
+    },
+    Operation {
+        name: "verification.job.inspect",
+        profile: "verification",
+        command: false,
+    },
+    Operation {
+        name: "verification.receipt.record",
+        profile: "verification",
+        command: true,
+    },
+    Operation {
+        name: "verification.receipt.inspect",
+        profile: "verification",
+        command: false,
+    },
+    Operation {
+        name: "verification.receipt.assess",
+        profile: "verification",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -369,6 +394,13 @@ const SUPPORTED: &[SupportedProfile] = &[
         features: &[],
         depends_on: &["core"],
         requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
+        name: "verification",
+        majors: &[1],
+        features: &["verification.jobs", "verification.record"],
+        depends_on: &["core"],
+        requires_core_features: &["core.events", "core.capabilities"],
     },
     SupportedProfile {
         name: "core-test",
@@ -490,6 +522,8 @@ pub struct Identity {
     pub context_script: std::sync::Arc<Value>,
     /// Knowledge evaluator and adversarial store controls (test environment; KNOWLEDGE section 13).
     pub knowledge: std::sync::Arc<Value>,
+    /// Scripted evaluator (test environment; VERIFICATION section 11).
+    pub verifier: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -642,6 +676,18 @@ impl Provider {
         {
             eprintln!("evidence tick: {error}");
         }
+        let verifier = self.identity.verifier.clone();
+        let capabilities = self.identity.capabilities.clone();
+        if let Err(error) = crate::verification::tick(
+            &mut self.store,
+            &now,
+            &capabilities,
+            &verifier,
+            &self.identity.provider_id,
+            &self.mutants,
+        ) {
+            eprintln!("verification tick: {error}");
+        }
         let mut publisher = json!({"provider_id": self.identity.provider_id});
         if let Some(peer) = self.identity.context_script.get("evidence_provider") {
             publisher["evidence_provider"] = peer.clone();
@@ -741,6 +787,10 @@ impl Provider {
                     Some("evidence.retention_control")
                 }
                 "context.expand" => Some("context.expand"),
+                "verification.evaluate_contract" | "verification.job.inspect" => {
+                    Some("verification.jobs")
+                }
+                "verification.receipt.record" => Some("verification.record"),
                 _ => None,
             };
             if let Some(feature) = feature
@@ -971,6 +1021,8 @@ impl Provider {
         let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
         let context_script = self.identity.context_script.clone();
         let knowledge_config = self.identity.knowledge.clone();
+        let capabilities = self.identity.capabilities.clone();
+        let evidence_config = self.identity.evidence_store.clone();
         let provider_id = self.identity.provider_id.clone();
         let full_params = params.clone();
         let execution_features = (
@@ -1051,6 +1103,24 @@ impl Provider {
                             &subject_id,
                             &full_params,
                             &knowledge_context,
+                        )?
+                    }
+                    name if name.starts_with("verification.") => {
+                        let verification_context = crate::verification::Context {
+                            now: recorded_at.clone(),
+                            principal: &principal,
+                            provider_id: &provider_id,
+                            capabilities: &capabilities,
+                            evidence_config: &evidence_config,
+                            order: sequence,
+                            mutants,
+                        };
+                        crate::verification::apply(
+                            tx,
+                            name,
+                            &subject_id,
+                            &full_params,
+                            &verification_context,
                         )?
                     }
                     name if name.starts_with("evidence.") => {
@@ -1985,6 +2055,11 @@ impl Provider {
         {
             return invalid(&path, reason);
         }
+        if operation.name.starts_with("verification.")
+            && let Err((path, reason)) = crate::verification::validate(operation.name, params)
+        {
+            return invalid(&path, reason);
+        }
         if operation.name == "evidence.upload.prepare" {
             let payload = &params["payload"];
             if let Some(locator) = payload["locator"].as_str()
@@ -2283,6 +2358,15 @@ impl Provider {
                         };
                         Err(reject("stale_authority_epoch", details))
                     }
+                    Err((code, details)) => Err(reject(code, details)),
+                };
+            }
+            name if name.starts_with("verification.") => {
+                let context = self.verification_context(0);
+                return match crate::verification::check(&reader, name, params, &context)
+                    .map_err(storage)?
+                {
+                    Ok(()) => Ok(()),
                     Err((code, details)) => Err(reject(code, details)),
                 };
             }
@@ -2651,6 +2735,27 @@ impl Provider {
                     .map_err(storage)?
                     .ok_or_else(|| reject("not_found", json!({})))
             }
+            "verification.job.inspect" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let id = params["payload"]["job"].as_str().unwrap_or_default();
+                crate::verification::inspect_job(&reader, id)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "verification.receipt.inspect" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let id = params["payload"]["receipt"].as_str().unwrap_or_default();
+                crate::verification::inspect_receipt(&reader, id)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "verification.receipt.assess" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let context = self.verification_context(0);
+                crate::verification::assess(&reader, &params["payload"], &context)
+                    .map_err(storage)?
+                    .map_err(|(code, details)| reject(code, details))
+            }
             "knowledge.claim.history" => {
                 let reader = self.store.reader().map_err(storage)?;
                 let claim = params["payload"]["claim"].as_str().unwrap_or_default();
@@ -2689,6 +2794,18 @@ impl Provider {
                 )
             }
             _ => Err(reject("method_not_found", json!({"operation": operation}))),
+        }
+    }
+
+    fn verification_context(&self, order: i64) -> crate::verification::Context<'_> {
+        crate::verification::Context {
+            now: self.identity.clock.now(),
+            principal: &self.identity.principal,
+            provider_id: &self.identity.provider_id,
+            capabilities: &self.identity.capabilities,
+            evidence_config: &self.identity.evidence_store,
+            order,
+            mutants: &self.mutants,
         }
     }
 
@@ -3093,6 +3210,13 @@ impl Provider {
                 )?;
             }
             any
+        } else if kind.starts_with("verification.") {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "verification.read")
         } else if kind.starts_with("knowledge.") {
             covers
                 && grant["rights"]

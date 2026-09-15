@@ -37,7 +37,7 @@ JOB_KIND = "context.job"
 PACKET_KIND = "context.packet"
 PACKET_MEDIA_TYPE = "application/vnd.combraton.context-packet+json"
 PACKET_FORMAT = "combraton-context-packet/1"
-COMPILER = "combraton-independent-python-core"
+COMPILER = "combraton-reference-context"  # CONTEXT 12 conformance conventions (H.7 #2)
 DEFAULT_EXCERPT_BYTES = 4096  # CONTEXT 6
 OBLIGATION_FEATURES = {"advisory": "context.advisory", "required_before_start": "context.required_before_start",
                        "required_before_transition": "context.required_before_transition"}
@@ -636,11 +636,18 @@ class Context:
 
     @staticmethod
     def _satisfies(item: dict, section: dict, current_authority: dict) -> bool:
-        """H-CTX-SATISFACTION, replaced by H3-CTX-SATISFACTION (fixture-informed):
-        an included, non-historical section for the item satisfies it,
-        whatever its check names. A section older than the item's current
-        authority revision is historical and so never satisfies it."""
-        return True
+        """CONTEXT 3, 12 "Scripted content and checks": the item's check
+        decides (H-CTX-SATISFACTION, restored in H.7 #1)."""
+        check = item["check"]
+        if check["kind"] == "source_included":
+            src = section.get("source")
+            return src is not None and src["repository"] == check["repository"] and src["path"] == check["path"]
+        if check["kind"] == "evidence_included":
+            want = check["evidence"]
+            return any(c["evidence"]["artifact"] == want["artifact"] and c["evidence"]["digest"] == want["digest"]
+                       for c in section.get("citations", []))
+        return (item["item_id"] in current_authority
+                and section.get("authority_revision") == current_authority[item["item_id"]])
 
     def _evaluate(self, rec: dict, job: dict, default_reason: str) -> dict:
         items = rec["items"]

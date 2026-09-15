@@ -8,7 +8,7 @@
     "CORE-13"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CORE.md#16-events-and-subscriptions-proposed-m2-draft"
+    "docs/spec/profiles/CORE.md#16-events-and-subscriptions"
   ],
   "role": "provider",
   "profiles": [

@@ -1,0 +1,101 @@
+{
+  "format": "combraton-conformance-participant/1",
+  "name": "pinned-m5-reference-provider",
+  "version": "0.1.0-dev.0",
+  "description": "Reference provider built from the accepted M5 merge 6ed4727 (Protocol 0.1 before core.feature_dependencies), for compatibility fixtures only. Build first: python3 conformance/scripts/build_pinned.py m5",
+  "role": "provider",
+  "binding": "stdio",
+  "claims": {
+    "profiles": [
+      {
+        "name": "core",
+        "major": 1
+      },
+      {
+        "name": "core-test",
+        "major": 1
+      },
+      {
+        "name": "execution",
+        "major": 1
+      },
+      {
+        "name": "evidence",
+        "major": 1
+      },
+      {
+        "name": "context",
+        "major": 1
+      },
+      {
+        "name": "knowledge",
+        "major": 1
+      },
+      {
+        "name": "verification",
+        "major": 1
+      }
+    ],
+    "features": [
+      "core.grants",
+      "core.events",
+      "core.capabilities",
+      "core.effects",
+      "execution.steering",
+      "execution.actions",
+      "execution.controller",
+      "execution.workspaces",
+      "execution.usage",
+      "execution.context",
+      "execution.discovery",
+      "execution.continuation",
+      "core.events.backpressure",
+      "execution.output",
+      "evidence.manifests",
+      "evidence.retention_control",
+      "context.advisory",
+      "context.required_before_start",
+      "context.required_before_transition",
+      "context.shared_jobs",
+      "context.updates",
+      "context.expand",
+      "execution.context_revalidation",
+      "execution.evidence_outputs",
+      "evidence.work_binding",
+      "verification.jobs",
+      "verification.record",
+      "context.claims",
+      "execution.claim_revalidation"
+    ],
+    "test_controls": [
+      "clock.file",
+      "executor.script",
+      "store.faults",
+      "evidence.store",
+      "context.script",
+      "knowledge.store",
+      "verifier.script"
+    ],
+    "test_barriers": [
+      "backpressure.limit.reached",
+      "backpressure.connection.closed",
+      "backpressure.stall.started"
+    ]
+  },
+  "launch": {
+    "argv": [
+      "{repo}/target/pinned-m5/build/debug/combraton-reference-provider",
+      "--data-dir",
+      "{data_dir}",
+      "--config",
+      "{config_file}",
+      "--schemas",
+      "{repo}/target/pinned-m5/src/schemas"
+    ]
+  },
+  "mutants": {
+    "argv": [],
+    "names": []
+  },
+  "pinned": "0.1-m5"
+}

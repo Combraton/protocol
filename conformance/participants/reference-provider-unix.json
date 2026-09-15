@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-participant/1",
   "name": "combraton-reference-provider-unix",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0",
   "description": "Reference Core provider over the Unix-socket binding (not a product). Build first: cargo build -p combraton-reference-provider",
   "role": "provider",
   "binding": "unix",
@@ -144,7 +144,8 @@
       "newer-revision-substituted",
       "unavailable-knowledge-valid",
       "claim-revalidation-ignored",
-      "advisory-blocked-by-claims"
+      "advisory-blocked-by-claims",
+      "claim-revalidation-without-negotiation"
     ]
   }
 }

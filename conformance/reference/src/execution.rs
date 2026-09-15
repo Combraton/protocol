@@ -544,7 +544,8 @@ pub fn submit(
     if ctx.revalidation
         && let Some(bindings) = payload["context_bindings"].as_array()
     {
-        let claims = ctx.claim_revalidation;
+        let claims =
+            ctx.claim_revalidation || ctx.mutants.on("claim-revalidation-without-negotiation");
         record["context"] = json!({"claim_revalidation": claims});
         let mut states = Vec::new();
         for binding in bindings {

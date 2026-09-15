@@ -49,6 +49,25 @@ jobs:
       - name: Run suite against the independent Python implementation (built from documents only)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
+      - name: Build the accepted M5 release (6ed4727) for compatibility checks
+        id: pinned
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 conformance/scripts/build_pinned.py m5
+      - name: Older clients — the accepted M5 fixture set, unmodified, against the current reference provider (stdio)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-reference
+      - name: Older clients — the accepted M5 fixture set, unmodified, against the current reference provider (Unix socket)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider-unix.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-reference-unix
+      - name: Older clients — the accepted M5 fixture set, unmodified, against the independent Python implementation
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-independent
+      - name: Older provider — compatibility fixtures against the pinned M5 reference provider (stdio)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/pinned/m5-reference-provider.json --filter compat. --out conformance/results/compat/pinned-m5-provider
+      - name: Older provider — compatibility fixtures against the pinned M5 reference provider (Unix socket)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/pinned/m5-reference-provider-unix.json --filter compat. --out conformance/results/compat/pinned-m5-provider-unix
       - name: Different OS user is refused on the Unix socket (root client through sudo)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 conformance/scripts/peer_user_check.py --require --out conformance/results/peer-user
@@ -92,6 +111,37 @@ jobs:
         with:
           name: conformance-results-${{ matrix.os }}
           path: conformance/results/
+          if-no-files-found: warn
+          retention-days: 30
+
+  bundle:
+    name: Source bundle from a fresh extraction (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned at setup
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build the source bundle twice from this commit and require identical bytes
+        run: |
+          version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("Cargo.toml").read(), re.M).group(1))')
+          python3 scripts/release.py bundle --commit HEAD --version "$version" --out "$RUNNER_TEMP/dist-a"
+          python3 scripts/release.py bundle --commit HEAD --version "$version" --out "$RUNNER_TEMP/dist-b"
+          cmp "$RUNNER_TEMP/dist-a/combraton-protocol-$version-source.tar.gz" "$RUNNER_TEMP/dist-b/combraton-protocol-$version-source.tar.gz"
+          echo "version=$version" >> "$GITHUB_ENV"
+      - name: Consumer path from the extracted bundle (no Git metadata), full checks
+        run: python3 scripts/release.py verify-bundle --archive "$RUNNER_TEMP/dist-a/combraton-protocol-$version-source.tar.gz" --work "$RUNNER_TEMP/extracted" --full
+      - name: Upload the bundle verification record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundle-verification-${{ matrix.os }}
+          path: ${{ runner.temp }}/extracted/verify-bundle.json
           if-no-files-found: warn
           retention-days: 30
 

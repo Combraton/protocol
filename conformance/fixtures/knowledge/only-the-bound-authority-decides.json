@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.only-the-bound-authority-decides",
-  "version": 3,
+  "version": 4,
   "title": "Only the scope's bound authority records reliance decisions: grants and derivation labels confer nothing, a second binding and stale or unknown epochs are refused, the authority may adopt its own claim recorded as author and decider, and a transfer keeps earlier decisions in effect",
   "requirements": [
     "KNW-6"
@@ -30,7 +30,8 @@
     "decision-supersession-unchecked",
     "bind-by-grant",
     "authority-binds-under-grant",
-    "knowledge-epoch-after-preconditions"
+    "knowledge-epoch-after-preconditions",
+    "decision-claim-read-unchecked"
   ],
   "steps": [
     {
@@ -117,6 +118,41 @@
           },
           {
             "kind": "knowledge.authority"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "grant-issue-g-lead-noread",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-lead-noread"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-lead-noread"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "lead",
+        "audience": "conformance-provider",
+        "rights": [
+          "knowledge.decide",
+          "knowledge.propose"
+        ],
+        "resources": [
+          {
+            "kind": "knowledge.decision"
           }
         ],
         "delegation": {
@@ -698,6 +734,51 @@
         "error": "invalid_envelope",
         "details": {
           "path": "/authority_epoch"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.decision.record",
+      "command_id": "decision-record-dec-noread",
+      "subject": {
+        "kind": "knowledge.decision",
+        "id": "dec-noread"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.decision",
+            "id": "dec-noread"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "c-lead",
+          "revision": 1,
+          "digest": {
+            "$var": "d_c-lead"
+          }
+        },
+        "decision": "accepted_for_use",
+        "validation_basis": {
+          "evidence": [],
+          "receipts": []
+        },
+        "rationale": "accepted_for_use c-lead",
+        "permitted_use": "binding"
+      },
+      "set": {
+        "authority_epoch": 1,
+        "grant": "g-lead-noread"
+      },
+      "expect": {
+        "error": "permission_denied",
+        "details": {
+          "reason": "right_missing"
         }
       }
     },

@@ -9,7 +9,7 @@
     "CMP-9"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets-proposed-m5",
+    "docs/spec/profiles/CONTEXT.md#14-claims-in-packets",
     "docs/spec/profiles/KNOWLEDGE.md#12-claims-in-context-packets"
   ],
   "role": "provider",

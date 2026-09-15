@@ -1,0 +1,30 @@
+{
+  "format": "combraton-conformance-participant/1",
+  "name": "thirdparty-minimal-publisher",
+  "version": "0.1.0",
+  "description": "Minimal independent Evidence publisher (client only). Written from docs/spec, schemas and conformance/thirdparty/README.md only. See conformance/thirdparty/minimal-publisher/README.md.",
+  "role": "client",
+  "binding": "unix",
+  "claims": {
+    "profiles": [],
+    "features": [],
+    "test_controls": []
+  },
+  "launch": {
+    "argv": [
+      "python3",
+      "{repo}/conformance/thirdparty/minimal-publisher/publisher.py",
+      "--config",
+      "{config_file}"
+    ]
+  },
+  "mutants": {
+    "argv": [
+      "--mutant",
+      "{mutant}"
+    ],
+    "names": [
+      "uploads-bytes-differing-from-digest"
+    ]
+  }
+}

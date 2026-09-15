@@ -644,6 +644,17 @@ fn advance(
         {
             job["evaluator"] = other;
         } else {
+            if job["state"] == "queued" && mutants.on("queued-loss-passes-through-running") {
+                job["state"] = json!("running");
+                job["started_at"] = json!(now);
+                *revision += 1;
+                drafts.push((
+                    "verification.job.changed",
+                    job_subject.clone(),
+                    *revision,
+                    json!({"state": "running", "evaluator": job["evaluator"]}),
+                ));
+            }
             return complete(
                 tx,
                 id,
@@ -788,7 +799,13 @@ fn complete(
         "inputs": [],
         "properties": properties,
         // A job that never ran observed nothing: its period is empty (VERIFICATION section 4).
-        "observed_from": job.get("started_at").cloned().unwrap_or_else(|| json!(now)),
+        "observed_from": job.get("started_at").cloned().unwrap_or_else(|| {
+            if mutants.on("queued-loss-observed-from-submission") {
+                job["submitted_at"].clone()
+            } else {
+                json!(now)
+            }
+        }),
         "observed_until": now,
         "valid_until": job.get("valid_until").cloned().unwrap_or(Value::Null),
         "scope": if mutants.on("issued-scope-from-job") {
@@ -1097,7 +1114,11 @@ pub fn assess(
             let too_old = contract
                 .as_ref()
                 .and_then(|c| c["freshness"]["max_age_seconds"].as_i64())
-                .is_some_and(|max| at > crate::execution::add_seconds(until, max));
+                .is_some_and(|max| {
+                    let limit = crate::execution::add_seconds(until, max);
+                    // Exactly at observed_until plus max_age_seconds the receipt is still current.
+                    at > limit || (mutants.on("freshness-boundary-inclusive") && at == limit)
+                });
             if expired || too_old {
                 time_reasons.push("stale");
             }

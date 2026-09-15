@@ -9,7 +9,7 @@
     "EVD-5"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4",
+    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation",
     "docs/spec/profiles/CONTEXT.md#7-direct-fetch-by-an-executor",
     "docs/spec/profiles/EVIDENCE.md#14-conformance-and-test-controls"
   ],

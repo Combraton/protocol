@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "verification.assessment-never-passes-missing-unavailable-or-outdated",
-  "version": 3,
+  "version": 4,
   "title": "Assessment is read-only and states its time and basis: every contract role must be named once; exact contract references, subject digests, required environment anchors, permitted evaluators, observation time, validity and freshness are checked; unverifiable, stale, not evaluated and indeterminate are never satisfied; a caller-selected time never establishes present validity",
   "requirements": [
     "VER-4"
@@ -43,7 +43,8 @@
     "receipt-bytes-unchecked",
     "overall-ignores-checks",
     "contract-unverifiable-checks-passed",
-    "unusable-reasons-dropped"
+    "unusable-reasons-dropped",
+    "freshness-boundary-inclusive"
   ],
   "steps": [
     {

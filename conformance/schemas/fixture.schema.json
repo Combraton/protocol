@@ -1362,6 +1362,93 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "name",
+              "implementation",
+              "config"
+            ],
+            "properties": {
+              "step": {
+                "const": "start_client"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "implementation": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "config": {
+                "type": "object"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "name"
+            ],
+            "properties": {
+              "step": {
+                "const": "stop_client"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "exit_code": {
+                "type": "integer"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "name"
+            ],
+            "properties": {
+              "step": {
+                "const": "await_client_exit"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "exit_code": {
+                "type": "integer"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       }
@@ -1372,6 +1459,11 @@
         "unix"
       ],
       "description": "Restrict the fixture to one binding; absent means any."
+    },
+    "requires_pinned": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$",
+      "description": "Run only against a participant descriptor whose `pinned` names this older release build (compatibility fixtures); every other participant skips it."
     },
     "requires_controls": {
       "type": "array",
@@ -1415,6 +1507,35 @@
           "reason_contains": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "client_kills": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Mutants of client-only implementations (conformance/thirdparty/<implementation>/participant.json) that this composition fixture must fail; check-mutants runs each with --client-mutant.",
+      "items": {
+        "type": "object",
+        "required": [
+          "implementation",
+          "mutant"
+        ],
+        "properties": {
+          "implementation": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "mutant": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason_contains": {
+            "type": "string"
           }
         },
         "additionalProperties": false

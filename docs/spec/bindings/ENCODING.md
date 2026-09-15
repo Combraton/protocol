@@ -1,6 +1,6 @@
-# Canonical encoding and digests `encoding/1` — release draft
+# Canonical encoding and digests `encoding/1` — release candidate
 
-> **Status: accepted draft for Protocol 0.1.** Not yet released. Evidence and alternatives: [decision 003](../../decisions/003-canonical-encoding-and-digests.md). Test vectors: `conformance/vectors/encoding.json`, added with the M1 implementation.
+> **Status: Protocol 0.1 release candidate; accepted with M1 and M2.** Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Evidence and alternatives: [decision 003](../../decisions/003-canonical-encoding-and-digests.md). Test vectors: `conformance/vectors/encoding.json`, added with the M1 implementation.
 
 ## 1. The JSON value domain
 

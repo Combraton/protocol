@@ -1,8 +1,8 @@
-# Core profile `core/1` — release draft
+# Core profile `core/1` — release candidate
 
-> **Status: accepted draft for Protocol 0.1 (command path from M1). §15 grants, §16 events, §17 capabilities and §18 credentials are accepted M2 drafts (§18 by decision 006). §19 effects and obligations is a proposed M3 draft.** Not yet a released contract. Field and error names become normative only when the release is accepted together with its schemas and conformance fixtures. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
+> **Status: Protocol 0.1 release candidate.** The command path was accepted with M1, §15–§18 with M2 (§18 by decision 006), §19 with M3, and §4.3 `core.feature_dependencies` is the M6 addition (owner decision M6-Q1). Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC](../SPEC.md). Plan: [release plan](../../work/release-0.1/PLAN.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md).
 
-This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions and capability snapshots are specified in §15–§18 (milestone M2). Effect reconciliation is Core too; §19 is a proposed M3 draft.
+This document defines the Core command path: sessions, negotiation, command and query envelopes, the order of checks, idempotency, preconditions, authority epochs, acknowledgments and errors. Grants, events and subscriptions, capability snapshots and credentials are specified in §15–§18 (milestone M2). Effect reconciliation is Core too (§19, milestone M3).
 
 Wire encoding, digests and transport are defined separately:
 
@@ -41,7 +41,7 @@ A retransmitted command keeps its `command_id` and content and gets a new `messa
 
 A session is one authenticated connection under the transport binding.
 
-1. **Before negotiation**, a provider MUST answer only `core.describe` and `core.negotiate` (and `core.authenticate`, §18). A socket session must also authenticate before `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
+1. **Before negotiation**, a provider MUST answer only `core.describe`, `core.feature_dependencies` (§4.3) and `core.negotiate` (and `core.authenticate`, §18). A socket session must also authenticate before `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
 2. **`core.negotiate` succeeds at most once per session.** A second call gets `already_negotiated`. To change the negotiated set, open a new session.
 3. **After negotiation**, an operation of a profile that was not selected gets `profile_not_negotiated`. This applies even when the provider supports that profile.
 4. **Session state is not durable.** Closing a session neither cancels nor confirms anything in flight. Callers reconcile by command identity after reconnecting ([STREAM](../bindings/STREAM.md)).
@@ -78,6 +78,12 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 - Optional profiles and features that cannot be selected are reported in `unselected` with a reason. They are not errors.
 - Include `core` implicitly; a caller cannot deselect it. A `core` entry is always treated as required, whatever its `required` flag.
 - An optional profile whose required feature is missing is not selected. Each missing feature is reported in `unselected` as `unknown_feature`; this is not a refusal.
+- **Dependencies (§4.3)** are applied after selection:
+  - **Profile-triggered.** A profile whose dependency is not selected is not selected. For each missing dependency the item is `{ profile, reason: "dependency_not_selected" }`, or `{ profile, feature: <missing dependency feature>, reason: "dependency_not_selected" }` for a missing feature. A required profile's items refuse the negotiation with `unsupported_profile`.
+  - **Feature-triggered** (M6-Q1). A requested feature whose dependency is not selected is itself not selected, and the item is `{ profile, feature: <the requested feature>, reason: "dependency_not_selected" }`. When the feature was required in a required profile, the negotiation is refused with `unsupported_required_feature`. When it was required in an optional profile, the profile is not selected. When it was optional, the item is reported in `unselected`.
+  - **Order.** Profile-triggered dependencies are applied first. Feature-triggered dependencies are then judged against the profiles and features still selected, and are applied again until nothing changes. A profile that was not selected contributes no feature items: when a required profile is refused for a missing Core feature, its feature-triggered items are not also listed.
+  - **One item per cause.** An optional profile left unselected by a required feature's dependency is reported with that one item, and its other features are not listed.
+  - A dependency is applied only when its dependent profile or feature was requested. A caller that requests neither sees no dependency items. The order of items within `unsatisfied` and `unselected` is not significant.
 - A feature named under a profile it does not belong to is `unknown_feature` for the profile it was listed under.
 - The same profile listed twice is `invalid_envelope`.
 - `unsatisfied` lists only the items that caused the refusal.
@@ -87,6 +93,29 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 **Result:** the selected profiles with major version and features, `unselected` items, effective limits, and the current deduplication window.
 
 Unknown feature names in `optional_features` are ignored and reported as unselected. Unknown names in `required_features` are refused (CORE-3).
+
+### 4.3 `core.feature_dependencies` (query, M6-Q1)
+
+This reports, machine-readably, the in-session dependencies that negotiation enforces (matrix CMP-5). `core.describe` keeps its accepted shape.
+
+- **Payload** `{}`. **Result:** `{ dependencies: [ entry ] }`, where each entry is:
+
+  | Member | Meaning |
+  |---|---|
+  | `profile`, `major` | A dependent profile major the provider supports, as `core.describe` lists it |
+  | `trigger` | `{ kind: "profile" }`: the dependency applies whenever that profile major is selected. `{ kind: "feature", feature }`: it applies only when that feature of the profile is selected. |
+  | `requires` | A non-empty list of `{ profile, major, features }`. That profile major must be selected in the same session, together with every listed feature. An empty `features` list means the profile major alone is required. |
+
+- **What is listed.** Exactly the dependencies negotiation enforces within one session (§4.2), and nothing else.
+  - Every supported profile major other than `core` has one `profile` entry. It names `core/1` and the Core features that profile requires, possibly none.
+  - A `feature` entry follows for each feature with an enforced dependency.
+  - A protocol dependency on a separate provider is not a session dependency and is not listed. For example, Context cites Evidence artifacts, but the reader negotiates `evidence/1` wherever the reference points.
+- **Order.** Profiles in `core.describe` order. Within a profile, the `profile` entry first, then `feature` entries in `core.describe` feature order.
+- **When it may be called.** Before or after negotiation, beside `core.describe` (§3, §10 step 1). It belongs to base `core/1` and is not a feature. Authentication rules are unchanged: on a shared transport, it needs `core.authenticate` first (§18.2).
+- **Read-only.** It creates no command record, appends no event, and neither negotiates nor changes session state.
+- **Bounded.** The result depends only on the provider's manifest and fits the default 1 MiB frame.
+- **Advisory.** Negotiation stays authoritative. A consumer still requests every dependency it relies on, and the provider enforces them whether or not the query was called.
+- **Older providers** answer `method_not_found` (§10 step 1). The consumer then uses the dependencies stated in the profile documents it pinned and still requests them at negotiation. A fallback never drops or assumes a required feature.
 
 ## 5. Envelopes
 
@@ -232,7 +261,7 @@ A provider MUST apply these steps in order. The first failing step determines th
 
 | Step | Check | Error on failure |
 |---|---|---|
-| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe`, `core.negotiate` or `core.authenticate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
+| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe`, `core.feature_dependencies`, `core.negotiate` or `core.authenticate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
 | 2 | In this order: limits (§9: depth, array items, string bytes, payload bytes); method equals `operation`; closed objects and types; envelope semantics (`requires` entries unique and extension keys present, precondition rules, known-algorithm digest length) | `limit_exceeded`, `invalid_envelope` |
 | 3 | Every `requires` entry negotiated and understood, for queries as well as commands; if the operation belongs to a feature (such as `core.grants` or `core.events`), that feature is selected | `unsupported_required_feature` |
 | 4 | Digest algorithm supported (`sha512` only when `core.digest-sha512` was negotiated); `command_digest` matches the recomputed digest. `details.expected` is the provider's recomputed digest under the caller's algorithm. | `unsupported_digest_algorithm`, `digest_mismatch` |
@@ -358,7 +387,7 @@ No protocol operation or method name is reserved for testing. Product endpoints 
 - A revision orders changes to one subject at one provider; it is not a global clock.
 - Negotiated support for a feature says the provider implements it. It does not say the underlying system, such as a harness, can enforce it. Those limits are profile-specific capability facts.
 
-## 15. Principals and grants (proposed M2 draft)
+## 15. Principals and grants
 
 Owner decision U3 (release plan §6): grants are **provider-held records referenced by ID**. Bearer tokens that carry their own authority are deferred with Remote trust. This section is negotiated as the Core feature `core.grants`.
 
@@ -445,7 +474,7 @@ For each command or query that a profile protects:
 
    When several reasons apply, report the first in this order: `grant_not_found` (checked before any other property of the grant, so another principal's revoked grant is still `grant_not_found`); `revoked`; `expired`; `authority_epoch_stale`; `right_missing` for any needed right; `out_of_scope` for any needed subject.
 
-**Which operations are protected.** In this document: the `core-test` operations (§13), `core.events.read` and `core.events.subscribe` (§16.6). The `core.grant.*` operations follow their own rules (§15.3). `core.describe`, `core.negotiate`, `core.authenticate`, `core.capabilities` and `core.events.unsubscribe` are not protected. A `grant` field on an unprotected or `core.grant.*` operation is validated but not evaluated. `core.events.unsubscribe` removes only the session's own subscriptions; an unknown subscription is `not_found`.
+**Which operations are protected.** In this document: the `core-test` operations (§13), `core.events.read` and `core.events.subscribe` (§16.6). The `core.grant.*` operations follow their own rules (§15.3). `core.describe`, `core.feature_dependencies`, `core.negotiate`, `core.authenticate`, `core.capabilities` and `core.events.unsubscribe` are not protected. A `grant` field on an unprotected or `core.grant.*` operation is validated but not evaluated. `core.events.unsubscribe` removes only the session's own subscriptions; an unknown subscription is `not_found`.
 
 **Without `core.grants`.** Authorization still applies when the session did not negotiate `core.grants`. Such a session cannot name a grant, so a principal that is not an authority is refused with `grant_required`.
 
@@ -459,7 +488,7 @@ A replay of an already-bound command skips step 6 (§10), so revocation does not
 
 A grant is authorization at one provider. It is not identity proof, is not transferable to another provider, and is not a promise that an underlying system will enforce the same limits. Execution profiles report enforcement levels separately. An expired or revoked grant does not mean nothing happened under it.
 
-## 16. Events and subscriptions (proposed M2 draft)
+## 16. Events and subscriptions
 
 Every provider records what it committed as an ordered, durable **event stream**. Callers read it with opaque cursors or subscribe to it on a connection. This section is negotiated as the Core feature `core.events`. Matrix rows: CORE-2, OBS-1 to OBS-6, OBS-8.
 
@@ -548,7 +577,7 @@ Rules:
 - **Lapses caused elsewhere.** On a shared transport, a command on another connection can end a subscription's authorization, for example by revoking its grant or claiming a new authority epoch. The provider then sends the final notification without waiting for a request on the subscriber's connection. Two rules make this observable:
   - **Ordering, normative.** No item committed after the command that ended authorization is delivered on that subscription. Authorization and the items to deliver are evaluated against the same committed state.
   - **Latency, conformance bound.** Fixtures expect the final notification within 2 seconds of the ending command's response on the other connection.
-- **Backpressure (proposed M3 draft, feature `core.events.backpressure`).** Semantic events are never skipped. A consumer that stops reading loses its connection, not events:
+- **Backpressure (feature `core.events.backpressure`, M3).** Semantic events are never skipped. A consumer that stops reading loses its connection, not events:
   - **Bounded pending output.** A provider bounds, per connection, the memory and bytes of output produced but not yet written. When a subscription's next notification would exceed that bound, the provider stops producing items for the connection's subscriptions; the withheld items stay undelivered, never skipped.
   - **Stall and room deadline.** A stall starts when the next notification or response would exceed the bound. The consumer must drain all pending output within `backpressure_notice_ms` of the stall's start. Partial progress does not extend that deadline. A consumer that misses it is **too slow**. A consumer that drains within each deadline is keeping up and is not closed.
   - **Ending notices, one budget.** If the session negotiated `core.events.backpressure`, the provider attempts one final `core.events.notify` for every subscription on the connection, with `"items": []` and `"ended": { "reason": "consumer_too_slow" }`. All of the connection's notices share one budget of `backpressure_notice_ms`, starting when the consumer was declared too slow. The budget does not restart per subscription, and nothing else is waited for before closure.
@@ -582,7 +611,7 @@ Reading or subscribing needs an authority principal, or a grant with right `core
 
 An event records a fact the provider committed. It is not delivery to any consumer, not verification of the fact's correctness, and not project acceptance. A stream position is not a global clock and says nothing about another provider's stream.
 
-## 17. Capability snapshots (proposed M2 draft)
+## 17. Capability snapshots
 
 Negotiation (§4.2) says which protocol features a provider implements. **Capabilities** say what the provider can actually do right now, and on what evidence. For example: whether its store accepts writes, or, in later profiles, whether a harness adapter can enforce a restriction. This section is negotiated as the Core feature `core.capabilities`. Matrix rows: CORE-16, CORE-17.
 
@@ -651,7 +680,7 @@ Accepted by [decision 006](../../decisions/006-unix-socket-principal-credential.
 
 A successful authentication proves that the caller possessed the credential. It does not prove which program the caller is. On a machine where coding agents run as the same user without file-access enforcement, an agent that can read the credential file can act as that principal. Execution providers must report the enforcement level protecting credential files (`enforced`, `mediated` or `cooperative`) in their capabilities. Revoking a credential stops future authentications. It does not end sessions already authenticated with it; the provider's administration may close those explicitly.
 
-## 19. Effects and obligations (proposed M3 draft)
+## 19. Effects and obligations
 
 > Proposed for milestone M3 with the [Execution profile](EXECUTION.md). Not normative until M3 is accepted with schemas and fixtures. This section is negotiated as the Core feature `core.effects`. Matrix rows: EFF-1 to EFF-4.
 
@@ -675,7 +704,7 @@ Its **status** is observed separately and appended as evidence: `pending`, `succ
 
 ### 19.2 Querying after response loss
 
-`core.effects.get` (query, *candidate*) takes `{ "effect": id }` and returns `{ "effect": descriptor, "revision", "status", "observations", "attempts", "obligations" }`. `revision` is the effect record's revision, used as the precondition revision of subject `{ "kind": "core.effect", "id" }` (§19.4). `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
+`core.effects.get` (query) takes `{ "effect": id }` and returns `{ "effect": descriptor, "revision", "status", "observations", "attempts", "obligations" }`. `revision` is the effect record's revision, used as the precondition revision of subject `{ "kind": "core.effect", "id" }` (§19.4). `status` is the latest observation's status. Each observation has `status`, `evidence: { class, source }` and `recorded_at`. Obligations have `id`, `expects`, `deadline` and `state`. Reading an effect needs read authority on its target. A principal without it gets the same `permission_denied` for an existing effect and for an effect ID that does not exist (CORE-12).
 
 - After a lost response, a caller queries by the same effect ID before any new attempt (EFF-2).
 - A provider that cannot establish the outcome reports `unknown` with an open obligation. It MUST NOT answer `not_found`, `failed` or "did not happen" for an effect it recorded.
@@ -704,7 +733,7 @@ An obligation records an expected observation: an effect outcome, a lifecycle tr
 - **Deadline:** when the deadline passes with no observation, a provider-origin event marks the obligation `overdue`, even if no other event arrives.
 - **An ended wait is not an observation.** When a deadline passes, or a profile ends a wait because it timed out, the obligation is `overdue`, not `satisfied`, even if the wait's end leads to a determination (EXECUTION §8). Only the expected observation satisfies it.
 - **Aborting:** closes the wait. It MUST NOT change the effect's status: an aborted wait for an `unknown` effect leaves the effect `unknown` (EFF-4).
-  - `core.effects.abort_obligation` (command, *candidate*) on subject `{ "kind": "core.effect", "id" }`, with precondition revision equal to the effect's revision and payload `{ "obligation" }`. It returns `{ effect, obligation: { id, state: "aborted" }, status }`, and appends `core.effect.obligation.aborted` with payload `{ effect, obligation, target }` on the effect subject.
+  - `core.effects.abort_obligation` (command) on subject `{ "kind": "core.effect", "id" }`, with precondition revision equal to the effect's revision and payload `{ "obligation" }`. It returns `{ effect, obligation: { id, state: "aborted" }, status }`, and appends `core.effect.obligation.aborted` with payload `{ effect, obligation, target }` on the effect subject.
   - An obligation that is not `open` or `overdue` is `not_found`. The command records no effect, so `effect_refs` is `[]`.
   - Under a grant it needs right `core.effects.abort_obligation` on the effect's target. An effect subject is visible in events exactly when its target is.
 - **Survival:** obligations survive cancellation, timeouts and restarts until satisfied or explicitly aborted.

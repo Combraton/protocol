@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-participant/1",
   "name": "combraton-reference-provider",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0",
   "description": "Reference Core provider (not a product). Build first: cargo build -p combraton-reference-provider",
   "role": "provider",
   "binding": "stdio",
@@ -442,7 +442,13 @@
       "issued-scope-from-job",
       "historical-claim-reason-unavailable",
       "hypothesis-invalidation-unreported",
-      "scripted-unmet-overrides-satisfied"
+      "scripted-unmet-overrides-satisfied",
+      "decision-claim-read-unchecked",
+      "queued-loss-passes-through-running",
+      "queued-loss-observed-from-submission",
+      "freshness-boundary-inclusive",
+      "feature-dependencies-omit-feature-trigger",
+      "feature-dependency-unenforced"
     ]
   }
 }

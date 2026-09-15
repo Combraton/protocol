@@ -1,6 +1,6 @@
-# Execution profile `execution/1` — proposed M3 draft
+# Execution profile `execution/1` — release candidate
 
-> **Status: proposed draft for Protocol 0.1 milestone M3.** Nothing here is normative until M3 is accepted together with its schemas, fixtures, mutants and independent evidence. Names marked *candidate* may change during M3. Architecture: [SPEC §5–§8, §12–§14](../SPEC.md). Task: [M3](../../work/release-0.1/M3.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: pio `docs/spec/SPEC.md`, `docs/spec/INTERNALS.md` and `docs/spec/STANDALONE-CLIENT.md` at `e65b7c0`; cbr `docs/spec/PREPARATION-AND-DELIVERY.md` at `3278393`.
+> **Status: Protocol 0.1 release candidate.** Accepted as milestone M3 (with corrections C1–C3); §13.1 and §13.2 accepted with M4, §13.3 with M5; the enforced feature dependency of §13.3 is the M6 resolution. Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC §5–§8, §12–§14](../SPEC.md). Task: [M3](../../work/release-0.1/M3.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: pio `docs/spec/SPEC.md`, `docs/spec/INTERNALS.md` and `docs/spec/STANDALONE-CLIENT.md` at `e65b7c0`; cbr `docs/spec/PREPARATION-AND-DELIVERY.md` at `3278393`.
 
 An **executor** runs work in an existing agent harness and reports what actually happened. PIO is one executor; a third-party minimal executor must be able to implement this profile without PIO, Combraton or any private library (REL-7). A **caller** submits work and reads execution facts. The profile covers identity, admission, delivery proof, runtime state, results and completion receipts, cancellation, reconciliation, and timeouts, plus optional features for steering, native actions, controller leases, workspaces, usage, context bindings, discovery and output telemetry.
 
@@ -15,7 +15,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
   - **Required request.** If a required `execution/1` request lacks one of those Core features, negotiation is refused with `unsupported_profile`. `details.unsatisfied` lists one actionable item per missing feature: `{ "profile": "execution", "feature", "reason": "dependency_not_selected" }`.
   - **Optional request.** An optional `execution/1` request without them is not selected. The same items appear in `unselected`, and execution operations are then `profile_not_negotiated`.
   - **Manifest unchanged.** `core.describe` keeps its accepted shape: `depends_on` names only `core`.
-  - **Deferred.** Machine-readable advertising of feature dependencies is an explicit M6 compatibility decision (matrix CMP-5). No incompatible manifest field is added before then.
+  - **Machine-readable dependencies.** `core.feature_dependencies` (CORE §4.3, M6-Q1) reports these Core features as a `profile` entry for `execution/1`. A provider that supports `execution.claim_revalidation` also reports its dependency on `execution.context_revalidation` (§13.3) as a `feature` entry.
   - **Older participants.** A caller that does not request `execution/1` gets unchanged results. A provider without `execution/1` reports an optional request as `unknown_profile` in `unselected`, and refuses a required one as `unsupported_profile` (CMP-7).
 - A provider advertises `execution/1` and the optional features it implements (§12). A caller lists the features it requires; an unsupported required feature is refused at negotiation (CORE §4).
 - Every execution operation follows the Core command path (CORE §10): deduplication before authorization, authorization before capabilities, authority epoch and preconditions, then one owner transaction that commits the state change, its events and its effect records.
@@ -237,7 +237,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 | `execution.workspaces` | Workspace lease descriptor: repository, base, writer identity, lease epoch, permitted paths and effects, cleanup policy. `execution.workspace.checkpoint` records coverage the executor probed itself, including dirty and untracked state. Agent-reported commit IDs are annotations, not receipts. | EXE-15 |
 | `execution.usage` | Usage observations with a basis of `observed`, `estimated`, `unknown` or `enforced_bound`. Liability for an unknown outcome is unresolved and is not refunded by a timeout. A hard ceiling the adapter cannot enforce is refused at admission. | EXE-16 |
 | `execution.context` | Context bindings at submit and delivery observations for packets and updates (§13). | EXE-17, EXE-18 |
-| `execution.discovery` | Optional, executor-neutral (owner decision Q2). `execution.discovery.list` (*candidate*) returns installations and endpoints with separate facts: detected, adapter recognized, version supported, authentication known or unknown, reachable, last verified. Detection is never offered as usable capability. Schemas plus positive and adversarial fixtures use scripted installations. Probing real installations is PIO work. | EXE-12 |
+| `execution.discovery` | Optional, executor-neutral (owner decision Q2). `execution.discovery.list` returns installations and endpoints with separate facts: detected, adapter recognized, version supported, authentication known or unknown, reachable, last verified. Detection is never offered as usable capability. Schemas plus positive and adversarial fixtures use scripted installations. Probing real installations is PIO work. | EXE-12 |
 | `execution.output` | Output telemetry, spooled separately from semantic events (§14). | OBS-7, TRN-4 |
 | `execution.continuation` | Native resume and fork where supported. Without native support, a continuation is labeled `fresh_continuation`, never `resumed`. | EXE-23 |
 
@@ -245,7 +245,7 @@ Execution events use Core event records (CORE §16.2) with subject `{ "kind": "e
 
 **Rights.** Under a grant, each feature command needs the right named after its operation on the subject it acts on: `execution.steer`, `execution.respond_action` and `execution.workspace.checkpoint` on the execution; `execution.controller.claim` on the controller subject. `execution.discovery.list` needs right `execution.discovery.list` on `{ "kind": "execution.discovery", "id": "installations" }`. Submit and read rights do not cover them.
 
-The shapes below are *candidate* names for Protocol 0.1.
+The shapes below are the Protocol 0.1 names.
 
 ### 11.1 Steering
 
@@ -317,13 +317,13 @@ The Context profile is M4. M3 defines only the binding and the delivery observat
   - `late` when a `required_before_transition` binding's packet arrives after that transition was observed (`execution.transition.observed`).
   - Otherwise the harness's report: `acknowledged`, `delivered`, `queued`, or `unknown` when the handoff's outcome is unknown.
 
-### 13.1 Context revalidation (`execution.context_revalidation`, proposed M4)
+### 13.1 Context revalidation (`execution.context_revalidation`)
 
 Owner decision M4-Q4 (2026-09-15). A **negotiated, versioned extension** of the M3 binding: without this feature, bindings, states and inspect results are exactly as above. Its compatibility fixtures show an M3-level caller is unaffected.
 
 - **Binding members.**
   - `packet` is a packet reference `{ packet, revision, artifact: { provider, artifact, digest } }` (CONTEXT §2).
-  - `conditions` lists typed conditions copied from the packet's applicability: `{ condition_id, kind, ... expected }` with kinds `repository_tree`, `dirty_snapshot`, `environment_digest`, `authority_revision` (*candidate*).
+  - `conditions` lists typed conditions copied from the packet's applicability: `{ condition_id, kind, ... expected }` with kinds `repository_tree`, `dirty_snapshot`, `environment_digest`, `authority_revision`.
   - `fetch` names the per-audience read grants the executor uses (CONTEXT §7): `{ context?: { provider, grant }, evidence: { provider, grant } }`. Without `fetch`, the executor holds only packets its host was given.
   - `request` names the context request the packet answers (`{ kind: "context.request", id }`), so the causal link from request to execution is kept (CTX-1).
   - `require_current` (boolean, default `false`) is the authority-selected requirement that the bound revision must still be the request's current revision. Without it the binding is **pinned**: a newer revision does not by itself invalidate it. `require_current: true` needs `fetch.context`, because currency is read there; without it the binding is `invalid_envelope` at `/payload/context_bindings/<i>/require_current`.
@@ -350,7 +350,7 @@ Owner decision M4-Q4 (2026-09-15). A **negotiated, versioned extension** of the 
   - **Resuming.** Otherwise the executor revalidates the context bindings at dispatch and then reacquires capacity. If capacity is full, it waits with `scheduling.reason: "capacity"`. Once capacity is acquired it records `scheduling: { capacity: "held" }`, with event reason `resumed`, and dispatches exactly once, under the same delivery identity, subject to the dispatch marker and host generation fencing of §7.1. Resumption never creates another delivery, and a delivery already dispatched or determined is never dispatched again.
   - `scheduling` appears once the slot first changes, and sessions without this feature never see it. When a slot frees, the order between queued work being admitted and released work resuming is unspecified (a coverage limit).
 
-### 13.2 Evidence outputs (`execution.evidence_outputs`, proposed M4)
+### 13.2 Evidence outputs (`execution.evidence_outputs`)
 
 EXE-21, with EVIDENCE §11. A completion record may carry `outputs: [ { role, evidence: { provider, artifact, digest } } ]`. They name artifacts the executor sealed under its work binding; `execution.inspect` lists them. A reference authorizes nothing.
 
@@ -358,9 +358,9 @@ EXE-21, with EVIDENCE §11. A completion record may carry `outputs: [ { role, ev
 - The reference executor seals each recorded completion's content as artifact `output.<execution>.<completion_id>`, with `work` naming the execution, under a grant bound to that work (EVIDENCE §10).
 - **Origin.** A submit may carry `origin: { initiator, depth, call_budget }` for work a context job initiated (CONTEXT §4, CTX-19); `execution.inspect` preserves it.
 
-### 13.3 Claim revalidation (`execution.claim_revalidation`, proposed M5)
+### 13.3 Claim revalidation (`execution.claim_revalidation`)
 
-Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carry claims (CONTEXT §14). It requires `execution.context_revalidation`. Without it, bindings behave exactly as §13.1, and claim changes are not enforced by the executor: a caller that needs enforcement negotiates this feature as required.
+Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carry claims (CONTEXT §14). It requires `execution.context_revalidation`, and negotiation enforces that as a feature-triggered dependency (CORE §4.2): requested without it, `execution.claim_revalidation` is not selected (`dependency_not_selected`). Without the feature, bindings behave exactly as §13.1, and claim changes are not enforced by the executor: a caller that needs enforcement negotiates this feature as required.
 
 - **Reading.** For a binding with `fetch.context` submitted under the feature, the executor reads packet facts in a session that negotiated `context.claims` at the context provider.
 - **`packet.facts` gains two outcomes**, beside authority corrections:
@@ -377,7 +377,7 @@ Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carr
 
 ## 14. Output telemetry and backpressure
 
-- **Separate channel.** Output chunks travel in a telemetry channel separate from semantic events, read with `execution.output.read` (*candidate*) using byte-offset cursors.
+- **Separate channel.** Output chunks travel in a telemetry channel separate from semantic events, read with `execution.output.read` using byte-offset cursors.
 - **Explicit telemetry loss.** A lost range records `from` and `to` offsets, the byte count where known, the reason, and its effect on evidence coverage (OBS-7). Telemetry may be coalesced or discarded only with declared lost ranges.
 - **Semantic events are never dropped from the stream.** Backpressure ends a *delivery connection*; it never skips an event (TRN-4). The rules are in CORE §16.5 "Backpressure" (proposed M3 draft):
   - memory and pending notification bytes are bounded per connection;
@@ -389,7 +389,7 @@ Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carr
 ### 14.1 Output read (`execution.output`)
 
 - **Spool.** The executor keeps up to a declared number of output bytes per execution. Offsets count every byte the executor received, from 0. When the spool is full, the oldest bytes are discarded.
-- `execution.output.read` (query, *candidate*), payload `{ execution, offset?, max_bytes? }`, returns `{ execution, offset, data_base64, next_offset, end_offset, lost_ranges, coverage, policy }`.
+- `execution.output.read` (query), payload `{ execution, offset?, max_bytes? }`, returns `{ execution, offset, data_base64, next_offset, end_offset, lost_ranges, coverage, policy }`.
   - `offset` is where the returned data starts: the requested offset, or the oldest retained byte if that offset was discarded.
   - `data_base64` holds at most `max_bytes` bytes. `next_offset` follows them; `end_offset` is the total received.
   - `policy` is `{ spool_bytes, overflow: "discard_oldest" }`: the telemetry policy, reported separately from the semantic-event policy (CORE §16.5).

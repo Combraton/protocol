@@ -7,7 +7,7 @@
     "CORE-11"
   ],
   "spec_refs": [
-    "docs/spec/profiles/CORE.md#15-principals-and-grants-proposed-m2-draft"
+    "docs/spec/profiles/CORE.md#15-principals-and-grants"
   ],
   "role": "provider",
   "profiles": [

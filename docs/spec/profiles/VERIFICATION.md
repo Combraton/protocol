@@ -1,6 +1,6 @@
-# Verification profile `verification/1` — proposed M5 draft
+# Verification profile `verification/1` — release candidate
 
-> **Status: proposed draft for Protocol 0.1 milestone M5, with owner decisions M5-Q5, M5-Q6 and M5-Q9 incorporated ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)).** Nothing here is normative until M5 is accepted together with its schemas, fixtures, mutants and independent evidence. Names marked *candidate* may change. Owner decision U2 (release plan §6) bounds the depth: receipts plus `evaluate_contract` job references, with no signing and no evaluator orchestration. Architecture: [SPEC §2, §5, §8, §10, §12](../SPEC.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: combraton `docs/architecture/VERIFICATION.md` §1–§3, §5–§7 and `docs/architecture/MODEL.md` §5 at `9af69ce`.
+> **Status: Protocol 0.1 release candidate.** Accepted as milestone M5, with owner decisions M5-Q5, M5-Q6 and M5-Q9 ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)); owner decision U2 bounds the depth: receipts plus `evaluate_contract` job references, with no signing and no evaluator orchestration. Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC §2, §5, §8, §10, §12](../SPEC.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: combraton `docs/architecture/VERIFICATION.md` §1–§3, §5–§7 and `docs/architecture/MODEL.md` §5 at `9af69ce`.
 
 A **verifier** evaluates named properties of exact subjects under a contract and reports each property's result. A **receipt holder** keeps receipts and answers assessments; a verifier holds its own receipts. A **reader** checks what a receipt still says about the subjects it cares about.
 
@@ -11,7 +11,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 ## 1. Dependencies and negotiation
 
 - `verification/1` depends on `core/1` with `core.events` and `core.capabilities`, and on `evidence/1` as a protocol dependency: contracts and receipts are exact sealed Evidence artifacts (§2). `core.grants` is optional, as for Evidence. Required Core features are enforced at negotiation.
-- Optional features (*candidate*): `verification.jobs` (`evaluate_contract` and `job.inspect`, §4) and `verification.record` (`receipt.record`, §5). `receipt.inspect` and `receipt.assess` are part of the base profile, so a session with either feature, or neither, can read and assess the receipts it may read.
+- Optional features: `verification.jobs` (`evaluate_contract` and `job.inspect`, §4) and `verification.record` (`receipt.record`, §5). `receipt.inspect` and `receipt.assess` are part of the base profile, so a session with either feature, or neither, can read and assess the receipts it may read.
 - A CI publisher that only records receipts needs neither Execution nor Knowledge.
 
 ## 2. Identities (M5-Q5)
@@ -201,12 +201,12 @@ Reading a contract or cited evidence needs Evidence rights at its provider.
 
 ## 11. Conformance and test controls
 
-- **Reference participants only.** A reference verifier drives a **scripted evaluator** from launch configuration `verifier` (*candidate*):
+- **Reference participants only.** A reference verifier drives a **scripted evaluator** from launch configuration `verifier` (test control):
   - `evaluators: [ { id, version, status } ]`, from which the capability predicates are derived;
   - `scripts`, mapping job IDs to steps: `wait_until` (instant), `property` (`property_id`, `result`, and `reason` exactly for `not_evaluated` and `indeterminate`), `observe` (`anchors` the evaluator observed), `valid_until` (instant) and `complete`;
   - `default_script` for other jobs.
 
-  Steps advance no later than the provider's next request, as EXECUTION §15. A job with no script completes at once; a script that runs out without `complete` leaves the job `running`. Restarting with different `evaluators` simulates an upgraded or lost evaluator (SCN-7).
+  Steps advance no later than the provider's next request, as EXECUTION §15. A job with no script completes at once; a script that runs out without `complete` leaves the job `running`. A job stays `queued` while its script waits at a leading `wait_until`: its first evaluation, which makes it `running`, is the first step other than `wait_until`. So a job whose evaluator is lost during that wait never ran (§4). Restarting with different `evaluators` simulates an upgraded or lost evaluator (SCN-7).
 - No fixture depends on a real browser, CI system or model reviewer.
 
 ## 12. What verification does not establish

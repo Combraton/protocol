@@ -22,7 +22,7 @@ use exec::{Context, Outcome, run_fixture};
 use participant::Descriptor;
 use schemas::Schemas;
 
-const USAGE: &str = "usage: combraton-conformance <self-test|check-fixtures|run|check-mutants> [--repo DIR] [--participant FILE] [--out DIR] [--filter SUBSTRING] [--mutant NAME]";
+const USAGE: &str = "usage: combraton-conformance <self-test|check-fixtures|run|check-mutants|version> [--repo DIR] [--participant FILE] [--out DIR] [--filter SUBSTRING] [--mutant NAME] [--client-mutant IMPLEMENTATION=NAME] [--fixtures DIR]";
 
 struct Options {
     command: String,
@@ -31,6 +31,10 @@ struct Options {
     out: Option<PathBuf>,
     filter: Option<String>,
     mutant: Option<String>,
+    /// Another fixture tree, for example one pinned at an accepted release, to run unmodified.
+    fixtures: Option<PathBuf>,
+    /// A mutant of one client implementation, `implementation=mutant`.
+    client_mutant: Option<(String, String)>,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -43,6 +47,8 @@ fn parse_options() -> Result<Options, String> {
         out: None,
         filter: None,
         mutant: None,
+        fixtures: None,
+        client_mutant: None,
     };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -52,6 +58,14 @@ fn parse_options() -> Result<Options, String> {
             "--out" => options.out = Some(PathBuf::from(value()?)),
             "--filter" => options.filter = Some(value()?),
             "--mutant" => options.mutant = Some(value()?),
+            "--fixtures" => options.fixtures = Some(PathBuf::from(value()?)),
+            "--client-mutant" => {
+                let raw = value()?;
+                let (implementation, mutant) = raw
+                    .split_once('=')
+                    .ok_or("--client-mutant needs IMPLEMENTATION=NAME")?;
+                options.client_mutant = Some((implementation.to_string(), mutant.to_string()));
+            }
             other => return Err(format!("unexpected argument {other}\n{USAGE}")),
         }
     }
@@ -70,9 +84,9 @@ impl Fixture {
     }
 }
 
-fn load_fixtures(repo: &Path, filter: Option<&str>) -> Result<Vec<Fixture>, String> {
+fn load_fixtures(root: &Path, filter: Option<&str>) -> Result<Vec<Fixture>, String> {
     let mut paths = Vec::new();
-    let mut stack = vec![repo.join("conformance/fixtures")];
+    let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
             let path = entry.map_err(|e| e.to_string())?.path();
@@ -136,7 +150,7 @@ fn mixed_directive(pattern: &Value, path: String) -> Option<String> {
 }
 
 fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> {
-    let fixtures = load_fixtures(&options.repo, None)?;
+    let fixtures = load_fixtures(&options.repo.join("conformance/fixtures"), None)?;
     let known = matrix_ids(&options.repo)?;
     let mut known_mutants = BTreeSet::new();
     let mut known_barriers = BTreeSet::new();
@@ -231,7 +245,34 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
                 ok = false;
             }
         }
-        let kills = fixture.value["kills"].as_array().map_or(0, Vec::len);
+        for kill in fixture.value["client_kills"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let implementation = kill["implementation"].as_str().unwrap_or_default();
+            let path = options
+                .repo
+                .join("conformance/thirdparty")
+                .join(implementation)
+                .join("participant.json");
+            match Descriptor::load_client(&path) {
+                Ok(client) if client.mutants.iter().any(|m| kill["mutant"] == m.as_str()) => {}
+                Ok(_) => {
+                    println!(
+                        "{label}: client_kills names mutant {} that client {implementation} does not list",
+                        kill["mutant"]
+                    );
+                    ok = false;
+                }
+                Err(error) => {
+                    println!("{label}: client_kills: {error}");
+                    ok = false;
+                }
+            }
+        }
+        let kills = fixture.value["kills"].as_array().map_or(0, Vec::len)
+            + fixture.value["client_kills"].as_array().map_or(0, Vec::len);
         if fixture.value["polarity"] == "negative" && kills == 0 {
             println!("{label}: negative fixture declares no mutant it must fail");
             ok = false;
@@ -246,6 +287,8 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
     Ok(ok)
 }
 
+/// The protocol commit: `git rev-parse HEAD` in a checkout, or the `commit` recorded in
+/// `RELEASE-SOURCE.json` of an extracted release bundle.
 fn git_head(repo: &Path) -> Value {
     std::process::Command::new("git")
         .arg("-C")
@@ -254,16 +297,23 @@ fn git_head(repo: &Path) -> Value {
         .output()
         .ok()
         .filter(|out| out.status.success())
-        .map_or(Value::Null, |out| {
-            json!(String::from_utf8_lossy(&out.stdout).trim())
+        .map(|out| json!(String::from_utf8_lossy(&out.stdout).trim()))
+        .or_else(|| {
+            std::fs::read(repo.join("RELEASE-SOURCE.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .map(|source| source["commit"].clone())
         })
+        .unwrap_or(Value::Null)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_suite(
     options: &Options,
     schemas: &Schemas,
     descriptor: &Descriptor,
     mutant: Option<&str>,
+    client_mutant: Option<(&str, &str)>,
     fixtures: &[&Fixture],
     out: &Path,
     quiet: bool,
@@ -278,6 +328,7 @@ fn run_suite(
             schemas,
             repo: &options.repo,
             mutant,
+            client_mutant,
             work_dir: work.path().join(format!("case-{index}")),
         };
         let result = run_fixture(&fixture.value, &ctx);
@@ -296,6 +347,23 @@ fn run_suite(
                 stderr,
             )
             .map_err(|e| e.to_string())?;
+        }
+        if let Ok(clients) = std::fs::read_dir(ctx.work_dir.join("clients")) {
+            for client in clients.flatten() {
+                if let Ok(stderr) = std::fs::read(client.path().join("stderr.log"))
+                    && !stderr.is_empty()
+                {
+                    std::fs::write(
+                        out.join("transcripts").join(format!(
+                            "{}.client-{}.stderr.log",
+                            fixture.id(),
+                            client.file_name().to_string_lossy()
+                        )),
+                        stderr,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
         }
         if !quiet {
             let detail = result
@@ -346,10 +414,10 @@ fn run_suite(
     )));
     let manifest = json!({
         "format": "combraton-conformance-result/1",
-        "status_note": "Protocol 0.1 draft suite; results are not a released conformance claim.",
+        "status_note": "Protocol 0.1 conformance suite. A result is a conformance claim only for the fixtures it lists as passing, run from the v0.1.0 release inventory; skipped and unsupported outcomes are coverage limits, not passes.",
         "suite": {"fixtures": fixtures.len(), "fixtures_digest": suite_digest, "protocol_commit": git_head(&options.repo)},
         "runner": {"name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION")},
-        "participant": {"name": descriptor.name, "version": descriptor.version, "descriptor_digest": descriptor.digest, "claimed_profiles": descriptor.raw["claims"]["profiles"], "mutant": mutant},
+        "participant": {"name": descriptor.name, "version": descriptor.version, "descriptor_digest": descriptor.digest, "claimed_profiles": descriptor.raw["claims"]["profiles"], "mutant": mutant, "client_mutant": client_mutant.map(|(i, m)| json!({"implementation": i, "mutant": m}))},
         "environment": {"os": std::env::consts::OS, "arch": std::env::consts::ARCH},
         "summary": summary,
         "coverage_limits": coverage_limits,
@@ -390,6 +458,14 @@ fn main() -> ExitCode {
 
 fn real_main() -> Result<bool, String> {
     let options = parse_options()?;
+    if matches!(options.command.as_str(), "version" | "--version") {
+        println!(
+            "{} {} (Protocol 0.1 conformance runner)",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(true);
+    }
     if options.command == "self-test" {
         let path = options.repo.join("conformance/vectors/encoding.json");
         let vectors =
@@ -407,7 +483,11 @@ fn real_main() -> Result<bool, String> {
         .as_ref()
         .ok_or("--participant is required")?;
     let descriptor = Descriptor::load(participant)?;
-    let fixtures = load_fixtures(&options.repo, options.filter.as_deref())?;
+    let fixture_root = options
+        .fixtures
+        .clone()
+        .unwrap_or_else(|| options.repo.join("conformance/fixtures"));
+    let fixtures = load_fixtures(&fixture_root, options.filter.as_deref())?;
     let out = options.out.clone().unwrap_or_else(|| {
         options
             .repo
@@ -422,6 +502,10 @@ fn real_main() -> Result<bool, String> {
                 &schemas,
                 &descriptor,
                 options.mutant.as_deref(),
+                options
+                    .client_mutant
+                    .as_ref()
+                    .map(|(i, m)| (i.as_str(), m.as_str())),
                 &selected,
                 &out,
                 false,
@@ -473,6 +557,7 @@ fn real_main() -> Result<bool, String> {
                     &schemas,
                     &descriptor,
                     Some(mutant),
+                    None,
                     &targets,
                     &out.join("mutants").join(mutant),
                     true,
@@ -514,6 +599,59 @@ fn real_main() -> Result<bool, String> {
                         "as_intended": killed && as_intended,
                     }));
                     ok &= killed && as_intended;
+                }
+            }
+            // Client mutants (M6-Q2): a deliberately broken client implementation must fail the
+            // composition fixtures that declare it.
+            for fixture in &fixtures {
+                for kill in fixture.value["client_kills"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                {
+                    let implementation = kill["implementation"].as_str().unwrap_or_default();
+                    let mutant = kill["mutant"].as_str().unwrap_or_default();
+                    let label_dir = format!("client-{implementation}-{mutant}");
+                    let results = run_suite(
+                        &options,
+                        &schemas,
+                        &descriptor,
+                        None,
+                        Some((implementation, mutant)),
+                        &[*fixture],
+                        &out.join("mutants").join(label_dir),
+                        true,
+                    )?;
+                    for case in &results {
+                        let killed = matches!(case.outcome, Outcome::Fail | Outcome::Timeout);
+                        let as_intended = kill.get("step").is_none_or(|step| {
+                            case.step.map(|s| s as u64) == step.as_u64()
+                                && case.reason.as_deref().is_some_and(|r| {
+                                    r.contains(kill["reason_contains"].as_str().unwrap_or_default())
+                                })
+                        });
+                        let label = match (killed, as_intended) {
+                            (true, true) => "killed",
+                            (true, false) => "WRONG-REASON",
+                            (false, _) => "SURVIVED",
+                        };
+                        println!(
+                            "{label:<10} {implementation}={mutant:<28} {} ({})",
+                            case.fixture,
+                            case.outcome.as_str()
+                        );
+                        record.push(json!({
+                            "client": implementation,
+                            "mutant": mutant,
+                            "fixture": case.fixture,
+                            "outcome": case.outcome.as_str(),
+                            "failed_step": case.step,
+                            "reason": case.reason,
+                            "killed": killed,
+                            "as_intended": killed && as_intended,
+                        }));
+                        ok &= killed && as_intended;
+                    }
                 }
             }
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;

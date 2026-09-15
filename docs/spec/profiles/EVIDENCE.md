@@ -1,6 +1,6 @@
-# Evidence profile `evidence/1` — proposed M4 draft
+# Evidence profile `evidence/1` — release candidate
 
-> **Status: proposed draft for Protocol 0.1 milestone M4.** Nothing here is normative until M4 is accepted together with its schemas, fixtures, mutants and independent evidence. Names marked *candidate* may change during M4. Architecture: [SPEC §2, §8–§10, §12](../SPEC.md). Task: [M4](../../work/release-0.1/M4.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: cbr `docs/spec/SPEC.md` §3, §4, §10 and `docs/spec/PREPARATION-AND-DELIVERY.md` at `3278393`; pio `docs/spec/STANDALONE-CLIENT.md` at `e65b7c0`. Owner decisions M4-Q1, M4-Q2, M4-Q5, M4-Q6 and M4-Q7 (2026-09-15) are incorporated.
+> **Status: Protocol 0.1 release candidate.** Accepted as milestone M4, with owner decisions M4-Q1, M4-Q2, M4-Q5, M4-Q6 and M4-Q7. Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Architecture: [SPEC §2, §8–§10, §12](../SPEC.md). Task: [M4](../../work/release-0.1/M4.md). Requirement IDs refer to the [matrix](../../work/release-0.1/MATRIX.md). Sources: cbr `docs/spec/SPEC.md` §3, §4, §10 and `docs/spec/PREPARATION-AND-DELIVERY.md` at `3278393`; pio `docs/spec/STANDALONE-CLIENT.md` at `e65b7c0`. Owner decisions M4-Q1, M4-Q2, M4-Q5, M4-Q6 and M4-Q7 (2026-09-15) are incorporated.
 
 An **evidence provider** accepts immutable bytes with their provenance, keeps them under declared retention, and lets authorized principals find and fetch them. CBR is one evidence provider; a CI system or runtime observer publishing through this profile is another, and a non-Combraton evidence publisher must be able to implement it without any Combraton library (SPEC §13). A **producer** publishes evidence. A **reader** finds and fetches it.
 
@@ -12,7 +12,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 
 - `evidence/1` depends on `core/1` with feature `core.events` (CORE §16). `core.grants` is optional; without it only authority principals operate.
 - Required Core features are published here and enforced at negotiation, as for Execution (owner decision D2): a required `evidence/1` request without `core.events` is refused with `unsupported_profile` and a `dependency_not_selected` item; an optional request is left unselected with the same item.
-- Optional features (*candidate*): `evidence.manifests` (§7) and `evidence.retention_control` (holds, release and purge, §9). Base providers still report availability and retention class.
+- Optional features: `evidence.manifests` (§7) and `evidence.retention_control` (holds, release and purge, §9). Base providers still report availability and retention class.
 - Every command follows the Core command path (CORE §10). Chunks, seals, holds and purges commit in owner transactions with their events.
 
 ## 2. Identities
@@ -166,7 +166,7 @@ Resources name kind `evidence.artifact` or `evidence.hold`, with optional `id` o
   - The descriptor remains as a tombstone. A purged artifact is never `not_found` to a principal who may read it, and never silently disappears from `query`.
   - **Repeated purge.** A new purge command on an artifact already `purge_pending` or `purged`, with a precondition on its current revision, returns its current availability with empty `released_holds` at the unchanged revision and appends no event. Holds it names are still authorized at step 6.
 - **Proof-loss record** (EVD-6): `{ artifact, digest, requested_at, confirmed_at?, released_holds, affected, coverage }`.
-  - `affected` lists the known dependencies the **reader** may inspect, as `{ kind, subject }` in kind then ID order. Kinds: `evidence.hold`, `evidence.manifest_child` (a manifest listing the artifact), and *candidate* `context.packet_citation` and `execution.output` for packets citing it and outcome references.
+  - `affected` lists the known dependencies the **reader** may inspect, as `{ kind, subject }` in kind then ID order. Kinds: `evidence.hold`, `evidence.manifest_child` (a manifest listing the artifact), and, where a provider tracks them, `context.packet_citation` and `execution.output` for packets citing it and outcome references (0.1 providers are not required to track these two).
   - `coverage` declares the dependency kinds the provider tracks (`tracked`), and `filtered: true` when dependencies were withheld from this reader. It never exposes a dependency the reader cannot inspect. A provider may track more kinds than another; `tracked` says which.
 
 ## 10. Work bindings

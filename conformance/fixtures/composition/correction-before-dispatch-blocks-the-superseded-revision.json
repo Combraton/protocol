@@ -10,7 +10,7 @@
     "CTX-12"
   ],
   "spec_refs": [
-    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4",
+    "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation",
     "docs/spec/profiles/CONTEXT.md#8-updates-corrections-and-staleness"
   ],
   "role": "provider",

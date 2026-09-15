@@ -1,6 +1,6 @@
-# Local stream binding `stream/1` — release draft
+# Local stream binding `stream/1` — release candidate
 
-> **Status: accepted draft for Protocol 0.1.** Supported platforms: macOS and Linux. §1–§5 (stdio) from M1; §6 (Unix domain sockets) from M2. Evidence and alternatives: [decision 004](../../decisions/004-local-stream-binding.md). Domain semantics: [Core](../profiles/CORE.md).
+> **Status: Protocol 0.1 release candidate; accepted with M1 and M2.** Nothing here is released until the owner accepts the release candidate; at acceptance these names, the schemas and the conformance fixtures are frozen together for 0.1. Supported platforms: macOS and Linux. §1–§5 (stdio) from M1; §6 (Unix domain sockets) from M2. Evidence and alternatives: [decision 004](../../decisions/004-local-stream-binding.md). Domain semantics: [Core](../profiles/CORE.md).
 
 This binding carries JSON-RPC 2.0 messages over a reliable, ordered byte stream between two local processes. The domain envelope does not depend on it: another binding could carry the same envelopes.
 

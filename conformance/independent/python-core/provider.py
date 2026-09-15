@@ -889,9 +889,9 @@ class Provider:
         if method == "core.grant.revoke":
             return self.authorize_revoke(env)
         # CORE 15.5 "Which operations are protected": core.describe,
-        # core.negotiate, core.authenticate, core.capabilities and
-        # core.events.unsubscribe are not, nor (HM6-QUERY-PROTECTION)
-        # core.feature_dependencies; core.grant.get has its own
+        # core.feature_dependencies, core.negotiate, core.authenticate,
+        # core.capabilities and core.events.unsubscribe are not
+        # (HM6-QUERY-PROTECTION, resolved); core.grant.get has its own
         # visibility rule. A grant field there is validated, not evaluated.
         return Auth(self, None)
 
@@ -1092,12 +1092,10 @@ class Provider:
         selected: dict[str, dict] = {}
         optional_feature_misses: dict[str, list[dict]] = {}
         feature_refused: set[str] = set()
-        candidates: dict[str, dict] = {}  # the selection before dependencies (HM6-DEPENDENCY-STATE)
         for name in order:
             p = requested.get(name)
             if p is None:  # Core is included implicitly (CORE 4.2)
                 selected["core"] = {"major": 1, "features": []}
-                candidates["core"] = {"major": 1, "features": [], "required": set()}
                 continue
             # A caller cannot deselect Core, so a Core entry is always treated
             # as required (DIVERGENCES.md D-NEG-CORE).
@@ -1124,8 +1122,6 @@ class Provider:
                 else:
                     misses.append({"profile": name, "feature": f, "reason": "unknown_feature"})
             selected[name] = {"major": max(common), "features": features}
-            candidates[name] = {"major": max(common), "features": list(features),
-                                "required": set(p["required_features"])}  # HM6-REQUIRED-TWICE
             optional_feature_misses[name] = misses
         # Dependencies (REL-2, CORE 4.2 reason dependency_not_selected), applied
         # after selection: profile-triggered first, then feature-triggered.
@@ -1160,53 +1156,50 @@ class Provider:
                 selected.pop(profile_name, None)
                 sink = refusals if p["required"] else unselected
                 sink.extend(items)
-        # Feature-triggered (CORE 4.2, M6-Q1): a requested feature whose
-        # dependency is not selected is itself not selected. Evaluated against
-        # the selection before dependencies, to a fixed point
-        # (HM6-DEPENDENCY-STATE).
-        feats = {n: list(c["features"]) for n, c in candidates.items()}
-        alive = set(candidates)
-        triggered: dict[str, set] = {}
+        # Feature-triggered (CORE 4.2 "Order", M6-Q1): judged against the
+        # profiles and features still selected after the profile-triggered
+        # pass, in rounds until nothing changes. A requested feature whose
+        # dependency is not selected is itself not selected; a profile that is
+        # not selected contributes no feature items (HM6B-DEPENDENCY-ORDER).
+        feature_items: list[dict] = []
         changed = True
         while changed:
             changed = False
+            failing: dict[str, list] = {}
             for name in order:
-                if name not in alive:
+                if name not in selected:
                     continue
-                for f in list(feats[name]):
+                for f in selected[name]["features"]:
                     deps = feature_dependencies(name, f)
-                    if all(dp in alive and candidates[dp]["major"] == dm and all(x in feats[dp] for x in dfs)
-                           for dp, dm, dfs in deps):
-                        continue
-                    feats[name].remove(f)
-                    triggered.setdefault(name, set()).add(f)
-                    changed = True
-                    if f in candidates[name]["required"]:
-                        alive.discard(name)  # the profile cannot be selected
-                        break
-        feature_items: list[dict] = []
-        for name in order:
-            fs = triggered.get(name)
-            if not fs:
-                continue
-            p = requested.get(name)
-            profile_required = p is None or p["required"] or name == "core"
-            listed = [f for f in candidates[name]["features"] if f in fs]
-            required_failed = [f for f in listed if f in candidates[name]["required"]]
-            if required_failed:
-                # Listed even when a profile-triggered item already dropped the
-                # profile, as unknown_feature items are (G-NEG-EXEC-ITEMS).
-                items = [{"profile": name, "feature": f, "reason": "dependency_not_selected"} for f in required_failed]
-                feature_items.extend(items)
-                if profile_required:
-                    refusals.extend(items)
+                    if not all(dp in selected and selected[dp]["major"] == dm
+                               and all(x in selected[dp]["features"] for x in dfs) for dp, dm, dfs in deps):
+                        failing.setdefault(name, []).append(f)
+            for name, fs in failing.items():
+                changed = True
+                p = requested.get(name)
+                profile_required = p is None or p["required"] or name == "core"
+                required = set(p["required_features"]) if p else set()  # HM6-REQUIRED-TWICE
+                required_failed = [f for f in fs if f in required]
+                if required_failed:
+                    # The profile is not selected. An optional profile is
+                    # reported with the item of its cause only ("One item per
+                    # cause"): earlier feature items of that profile are
+                    # withdrawn (HM6B-ONE-ITEM).
+                    items = [{"profile": name, "feature": f, "reason": "dependency_not_selected"}
+                             for f in required_failed]
+                    feature_items.extend(items)
+                    selected.pop(name)
+                    if profile_required:
+                        refusals.extend(items)
+                    else:
+                        unselected[:] = [u for u in unselected
+                                         if not (u["profile"] == name and any(u is x for x in feature_items))]
+                        unselected.extend(items)
                 else:
-                    # HM6-UNSELECTED-PROFILE-ITEMS: the profile is not selected.
-                    selected.pop(name, None)
+                    selected[name]["features"] = [f for f in selected[name]["features"] if f not in fs]
+                    items = [{"profile": name, "feature": f, "reason": "dependency_not_selected"} for f in fs]
+                    feature_items.extend(items)
                     unselected.extend(items)
-            elif name in selected:  # optional items only while the profile stays selected
-                selected[name]["features"] = [f for f in selected[name]["features"] if f not in fs]
-                unselected.extend({"profile": name, "feature": f, "reason": "dependency_not_selected"} for f in listed)
         for name in selected:
             unselected.extend(optional_feature_misses.get(name, []))
         if refusals:

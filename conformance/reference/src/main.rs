@@ -32,7 +32,7 @@ use frames::{FrameReader, Next};
 use json::{FrameFault, Laxness};
 use provider::{Limits, Provider, error_response};
 
-const USAGE: &str = "usage: combraton-reference-provider --data-dir DIR --config FILE --schemas DIR [--socket PATH] [--mutant NAME]... | --list-mutants";
+const USAGE: &str = "usage: combraton-reference-provider --data-dir DIR --config FILE --schemas DIR [--socket PATH] [--mutant NAME]... | --list-mutants | --version";
 
 struct Args {
     socket: Option<PathBuf>,
@@ -51,6 +51,14 @@ fn parse_args() -> Result<Option<Args>, String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--version" => {
+                println!(
+                    "{} {} (Protocol 0.1 reference provider; not a product)",
+                    env!("CARGO_PKG_NAME"),
+                    env!("CARGO_PKG_VERSION")
+                );
+                return Ok(None);
+            }
             "--list-mutants" => {
                 for (name, description) in mutants::ALL {
                     println!("{name}\t{description}");

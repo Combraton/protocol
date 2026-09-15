@@ -22,7 +22,7 @@ use exec::{Context, Outcome, run_fixture};
 use participant::Descriptor;
 use schemas::Schemas;
 
-const USAGE: &str = "usage: combraton-conformance <self-test|check-fixtures|run|check-mutants> [--repo DIR] [--participant FILE] [--out DIR] [--filter SUBSTRING] [--mutant NAME] [--client-mutant IMPLEMENTATION=NAME] [--fixtures DIR]";
+const USAGE: &str = "usage: combraton-conformance <self-test|check-fixtures|run|check-mutants|version> [--repo DIR] [--participant FILE] [--out DIR] [--filter SUBSTRING] [--mutant NAME] [--client-mutant IMPLEMENTATION=NAME] [--fixtures DIR]";
 
 struct Options {
     command: String,
@@ -287,6 +287,8 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
     Ok(ok)
 }
 
+/// The protocol commit: `git rev-parse HEAD` in a checkout, or the `commit` recorded in
+/// `RELEASE-SOURCE.json` of an extracted release bundle.
 fn git_head(repo: &Path) -> Value {
     std::process::Command::new("git")
         .arg("-C")
@@ -295,9 +297,14 @@ fn git_head(repo: &Path) -> Value {
         .output()
         .ok()
         .filter(|out| out.status.success())
-        .map_or(Value::Null, |out| {
-            json!(String::from_utf8_lossy(&out.stdout).trim())
+        .map(|out| json!(String::from_utf8_lossy(&out.stdout).trim()))
+        .or_else(|| {
+            std::fs::read(repo.join("RELEASE-SOURCE.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .map(|source| source["commit"].clone())
         })
+        .unwrap_or(Value::Null)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -407,7 +414,7 @@ fn run_suite(
     )));
     let manifest = json!({
         "format": "combraton-conformance-result/1",
-        "status_note": "Protocol 0.1 draft suite; results are not a released conformance claim.",
+        "status_note": "Protocol 0.1 conformance suite. A result is a conformance claim only for the fixtures it lists as passing, run from the v0.1.0 release inventory; skipped and unsupported outcomes are coverage limits, not passes.",
         "suite": {"fixtures": fixtures.len(), "fixtures_digest": suite_digest, "protocol_commit": git_head(&options.repo)},
         "runner": {"name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION")},
         "participant": {"name": descriptor.name, "version": descriptor.version, "descriptor_digest": descriptor.digest, "claimed_profiles": descriptor.raw["claims"]["profiles"], "mutant": mutant, "client_mutant": client_mutant.map(|(i, m)| json!({"implementation": i, "mutant": m}))},
@@ -451,6 +458,14 @@ fn main() -> ExitCode {
 
 fn real_main() -> Result<bool, String> {
     let options = parse_options()?;
+    if matches!(options.command.as_str(), "version" | "--version") {
+        println!(
+            "{} {} (Protocol 0.1 conformance runner)",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(true);
+    }
     if options.command == "self-test" {
         let path = options.repo.join("conformance/vectors/encoding.json");
         let vectors =

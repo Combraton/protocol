@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-participant/1",
   "name": "thirdparty-minimal-publisher",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0",
   "description": "Minimal independent Evidence publisher (client only). Written from docs/spec, schemas and conformance/thirdparty/README.md only. See conformance/thirdparty/minimal-publisher/README.md.",
   "role": "client",
   "binding": "unix",

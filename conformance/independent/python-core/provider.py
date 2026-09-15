@@ -42,7 +42,7 @@ from errors import ProtocolError, denied  # noqa: E402
 from executor import Executor, ExecutorConfigError, parse_executor_config  # noqa: E402
 from state import Store  # noqa: E402
 
-PROVIDER = {"name": "combraton-independent-python-core", "version": "0.1.0-dev.0"}
+PROVIDER = {"name": "combraton-independent-python-core", "version": "0.1.0"}
 MIB = 1048576
 
 CORE_FEATURES = ["core.digest-sha512", "core.grants", "core.events", "core.capabilities", "core.effects"]

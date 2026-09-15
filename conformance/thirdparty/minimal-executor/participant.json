@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-participant/1",
   "name": "thirdparty-minimal-executor",
-  "version": "0.1.0-dev.0",
+  "version": "0.1.0",
   "description": "Minimal independent execution kernel (client only, not an execution/1 provider). Written from docs/spec, schemas and conformance/thirdparty/README.md only. See conformance/thirdparty/minimal-executor/README.md.",
   "role": "client",
   "binding": "unix",

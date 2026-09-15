@@ -4,7 +4,7 @@
 
 `combraton-independent-python-core` `0.1.0-dev.0` is a second implementation of the Core provider and of an executor. It speaks the stdio form of the stream binding and implements `core/1` together with the conformance-only `core-test/1` profile, including the Core features `core.grants` (CORE §15), `core.events` (§16), `core.capabilities` (§17) and `core.effects` (§19), and `core.authenticate` as a stdio session answers it (§18). Since the M3 pass it also implements `execution/1` (EXECUTION §1–§14) over the scripted executor of decision 007, with the clock file and store faults. Since the M4 pass it implements `evidence/1` with `evidence.manifests` and `evidence.retention_control` over a scripted store, `context/1` with its six features over scripted preparation (packets sealed as Evidence artifacts in its own store), and `execution.context_revalidation` for a single provider. Its value is that it was written **from the published documents only**, without reading the reference provider. Where the documents leave a question open, it records the question instead of copying the reference's answer.
 
-It was written in nine spec-only passes:
+It was written in ten spec-only passes:
 
 1. the Core command path (M1 fixtures, base `f42d21a`);
 2. the three M2 features (base `3b32037`);
@@ -14,9 +14,10 @@ It was written in nine spec-only passes:
 6. `evidence/1`, `context/1` and `execution.context_revalidation` (M4, base `39e9dc8`);
 7. realignment with the resolution of that pass's findings (base `8500948`);
 8. the owner's M4 close-out (base `63f1bb0`): capacity released while blocked before dispatch, pinning, typed grant constraints and `evidence.work_binding`, and the new store controls;
-9. realignment with the resolution of that pass's findings (base `9591551`): `require_current` needs `fetch.context`, `basis_changes` merges, `superseded_by` names the current revision, and a delivery timeout ends released work with `deadline_passed`.
+9. realignment with the resolution of that pass's findings (base `9591551`): `require_current` needs `fetch.context`, `basis_changes` merges, `superseded_by` names the current revision, and a delivery timeout ends released work with `deadline_passed`;
+10. realignment at `0e80475`: released work ending before dispatch emits its cause first and the scheduling change last, with evidence class `scheduling` (EXECUTION §15.1).
 
-The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to ninth passes read the documents before the fixtures.
+The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to tenth passes read the documents before the fixtures.
 
 ## What it was written from
 
@@ -180,7 +181,7 @@ The owner's close-out at `63f1bb0` added capacity release while blocked before d
 
 The one change is the `resumed` reason of `execution.scheduling.changed`, which no document or schema named (H8-RESUMED-REASON).
 
-The Protocol session resolved those points at `9591551` (M4-DIVERGENCES §C.2). The ninth pass followed the resolved text (DIVERGENCES H.9): 255 fixtures, 228 pass, 0 fail, 4 unsupported, 23 skipped on the first run, with nothing changed after reading the one re-versioned fixture.
+The Protocol session resolved those points at `9591551` (M4-DIVERGENCES §C.2). The ninth pass followed the resolved text (DIVERGENCES H.9): 255 fixtures, 228 pass, 0 fail, 4 unsupported, 23 skipped on the first run, with nothing changed after reading the one re-versioned fixture. The tenth pass, at `0e80475` (DIVERGENCES H.10), gave 256 fixtures, 229 pass, 0 fail, 4 unsupported, 23 skipped on its first run, with nothing changed after reading the new fixture.
 
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 

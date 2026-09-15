@@ -676,28 +676,38 @@ class Knowledge:
         return epoch, {"scope": scope, "authority": authority, "epoch": epoch}, [
             (etype, subject_of(AUTHORITY_KIND, scope), epoch, {"authority": authority, "epoch": epoch})]
 
+    def _epoch_check(self, env: dict, auth, scope: str) -> None:
+        """KNOWLEDGE 6, 7 (CORE 8, 10 step 7): the bound scope's authority
+        epoch, before the Core preconditions; nothing to compare when the
+        scope is not bound (HM5C-EPOCH-BEFORE-AUTHORITY)."""
+        row = self.store.get_json(AUTHORITY_KIND, scope)
+        if row is None:
+            return
+        claimed, current = env["authority_epoch"], row[1]["epoch"]
+        if claimed < current:
+            details = {"current_epoch": current} if auth.may_read(subject_of(AUTHORITY_KIND, scope)) else {}
+            raise ProtocolError("stale_authority_epoch", details)
+        if claimed > current:
+            raise ProtocolError("unknown_authority_epoch")
+
     def _authority_checks(self, env: dict, auth, scope: str) -> dict:
-        """KNOWLEDGE 6 checks 2 to 4: binding, bound authority, epoch."""
+        """KNOWLEDGE 6 checks 2 and 3: binding, bound authority."""
         row = self.store.get_json(AUTHORITY_KIND, scope)
         if row is None:
             raise denied("not_authority")
         binding = row[1]
         if binding["authority"] != self.p.principal:
             raise denied("not_authority")
-        claimed = env["authority_epoch"]
-        if claimed < binding["epoch"]:
-            details = {"current_epoch": binding["epoch"]} if auth.may_read(subject_of(AUTHORITY_KIND, scope)) else {}
-            raise ProtocolError("stale_authority_epoch", details)
-        if claimed > binding["epoch"]:
-            raise ProtocolError("unknown_authority_epoch")
         return binding
 
     def op_decision(self, env, auth):
         payload = env["payload"]
         ref = payload["claim"]
-        # KNOWLEDGE 6 "Who decides": Core revision preconditions first (HM5B-STEP7-CORE-ORDER).
+        # KNOWLEDGE 6 "Who decides": authority epoch, Core preconditions, then checks 1 to 5.
+        entry = self.revision_entry(ref)  # claim ID and revision here, any digest (HM5C-EPOCH-REMOTE)
+        if entry is not None:
+            self._epoch_check(env, auth, entry["record"]["scope"]["id"])
         self.p.check_preconditions(env, auth)
-        entry = self.revision_entry(ref)
         if entry is None:
             raise ProtocolError("not_found")  # including a reference naming another provider
         binding = self._authority_checks(env, auth, entry["record"]["scope"]["id"])
@@ -750,9 +760,13 @@ class Knowledge:
 
     def op_resolve(self, env, auth):
         cid = env["subject"]["id"]
-        # KNOWLEDGE 7: Core revision preconditions first.
-        self.p.check_preconditions(env, auth)
+        # KNOWLEDGE 7: authority epoch (for an existing record, HM5C-EPOCH-RESOLVED-RECORD),
+        # Core preconditions, then not found or resolved, binding and authority, selected.
         row = self.store.get_json(CONFLICT_KIND, cid)
+        if row is not None:
+            first = self.revision_entry(row[1]["revisions"][0])
+            self._epoch_check(env, auth, first["record"]["scope"]["id"])
+        self.p.check_preconditions(env, auth)
         if row is None or row[1]["state"] != "open":
             raise ProtocolError("not_found")
         revision, rec = row

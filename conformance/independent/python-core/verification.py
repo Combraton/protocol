@@ -408,13 +408,14 @@ class Verification:
     def op_evaluate(self, env, auth):
         payload = env["payload"]
         evaluator = payload["evaluator"]
-        # VERIFICATION 4 "Order at step 7": Core preconditions, then 0 to 3.
-        self.p.check_preconditions(env, auth)
-        self._id_taken(auth, RECEIPT_KIND, env["subject"]["id"])
+        # VERIFICATION 4 "Order at step 7" (CORE 10, 17): evaluator capability, Core
+        # preconditions, ID collision, contract, roles.
         status = self.predicate_status(evaluator)
         if status != "supported":
             # Never another version.
             raise ProtocolError("capability_unavailable", {"capability": predicate_name(evaluator), "status": status})
+        self.p.check_preconditions(env, auth)
+        self._id_taken(auth, RECEIPT_KIND, env["subject"]["id"])
         contract = self.contract_or_refuse(payload["contract"])
         roles = [s["role"] for s in contract["subjects"]]
         _refuse_listing("/payload/subjects", listing_problems([s["role"] for s in payload["subjects"]], roles))
@@ -648,19 +649,15 @@ class Verification:
         revision, rec = self.store.get_json(JOB_KIND, jid)
         if rec["state"] == "completed":
             return False
-        lost = self.predicate_status(rec["evaluator"]) != "supported"
-        if lost and rec["state"] == "running":
-            # VERIFICATION 4 "Losing the pinned evaluator".
+        if self.predicate_status(rec["evaluator"]) != "supported":
+            # VERIFICATION 4 "Losing the pinned evaluator"; a queued job never ran and goes
+            # straight to completed, with observed_from equal to observed_until (HM5C-QUEUED-LOSS-EVENTS).
             return self._complete(jid, revision, rec, "indeterminate", "evaluator_unavailable")
         if rec["state"] == "queued":
-            # "running from its first evaluation"; a queued job whose evaluator is lost
-            # passes through running at the evaluation that completes it (HM5B-QUEUED-LOSS).
             rec["state"] = "running"
             rec["started_at"] = self.now()
             revision = self._job_event(jid, revision, "verification.job.changed",
                                        {"state": "running", "evaluator": rec["evaluator"]})
-            if lost:
-                return self._complete(jid, revision, rec, "indeterminate", "evaluator_unavailable")
             self.store.put_json(JOB_KIND, jid, revision, rec)
             return True
         script = self.script_for(jid)
@@ -705,7 +702,7 @@ class Verification:
         content = {"format": RECEIPT_FORMAT, "receipt": jid, "subjects": rec["subjects"], "contract": rec["contract"],
                    "evaluator": dict(rec["evaluator"], principal=self.p.provider_id),  # HM5-VERIFIER-PRINCIPAL
                    "environment": {"anchors": dict(rec["anchors"])}, "inputs": [], "properties": properties,
-                   "observed_from": rec["started_at"], "observed_until": now,
+                   "observed_from": rec["started_at"] or now, "observed_until": now,
                    "valid_until": rec["valid_until"], "scope": rec["outcome"], "job": jid,
                    "provenance": []}
         # VERIFICATION 4 "Issued receipt members": receipt.issued, then the artifact's

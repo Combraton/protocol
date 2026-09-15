@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "execution.revalidation-reports-match-mismatch-and-unavailable-by-obligation",
-  "version": 2,
+  "version": 3,
   "title": "The executor checks only conditions it can observe: match, mismatch and unavailable stay distinct, unavailable is unknown rather than fresh or stale, and each obligation blocks only its own boundary",
   "requirements": [
     "CTX-15",
@@ -310,6 +310,68 @@
           }
         }
       }
+    },
+    {
+      "step": "command",
+      "operation": "execution.submit",
+      "command_id": "submit-e-rc",
+      "subject": {
+        "kind": "execution.execution",
+        "id": "e-rc"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "execution.execution",
+            "id": "e-rc"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "brief": {
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "media_type": "text/plain"
+        },
+        "context_bindings": [
+          {
+            "binding_id": "b-rc",
+            "packet": {
+              "packet": {
+                "kind": "context.packet",
+                "id": "r-1"
+              },
+              "revision": 1,
+              "artifact": {
+                "provider": "context-1",
+                "artifact": {
+                  "kind": "evidence.artifact",
+                  "id": "packet.r-1.1"
+                },
+                "digest": "sha256:2563192958eb20cd51510fc184bc436e218dade28f6e6d38a425348624622a82"
+              }
+            },
+            "obligation": "required_before_start",
+            "selected_by": "owner",
+            "conditions": [
+              {
+                "condition_id": "k-tree",
+                "kind": "repository_tree",
+                "expected": "tree-1",
+                "repository": "repo-a"
+              }
+            ],
+            "require_current": true
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid_envelope",
+        "details": {
+          "path": "/payload/context_bindings/0/require_current"
+        }
+      },
+      "note": "the current revision can only be confirmed through a context fetch grant"
     },
     {
       "step": "command",

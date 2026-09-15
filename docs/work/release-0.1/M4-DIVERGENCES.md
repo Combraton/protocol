@@ -70,6 +70,22 @@ The helper realigned the independent provider with the resolved documents (`6e9b
 | H7-STAGED-INTEGRITY, H7-EXPIRED-HOLD-IN-LOSS, H7-PACKET-CITATION-TRACKED | No change: consistent with the documents |
 | H7-PARTIAL-UNREACHABLE | Coverage limit: nothing in the reference store controls produces `partial` availability |
 
+## C.2 Eighth pass (owner close-out, base `63f1bb0`)
+
+The helper realigned the independent provider with the close-out pass (`76db7a0`, `dc2f8c8`, merged). Its full suite gave 228 pass, 0 fail, 4 unsupported and 23 skipped, and every close-out execution, evidence and context fixture it can run passes. `observe_host_basis`, `serve_altered_bytes` and `require_current` with fetch appear only in composition fixtures, which a stdio participant skips.
+
+| Tag | Resolution |
+|---|---|
+| H8-RESUMED-REASON | **spec:** the event reason on reacquiring is `resumed`, and `scheduling` in inspect then carries no reason |
+| H8-PACKET-FACTS-OBSERVED | **spec:** `observed` for `packet.facts` is `corrected: <item_id>[, …]`, and for `packet.current` `superseded by revision <n>` |
+| H8-REQUIRE-CURRENT-WITHOUT-FETCH | **spec and reference:** `require_current` needs `fetch.context`, otherwise `invalid_envelope`. **fixture:** step added to `execution.revalidation-reports-match-mismatch-and-unavailable-by-obligation` v3. |
+| H8-END-TIMING | No change: the released execution is evaluated at its dispatch boundary on every re-evaluation, which is what the spec requires |
+| H8-RELEASED-TIMEOUT-OVERLAP | **spec:** a passed delivery or execution deadline ends released work with `scheduling.reason: "deadline_passed"`; the §8 delivery-timeout evidence may also be recorded |
+| H8-BASIS-CHANGES-MERGE | **conformance README:** `basis_changes` and `observe_host_basis` both merge per member and per repository, in time order (the helper's `basis_changes` replaced; no fixture tells the two apart) |
+| H8-CONSTRAINT-ADDITION | **spec:** a delegated grant may add constraints, which only narrow it |
+| H8-INVALIDATED-ITEMS (`superseded_by`) | **spec:** `superseded_by` names the request's current revision |
+| H8-CAPACITY-FAIRNESS | **spec:** the order between admitting queued work and resuming released work is unspecified; this is a coverage limit |
+
 ## D. Still unchecked by fixtures (coverage limits)
 
 From H.5, after this resolution:

@@ -1838,6 +1838,21 @@ impl Provider {
                 }
             }
         }
+        if operation.name == "execution.submit" {
+            for (index, binding) in params["payload"]["context_bindings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                if binding["require_current"] == true && binding["fetch"].get("context").is_none() {
+                    return invalid(
+                        &format!("/payload/context_bindings/{index}/require_current"),
+                        "the current revision can only be confirmed through a context fetch grant",
+                    );
+                }
+            }
+        }
         if operation.name == "execution.submit" && !self.mutants.on("feature-fields-accepted") {
             for (field, feature) in FEATURE_FIELDS {
                 if params["payload"].get(field).is_some() && !self.feature_negotiated(feature) {

@@ -417,7 +417,7 @@ A grant is a provider-owned subject of kind `core.grant`. Its record contains:
 - **Constraints.** A grant may carry `constraints`: a list of typed restrictions, each `{ kind, ... }`, whose kinds are defined by profile features (for example `evidence.work_binding`, EVIDENCE §10).
   - A constraint only narrows what the grant's rights and resources allow; it never widens them.
   - Issuing a grant with a constraint kind this provider does not implement is `invalid_envelope` at `/payload/constraints/<i>/kind`. A kind whose feature the issuing session did not negotiate is `unsupported_required_feature` with `features`.
-  - A delegated grant carries every constraint of its parent, unchanged, otherwise `delegation_exceeded`.
+  - A delegated grant carries every constraint of its parent, unchanged, otherwise `delegation_exceeded`. It may add constraints, which only narrow it further.
   - Resource kinds never imply a constraint.
 
 ### 15.4 Grants and authority epochs

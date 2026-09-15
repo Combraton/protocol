@@ -1810,3 +1810,22 @@ None fails a fixture.
 - **HM5C-PERMITTED-FIRST** (CONTEXT §14 "Invalidated items"). "`permitted_use_lost` comes first when both apply" is read as precedence between reasons of the one `{ item_id, claim, reason }` entry, not as two entries. Unchanged from H.M5b. Basis: own judgment (the entry shape is singular).
 - **HM5C-QUEUED-LOSS-EVENTS** (VERIFICATION §4). The job appends one `verification.job.changed { state: "completed" }` after `verification.receipt.issued` and the artifact's events; there is no `running` event. `observed_from` and `observed_until` are the instant of that evaluation. Basis: spec text.
 - **HM5C-CONTRACT-TYPES** (VERIFICATION §3). "A member of the wrong type" is read as the shapes the table gives: `outcome`, `kind` and `statement` strings; `role` and `property_id` identifiers; `layer` one of the six; `required` boolean; `required_anchors` non-empty strings; `evaluators` null or an array of non-empty strings; `freshness` null or `{ max_age_seconds }` with a non-negative integer. An `evaluators` entry that is a string but not a valid evaluator ID is accepted (it can never match). Basis: own judgment.
+
+#### Implementation and runs
+
+Readings committed as `94871cf`; implementation as `a5e966a`, before any fixture was opened. 273 fixtures at `808801b`, runner built at this base.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Twelfth-pass code (the `808801b` tree, run from a scratch copy) | 243 | 2 | 0 | 0 | 4 | 24 |
+| First complete run after `a5e966a`, and one repeat | 245 | 0 | 0 | 0 | 4 | 24 |
+
+- Before the changes: `run: 273 fixtures (2 fail, 243 pass, 24 skipped, 4 unsupported), 2 not passing`, with `knowledge.only-the-bound-authority-decides` step 46 (`expected error stale_authority_epoch, received "precondition_failed"`) and `verification.evaluate-contract-returns-a-job-and-pins-its-evaluator` step 8 (`expected error capability_unavailable, received "precondition_failed"`), both change 1 and 3.
+- After: `run: 273 fixtures (245 pass, 24 skipped, 4 unsupported), 0 not passing`. `--filter knowledge.` `run: 10 fixtures (10 pass), 0 not passing`; `--filter verification.` `run: 5 fixtures (5 pass), 0 not passing`; `--filter context.claims` `run: 1 fixtures (1 pass), 0 not passing`.
+- `tests/check_vectors.py` (0 failures), `probe_provider.py` (19/19), `probe_m2.py` (43/43), `probe_f.py` (31/31) pass.
+
+**No fixture failed after the implementation, so none was read.** Every change has basis spec text; the readings above are spec text or own judgment as marked.
+
+**Sensitivity** (throwaway probe, not committed, `knowledge.`, `verification.` and `context.claims` filters): the resolve epoch checked after the preconditions, and a queued job passing through `running` before completing on evaluator loss, both pass every fixture. Both are listed as unchecked in M5-DIVERGENCES §E.
+
+**Still open.** None fails a fixture. HM5C-EPOCH-RESOLVED-RECORD and HM5C-CONTRACT-TYPES (an `evaluators` entry that is not a valid evaluator ID) are readings the documents do not state; HM5C-PERMITTED-FIRST keeps the singular-entry reading. Coverage limits are unchanged from H.M5b.

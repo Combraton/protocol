@@ -6,7 +6,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-15, M4 steps 2 and 3 (Evidence and Context reference providers) done; owner decisions M4-Q1 to M4-Q7 incorporated.
+- **Checkpoint:** 2026-09-15, M4 steps 2–4 done: the Evidence and Context reference providers and the multi-participant runner. Owner decisions M4-Q1 to M4-Q7 are incorporated.
 - **Status:** M0–M3 merged. M4 in progress on `release-0.1/m4` ([M4 task](M4.md)). Protocol 0.1 is not released.
 
 ## Goal, decisions and constraints
@@ -42,6 +42,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **On `release-0.1/m4`:**
   - step 1: `docs/spec/profiles/EVIDENCE.md` and `docs/spec/profiles/CONTEXT.md` drafts with owner decisions M4-Q1 to M4-Q7; refined MATRIX rows EVD-1 to EVD-8, CTX-1 to CTX-20, EXE-21, CMP-8 and the M4 scenarios;
   - step 2: `schemas/evidence/1`, the reference Evidence provider (`conformance/reference/src/evidence.rs`) with its scripted store control `evidence_store`, 13 fixtures in `conformance/fixtures/evidence` and 23 new mutants ([M4 status](M4.md#status));
+  - step 4: runner steps `start_participant`, `stop_participant`, `kill_participant` and `connect` with `participant`; the reference protocol client `conformance/reference/src/peer.rs`; packets sealed at a separate evidence provider; 2 fixtures in `conformance/fixtures/composition` and 3 new mutants;
   - step 3: `schemas/context/1`, the reference Context provider (`conformance/reference/src/context.rs`) with scripted preparation (`context`), packets sealed as Evidence artifacts in its own store, runner pattern `$sha256_base64`, 9 fixtures in `conformance/fixtures/context` and 19 new mutants.
 
 ## Evidence
@@ -56,6 +57,12 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - independent: 196 pass, 12 skipped, 26 unsupported (it claims neither `evidence/1` nor `context/1`);
   - mutants: each one the Evidence and Context fixtures declare fails every fixture declaring it;
   - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass.
+- **M4 step 4 (local, macOS):**
+  - `check-fixtures`: 236 fixtures ok;
+  - reference: stdio 222 pass and 14 skipped (compositions need the Unix-socket binding); Unix socket 236 pass;
+  - independent: 196 pass, 14 skipped, 26 unsupported;
+  - Unix-socket `check-mutants` passes, and so does the per-group mutant check for Evidence and Context;
+  - each composition fixture ran as intended in 15 of 15 repeated runs.
 - CI evidence: [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
 
 ## What remains uncertain
@@ -80,5 +87,5 @@ None.
 
 ## Next action
 
-1. M4 step 4: multi-participant runner (named participants with isolated data, configuration and sockets), a reference protocol client for provider-to-provider calls, and per-audience grants.
-2. Then steps 5–8 of the [M4 work plan](M4.md#work-plan).
+1. M4 step 5: Execution integration: `execution.context_revalidation`, with packet fetch through per-audience grants, typed condition checks at admission, dispatch and transition, and CMP-8 compatibility fixtures. It also covers `execution.evidence_outputs` (EXE-21, with the EVD-8 work binding), and origin without re-enrichment.
+2. Then steps 6–8 of the [M4 work plan](M4.md#work-plan).

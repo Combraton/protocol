@@ -407,7 +407,7 @@
                   "provider": "conformance-provider",
                   "artifact": {
                     "kind": "evidence.artifact",
-                    "id": "r-1.packet.1"
+                    "id": "packet.r-1.1"
                   },
                   "digest": {
                     "$type": "string"
@@ -442,7 +442,7 @@
               "provider": "conformance-provider",
               "artifact": {
                 "kind": "evidence.artifact",
-                "id": "r-1.packet.1"
+                "id": "packet.r-1.1"
               },
               "digest": {
                 "$var": "d1"
@@ -595,7 +595,7 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
-          "id": "r-1.packet.1"
+          "id": "packet.r-1.1"
         },
         "digest": {
           "$var": "d1"
@@ -617,7 +617,7 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
-          "id": "r-1.packet.1"
+          "id": "packet.r-1.1"
         },
         "digest": {
           "$var": "d1"
@@ -641,7 +641,7 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
-          "id": "r-1.packet.1"
+          "id": "packet.r-1.1"
         }
       },
       "expect": {
@@ -723,7 +723,7 @@
                       "provider": "conformance-provider",
                       "artifact": {
                         "kind": "evidence.artifact",
-                        "id": "r-1.packet.1"
+                        "id": "packet.r-1.1"
                       },
                       "digest": {
                         "$var": "d1"

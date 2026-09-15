@@ -84,6 +84,16 @@ struct State<'a> {
     pending: BTreeMap<String, Pending>,
     /// The last instant written to the controlled clock file.
     clock_value: Option<String>,
+    /// Separately launched participants of a composition, by name (unix binding only).
+    participants: BTreeMap<String, Named>,
+    /// The named participant each session is connected to.
+    session_participant: BTreeMap<String, String>,
+}
+
+/// One separately running participant: its own process, data directory, configuration and socket.
+struct Named {
+    process: Process,
+    socket: PathBuf,
 }
 
 struct Pending {
@@ -231,6 +241,8 @@ pub fn run_fixture(fixture: &Value, ctx: &Context) -> CaseResult {
         responses: Vec::new(),
         pending: BTreeMap::new(),
         clock_value: None,
+        participants: BTreeMap::new(),
+        session_participant: BTreeMap::new(),
     };
     let mut failure = None;
     for (index, step) in fixture["steps"]
@@ -300,6 +312,12 @@ impl State<'_> {
         {
             process.kill();
         }
+        for (_, mut named) in std::mem::take(&mut self.participants) {
+            if named.process.stop(Duration::from_millis(3000)).is_none() {
+                named.process.kill();
+            }
+        }
+        self.session_participant.clear();
     }
 
     fn authenticate_session(&mut self, principal: &str) -> Result<(), StepError> {
@@ -325,12 +343,27 @@ impl State<'_> {
                 if !self.unix() {
                     return Err(Harness("connect needs a unix-binding participant".into()));
                 }
-                let path = self
-                    .socket_path
-                    .clone()
-                    .ok_or_else(|| Harness("connect before start".into()))?;
+                let path = match step["participant"].as_str() {
+                    Some(name) => self
+                        .participants
+                        .get(name)
+                        .map(|named| named.socket.clone())
+                        .ok_or_else(|| {
+                            Harness(format!("connect to {name:?} before start_participant"))
+                        })?,
+                    None => self
+                        .socket_path
+                        .clone()
+                        .ok_or_else(|| Harness("connect before start".into()))?,
+                };
                 let session = Session::connect(&path, &self.active, self.started).map_err(Fail)?;
                 self.sessions.insert(self.active.clone(), session);
+                match step["participant"].as_str() {
+                    Some(name) => self
+                        .session_participant
+                        .insert(self.active.clone(), name.to_string()),
+                    None => self.session_participant.remove(&self.active),
+                };
                 if step["auto_authenticate"].as_bool().unwrap_or(true) {
                     let principal = step["principal"]
                         .as_str()
@@ -350,6 +383,9 @@ impl State<'_> {
             "expect_start_failure" => self.expect_start_failure(step),
             "start" => self.start(step),
             "stop" => self.stop(),
+            "start_participant" => self.start_participant(step),
+            "stop_participant" => self.stop_participant(step, false),
+            "kill_participant" => self.stop_participant(step, true),
             "describe" => {
                 let params = json!({"operation": "core.describe", "message_id": self.unique("msg"), "payload": {}});
                 let frame = self.call("core.describe", params, step)?;
@@ -1024,6 +1060,123 @@ impl State<'_> {
             self.authenticate_session(&principal)?;
         }
         Ok(())
+    }
+
+    /// Launch a named participant as its own process with its own data directory, configuration
+    /// and socket (owner decision M4-Q3). Sessions reach it with `connect` and `participant`.
+    fn start_participant(&mut self, step: &Value) -> Result<(), StepError> {
+        if !self.unix() {
+            return Err(Harness(
+                "start_participant needs a unix-binding participant".into(),
+            ));
+        }
+        let name = step["name"]
+            .as_str()
+            .ok_or_else(|| Harness("start_participant needs a name".into()))?
+            .to_string();
+        if self.participants.contains_key(&name) {
+            return Err(Harness(format!("participant {name:?} is already running")));
+        }
+        let mut launch_step = step.clone();
+        launch_step["config"] = self.render(&step["config"])?;
+        let caller_principal = self.config_principal.clone();
+        let config = self.launch_config(&launch_step)?;
+        self.config_principal = caller_principal;
+        let directory = self.ctx.work_dir.join("participants").join(&name);
+        std::fs::create_dir_all(&directory).map_err(|e| Harness(e.to_string()))?;
+        let config_file = directory.join("config.json");
+        std::fs::write(&config_file, serde_json::to_vec_pretty(&config).unwrap())
+            .map_err(|e| Harness(e.to_string()))?;
+        let data_dir = directory.join("data");
+        // A stable socket path per participant, so peers configured with it reach a restart.
+        let socket_directory = self.ctx.work_dir.join(format!("n-{name}"));
+        std::fs::create_dir_all(&socket_directory).map_err(|e| Harness(e.to_string()))?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&socket_directory, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| Harness(e.to_string()))?;
+        }
+        let socket = socket_directory.join("p.sock");
+        let _ = std::fs::remove_file(&socket);
+        let launch = Launch {
+            descriptor: self.ctx.descriptor,
+            repo: self.ctx.repo,
+            data_dir: &data_dir,
+            config_file: &config_file,
+            socket_path: Some(&socket),
+            stderr_file: directory.join("stderr.log"),
+            mutant: self.ctx.mutant,
+        };
+        let mut process = Process::spawn(&launch).map_err(Harness)?;
+        let deadline = Instant::now() + Duration::from_millis(5000);
+        while !(socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_ok()) {
+            if let Some(code) = process.exited() {
+                return Err(Fail(format!(
+                    "participant {name:?} exited with status {code} before listening"
+                )));
+            }
+            if Instant::now() > deadline {
+                return Err(Timeout(format!(
+                    "participant {name:?} did not listen within 5000 ms"
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.note(
+            "start_participant",
+            json!({"name": name, "argv": process.argv}),
+        );
+        self.vars.insert(
+            format!("socket.{name}"),
+            json!(socket.display().to_string()),
+        );
+        self.participants.insert(name, Named { process, socket });
+        Ok(())
+    }
+
+    /// Stop (end of input, exit status 0 required) or kill a named participant and its sessions.
+    fn stop_participant(&mut self, step: &Value, kill: bool) -> Result<(), StepError> {
+        let name = step["name"].as_str().unwrap_or_default().to_string();
+        let mut named = self
+            .participants
+            .remove(&name)
+            .ok_or_else(|| Harness(format!("no running participant {name:?}")))?;
+        let sessions: Vec<String> = self
+            .session_participant
+            .iter()
+            .filter(|(_, participant)| **participant == name)
+            .map(|(session, _)| session.clone())
+            .collect();
+        for session in sessions {
+            self.session_participant.remove(&session);
+            if let Some(session) = self.sessions.remove(&session) {
+                self.transcript.extend(session.finish());
+            }
+        }
+        self.note(
+            if kill {
+                "kill_participant"
+            } else {
+                "stop_participant"
+            },
+            json!({"name": name}),
+        );
+        if kill {
+            named.process.kill();
+            return Ok(());
+        }
+        match named.process.stop(Duration::from_millis(5000)) {
+            Some(0) => Ok(()),
+            Some(code) => Err(Fail(format!(
+                "participant {name:?} exited with status {code}; 0 is required"
+            ))),
+            None => {
+                named.process.kill();
+                Err(Fail(format!(
+                    "participant {name:?} did not exit after its input ended"
+                )))
+            }
+        }
     }
 
     fn expect_start_failure(&mut self, step: &Value) -> Result<(), StepError> {

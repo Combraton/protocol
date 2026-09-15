@@ -232,7 +232,7 @@
                 "artifact": {
                   "artifact": {
                     "kind": "evidence.artifact",
-                    "id": "r-1.packet.1"
+                    "id": "packet.r-1.1"
                   }
                 }
               },
@@ -468,7 +468,7 @@
                 "artifact": {
                   "artifact": {
                     "kind": "evidence.artifact",
-                    "id": "r-1.packet.1"
+                    "id": "packet.r-1.1"
                   },
                   "digest": {
                     "$var": "d1"
@@ -486,7 +486,7 @@
                 "artifact": {
                   "artifact": {
                     "kind": "evidence.artifact",
-                    "id": "r-1.packet.2"
+                    "id": "packet.r-1.2"
                   },
                   "digest": {
                     "$ne_var": "d1"
@@ -539,7 +539,7 @@
             "artifact": {
               "artifact": {
                 "kind": "evidence.artifact",
-                "id": "r-1.packet.1"
+                "id": "packet.r-1.1"
               },
               "digest": {
                 "$var": "d1"
@@ -569,7 +569,7 @@
             "artifact": {
               "artifact": {
                 "kind": "evidence.artifact",
-                "id": "r-1.packet.2"
+                "id": "packet.r-1.2"
               },
               "digest": {
                 "$var": "d2"
@@ -589,7 +589,7 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
-          "id": "r-1.packet.1"
+          "id": "packet.r-1.1"
         },
         "digest": {
           "$var": "d1"
@@ -611,7 +611,7 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
-          "id": "r-1.packet.2"
+          "id": "packet.r-1.2"
         },
         "digest": {
           "$var": "d2"

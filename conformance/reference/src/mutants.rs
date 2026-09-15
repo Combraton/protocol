@@ -89,6 +89,18 @@ pub const ALL: &[(&str, &str)] = &[
         "drops the authority revision of authority-supplied content",
     ),
     (
+        "packet-reported-before-seal",
+        "reports a packet revision whose artifact the evidence provider did not seal",
+    ),
+    (
+        "foreign-grant-honored",
+        "treats a grant ID it never issued as authorizing the request",
+    ),
+    (
+        "packet-grant-covers-all-packets",
+        "lets a context.packet.read grant for one packet read any packet",
+    ),
+    (
         "release-without-authority",
         "lets any principal release a hold it does not own",
     ),

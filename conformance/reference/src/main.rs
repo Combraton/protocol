@@ -14,6 +14,7 @@ mod grants;
 mod json;
 mod mutants;
 mod outbox;
+mod peer;
 mod provider;
 mod store;
 

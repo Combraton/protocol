@@ -707,7 +707,7 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
-          "id": "r-1.packet.1"
+          "id": "packet.r-1.1"
         },
         "digest": {
           "$var": "d1"

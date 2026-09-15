@@ -454,6 +454,30 @@
           "items": {
             "$ref": "#/$defs/context_step"
           }
+        },
+        "evidence_provider": {
+          "type": "object",
+          "description": "A separately running evidence provider that seals this provider's packets, reached over its public socket (owner decision M4-Q3).",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

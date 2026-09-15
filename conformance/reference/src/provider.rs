@@ -561,9 +561,11 @@ impl Provider {
         if let Err(error) = crate::evidence::tick(&mut self.store, &now, &evidence_store) {
             eprintln!("evidence tick: {error}");
         }
-        let provider_id = self.identity.provider_id.clone();
-        if let Err(error) = crate::context::tick(&mut self.store, &now, &provider_id, &self.mutants)
-        {
+        let mut publisher = json!({"provider_id": self.identity.provider_id});
+        if let Some(peer) = self.identity.context_script.get("evidence_provider") {
+            publisher["evidence_provider"] = peer.clone();
+        }
+        if let Err(error) = crate::context::tick(&mut self.store, &now, &publisher, &self.mutants) {
             eprintln!("context tick: {error}");
         }
     }
@@ -1157,6 +1159,11 @@ impl Provider {
             "core.effects.get" => {
                 self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
             }
+            "context.packet.inspect" | "context.expand"
+                if self.mutants.on("packet-grant-covers-all-packets") =>
+            {
+                return Ok(Some(Vec::new()));
+            }
             "evidence.release" => {
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
                 let owner = crate::evidence::hold_owner(&self.store, id).map_err(storage)?;
@@ -1286,6 +1293,12 @@ impl Provider {
     fn usable_grant_checked(&self, id: &str, check_holder: bool) -> Result<Value, Reject> {
         let denied = |reason: &str| reject("permission_denied", json!({"reason": reason}));
         let Some((_, grant)) = self.store.grant(id).map_err(storage)? else {
+            if self.mutants.on("foreign-grant-honored") {
+                // Mutant: a grant ID this provider never issued is trusted as if it covered all.
+                return Ok(json!({"holder": self.identity.principal, "state": "active",
+                    "rights": ["evidence.read", "evidence.publish", "context.read", "context.packet.read", "execution.read"],
+                    "resources": [{"kind": crate::evidence::ARTIFACT}, {"kind": crate::context::PACKET}, {"kind": crate::context::REQUEST}, {"kind": crate::execution::KIND}]}));
+            }
             return Err(denied("grant_not_found"));
         };
         let state_first = self.mutants.on("grant-state-before-holder");

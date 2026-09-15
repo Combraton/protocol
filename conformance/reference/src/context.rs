@@ -305,16 +305,25 @@ pub fn preparing(tx: &Transaction, id: &str) -> rusqlite::Result<Option<bool>> {
     Ok(evidence::load(tx, REQUEST, id)?.map(|(_, r)| r["state"] == "preparing"))
 }
 
-/// Advance every running job against the provider clock.
+/// Advance every running job against the provider clock, one owner transaction per job. When a
+/// packet cannot be sealed at the evidence provider, that job's step rolls back and is retried at
+/// a later tick: a packet is never reported before its artifact is sealed.
+///
+/// `publisher` is `{ provider_id, evidence_provider? }`; without an evidence provider the packets
+/// are sealed in this provider's own store.
 pub fn tick(
     store: &mut Store,
     now: &str,
-    provider_id: &str,
+    publisher: &Value,
     mutants: &Mutants,
 ) -> rusqlite::Result<()> {
     let stream = store.stream_id()?;
-    let tx = store.transaction()?;
-    for job_id in ids(&tx, JOB)? {
+    let jobs = {
+        let tx = store.transaction()?;
+        ids(&tx, JOB)?
+    };
+    for job_id in jobs {
+        let tx = store.transaction()?;
         let Some((mut revision, mut job)) = evidence::load(&tx, JOB, &job_id)? else {
             continue;
         };
@@ -323,15 +332,14 @@ pub fn tick(
         }
         let before = job.clone();
         let mut drafts: Vec<Draft> = Vec::new();
-        advance(
-            &tx,
-            now,
-            provider_id,
-            mutants,
-            &job_id,
-            &mut job,
-            &mut drafts,
-        )?;
+        match advance(&tx, now, publisher, mutants, &job_id, &mut job, &mut drafts) {
+            // A peer failure travels as a conversion failure so it is told apart from storage errors.
+            Err(rusqlite::Error::ToSqlConversionFailure(reason)) => {
+                eprintln!("context job {job_id}: {reason}; retrying later");
+                continue;
+            }
+            other => other?,
+        }
         if job != before {
             revision += 1;
             save(&tx, JOB, &job_id, revision, &job)?;
@@ -339,14 +347,15 @@ pub fn tick(
         for draft in drafts {
             provider_event(&tx, &stream, now, draft)?;
         }
+        tx.commit()?;
     }
-    tx.commit()
+    Ok(())
 }
 
 fn advance(
     tx: &Transaction,
     now: &str,
-    provider_id: &str,
+    publisher: &Value,
     mutants: &Mutants,
     job_id: &str,
     job: &mut Value,
@@ -382,7 +391,7 @@ fn advance(
                     } else {
                         "investigation_budget_exhausted"
                     };
-                    finish_job(tx, now, provider_id, mutants, job_id, job, reason, drafts)?;
+                    finish_job(tx, now, publisher, mutants, job_id, job, reason, drafts)?;
                     return Ok(());
                 }
             }
@@ -440,22 +449,14 @@ fn advance(
             }
             "publish" => {
                 if !publish_all(
-                    tx,
-                    now,
-                    provider_id,
-                    mutants,
-                    job_id,
-                    job,
-                    false,
-                    None,
-                    drafts,
+                    tx, now, publisher, mutants, job_id, job, false, None, drafts,
                 )? {
                     break;
                 }
             }
             "end" => {
                 let reason = argument.as_str().unwrap_or("ended").to_string();
-                finish_job(tx, now, provider_id, mutants, job_id, job, &reason, drafts)?;
+                finish_job(tx, now, publisher, mutants, job_id, job, &reason, drafts)?;
                 return Ok(());
             }
             _ => {}
@@ -472,7 +473,7 @@ fn advance(
             publish_one(
                 tx,
                 now,
-                provider_id,
+                publisher,
                 mutants,
                 job,
                 request,
@@ -489,7 +490,7 @@ fn advance(
 fn finish_job(
     tx: &Transaction,
     now: &str,
-    provider_id: &str,
+    publisher: &Value,
     mutants: &Mutants,
     job_id: &str,
     job: &mut Value,
@@ -499,7 +500,7 @@ fn finish_job(
     publish_all(
         tx,
         now,
-        provider_id,
+        publisher,
         mutants,
         job_id,
         job,
@@ -524,7 +525,7 @@ fn finish_job(
 fn publish_all(
     tx: &Transaction,
     now: &str,
-    provider_id: &str,
+    publisher: &Value,
     mutants: &Mutants,
     _job_id: &str,
     job: &mut Value,
@@ -555,15 +556,7 @@ fn publish_all(
     }
     for request in &requests {
         publish_one(
-            tx,
-            now,
-            provider_id,
-            mutants,
-            job,
-            request,
-            true,
-            reason,
-            drafts,
+            tx, now, publisher, mutants, job, request, true, reason, drafts,
         )?;
     }
     job["published"] = json!(true);
@@ -673,7 +666,7 @@ fn inclusion(record: &Value, job: &Value, mutants: &Mutants) -> (Vec<Value>, Vec
 fn publish_one(
     tx: &Transaction,
     now: &str,
-    provider_id: &str,
+    publisher: &Value,
     mutants: &Mutants,
     job: &Value,
     request: &str,
@@ -706,7 +699,7 @@ fn publish_one(
     } else {
         published + 1
     };
-    let artifact_id = format!("{request}.packet.{}", published + 1);
+    let artifact_id = format!("packet.{request}.{}", published + 1);
     let sections: Vec<Value> = job["sections"]
         .as_array()
         .into_iter()
@@ -771,19 +764,52 @@ fn publish_one(
     }
     let content = crate::json::canonical(&body, crate::json::CanonicalFlaws::default());
     let digest = crate::json::sha256_digest(&content);
-    drafts.extend(evidence::publish_sealed(
-        tx,
-        &artifact_id,
-        provider_id,
-        request,
-        &content,
-        PACKET_MEDIA_TYPE,
-        now,
-    )?);
+    let local = publisher["provider_id"].as_str().unwrap_or_default();
+    let artifact_provider = match publisher.get("evidence_provider") {
+        None => {
+            drafts.extend(evidence::publish_sealed(
+                tx,
+                &artifact_id,
+                local,
+                request,
+                &content,
+                PACKET_MEDIA_TYPE,
+                now,
+            )?);
+            local.to_string()
+        }
+        Some(peer) => {
+            let descriptor = json!({
+                "digest": digest,
+                "size": content.len(),
+                "media_type": PACKET_MEDIA_TYPE,
+                "producer": {"producer_id": "reference-context-provider"},
+                "source": {"kind": "context.packet", "id": request},
+                "scope": "context",
+                "capture": {"captured_at": now, "anchors": []},
+                "coverage": {"completeness": "complete"},
+                "retention_class": "context-packet",
+            });
+            match crate::peer::publish_artifact(peer, &artifact_id, descriptor, &content) {
+                Ok(provider) => provider,
+                Err(_) if mutants.on("packet-reported-before-seal") => {
+                    peer["provider_id"].as_str().unwrap_or_default().to_string()
+                }
+                Err(failure) => {
+                    return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                        std::io::Error::other(format!(
+                            "packet {artifact_id} not sealed at the evidence provider: {}",
+                            failure.describe()
+                        )),
+                    )));
+                }
+            }
+        }
+    };
     let reference = json!({
         "packet": subject(PACKET, request),
         "revision": packet_revision,
-        "artifact": {"provider": provider_id, "artifact": subject(evidence::ARTIFACT, &artifact_id), "digest": digest},
+        "artifact": {"provider": artifact_provider, "artifact": subject(evidence::ARTIFACT, &artifact_id), "digest": digest},
     });
     let citations: Vec<Value> = job["sections"]
         .as_array()
@@ -825,6 +851,7 @@ fn publish_one(
         "authority": authority,
         "supersedes": body.get("supersedes").cloned().unwrap_or(Value::Null),
         "body": body,
+        "content_base64": crate::json::base64(&content),
     });
     if let Some(packets) = record["packets"].as_array_mut() {
         if packet_revision <= published {
@@ -961,14 +988,11 @@ pub fn inspect_packet(
     let Some((facts, current)) = facts(&tx, packet, revision, mutants)? else {
         return Ok(None);
     };
-    let artifact = facts["reference"]["artifact"]["artifact"]["id"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
     let data = if mutants.on("packet-bytes-regenerated") {
         serde_json::to_vec_pretty(&facts["body"]).unwrap_or_default()
     } else {
-        evidence::sealed_bytes(&tx, &artifact)?
+        evidence::decode_base64(facts["content_base64"].as_str().unwrap_or_default())
+            .unwrap_or_default()
     };
     let mut excerpt = excerpt(&data, payload, frame_budget);
     if mutants.on("excerpt-carries-digest") {
@@ -977,6 +1001,7 @@ pub fn inspect_packet(
     let mut result = facts.clone();
     if let Some(object) = result.as_object_mut() {
         object.remove("body");
+        object.remove("content_base64");
         object.remove("supersedes");
     }
     if !facts["supersedes"].is_null() {

@@ -6,10 +6,10 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code).
-- **Checkpoint:** 2026-09-15 (later).
-  - The owner accepted M5 at `00b3c5a` as a completed milestone with its documented limitations; this was explicitly not acceptance or release of Protocol 0.1. PR #6 merged as `6ed4727` (pinned to that head; merge tree equals the accepted head's tree).
-  - M6 began on `release-0.1/m6` (draft PR #7) with the release-readiness plan and acceptance matrix ([M6](M6.md)) and the consumer-handoff draft ([CONSUMERS](CONSUMERS.md)).
-- **Status:** M0–M5 merged and accepted as milestones. M6 awaits owner decisions M6-Q1 to M6-Q3. Protocol 0.1 is not accepted, tagged or released; doing so requires the owner's explicit authorization.
+- **Checkpoint:** 2026-09-15 (release candidate).
+  - The owner accepted M5 at `00b3c5a`; PR #6 merged as `6ed4727`.
+  - The owner approved M6-Q1 to M6-Q3 with clarifications. The bounded M6 work is done ([M6 status](M6.md#status)), and the release candidate is presented on draft PR #7.
+- **Status:** M0–M5 merged and accepted as milestones. The Protocol 0.1 release candidate awaits the owner's acceptance. It is not merged, tagged or published; each needs the owner's explicit authorization.
 
 ## Goal, decisions and constraints
 
@@ -19,6 +19,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - Decision records 001–007 accepted; 001 amended for distinct outcomes; 007 accepted with refinements.
   - M2 accepted on 2026-09-14. M3 conditionally accepted on 2026-09-14 with corrections C1–C3 ([M3 status](M3.md#status)).
   - M4-Q1 to M4-Q7 and the close-out items ([M4](M4.md)); M4 accepted on 2026-09-15 with its coverage limits.
+  - M6-Q1 to M6-Q3 (2026-09-15): [M6 decisions](M6.md#owner-decisions-2026-09-15). CMP-5 option A with explicit profile and feature triggers; S-A and S-B with the clarified roles (S-C optional, not done); gap dispositions, with new material defects needing resolution; the consumer handoff split into serves and calls.
   - M5 (2026-09-15):
     - Knowledge and Verification per the release plan, including packets carrying claims and a provider reconnecting with a changed capability;
     - contracts, matrix and proposed decisions, with concrete examples, before implementing new public semantics;
@@ -36,7 +37,12 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 ## Git state
 
 - **`main`** at `6ed4727`, the merge of PR #6 (its tree equals `00b3c5a`, the accepted M5 head).
-- **Branch** `release-0.1/m6` from `6ed4727`, in draft [PR #7](https://github.com/Combraton/protocol/pull/7), pushed.
+- **Branch** `release-0.1/m6` from `6ed4727`, in draft [PR #7](https://github.com/Combraton/protocol/pull/7), pushed. The candidate head is the commit carrying this handoff.
+- **M6 worktrees, kept until the candidate merges:**
+  - `.worktrees/independent-m6` (`release-0.1/m6-independent`, tip `fa6b69a`, merged as `06526dc`);
+  - `.worktrees/thirdparty-m6` (`release-0.1/m6-thirdparty`, tip `e4e58ac`, merged as `3120e45`).
+
+  Neither has uncommitted changes. Their results are copied under `conformance/results/independent-m6-pass-evidence/` (pass-14, pass-15) and `conformance/results/thirdparty-m6-evidence/` (pass-1, pass-2).
 - **M5 worktree:** `.worktrees/independent-m5` and branch `release-0.1/m5-independent` were removed on 2026-09-15 after checks: no uncommitted changes, tip `53ec6bf` is an ancestor of the merge (via merges `87f84ec`, `808801b`, `4458bfa`), and the run results are preserved under `conformance/results/independent-m5-pass-evidence/` (pass-11, pass-12, pass-13). Only regenerable build artifacts were discarded.
 - **M4 worktree:** removed earlier on 2026-09-15 (see prior checkpoint); evidence under `conformance/results/independent-m4-pass-evidence/`.
 - **Local-only branches:** `release-0.1/m2`, `release-0.1/m3`, `release-0.1/m3-independent`, `release-0.1/m4` and `release-0.1/m5` are merged; kept, not deleted.
@@ -52,7 +58,12 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - the independent Python provider (Core, effects, Execution, Evidence, Context, Knowledge, Verification and single-provider `context.claims`, over stdio);
   - CI with distinct outcomes and uploaded result artifacts;
   - records: [M5](M5.md), [M5-DIVERGENCES](M5-DIVERGENCES.md), MATRIX rows KNW-1..10, VER-1..5, SCN-7, SCN-16, CMP-9.
-- **On `release-0.1/m6`:** the [M6 plan and acceptance matrix](M6.md) (CMP-5 proposal, mixed-implementation topology S-A/S-B/S-C, carried-gap triage) and the [consumer handoff draft](CONSUMERS.md). No implementation yet.
+- **On `release-0.1/m6`:**
+  - **CMP-5:** CORE §4.3 `core.feature_dependencies` and the feature-triggered rule in CORE §4.2, with schemas, reference and independent implementations.
+  - **Compatibility tooling:** runner support for pinned participants and fixture trees (`--fixtures`, `requires_pinned`) and `scripts/build_pinned.py`.
+  - **Third-party consumers:** the interface and two contracts-only clients (`conformance/thirdparty/`); runner client steps and client mutants.
+  - **Fixtures:** 280 in total. M6 adds `compat.*`, the feature-dependency fixtures, the major-mismatch fixture, S-A and S-B, and new steps in the authority, reconnect, assessment and claims-composition fixtures.
+  - **Documentation and package:** release-candidate status headers; `scripts/check_operations.py`; `scripts/release_inventory.py` with `docs/release/0.1/`; [CONSUMERS](CONSUMERS.md) finalized.
 
 ## Evidence
 
@@ -76,26 +87,36 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   CI on Ubuntu and macOS for the candidate head: [PR #6 checks](https://github.com/Combraton/protocol/pull/6/checks).
 - **M5 merge:** PR #6 head verified equal to the accepted `00b3c5a` with checks green, then `gh pr merge 6 --merge --match-head-commit 00b3c5a…` produced `6ed4727`; `git rev-parse` shows equal trees for the merge and the accepted head. CI for `main` at `6ed4727` runs in [Actions](https://github.com/Combraton/protocol/actions?query=branch%3Amain).
 - **Helper evidence** (gitignored, local): `conformance/results/independent-m5-pass-evidence/pass-11`, `pass-12` and `pass-13`.
+- **M6 candidate** (local, macOS, at code `3120e45`; the records commit changes only documents and the inventory):
+  - fmt, clippy `-D warnings`, build and tests pass; self-test 31 vectors; `check-fixtures` 280 fixtures ok; `check_docs.py`, `check_operations.py` (59 operations) and `release_inventory.py --verify` pass;
+  - reference over stdio: 252 pass, 28 skipped; over the Unix socket: 279 pass, 1 skipped (pinned-only);
+  - independent: 247 pass, 28 skipped, 5 unsupported;
+  - `check-mutants` passes on both bindings (398 and 59 kills, including the three client mutants);
+  - accepted M5 fixture set, unmodified: reference stdio 249 pass, 24 skipped; socket 273 pass; independent 245 pass, 24 skipped, 4 unsupported;
+  - pinned M5 provider: the compat fixture passes on both bindings;
+  - S-A, S-B and the claims composition: 5 of 5 repeated runs each.
+
+  CI on Ubuntu and macOS: [PR #7 checks](https://github.com/Combraton/protocol/pull/7/checks).
 - **Earlier milestones:** [M3 status](M3.md#status) and [M3-DIVERGENCES](M3-DIVERGENCES.md); M2 evidence in [M2](M2.md).
 
 ## What remains uncertain
 
-- **M6 decisions:** M6-Q1 (CMP-5), M6-Q2 (mixed topology) and M6-Q3 (gap dispositions) are with the owner ([M6](M6.md#owner-decisions-needed)); any genuinely new architectural or authority question goes back with a recommendation.
+- **Release decision:** acceptance of the candidate, then authorization to merge, tag and publish, are with the owner.
+- **M6 limits:** [M6 coverage limits](M6.md#m6-coverage-limits) and the release record's accepted limitations and deferred gaps.
 - **M4 limits carried forward:** [M5 §M4 coverage carried forward](M5.md#m4-coverage-carried-forward), with impact and disposition for each.
 - **M5 limits:**
   - checks still unguarded by fixtures are listed in [M5-DIVERGENCES §E](M5-DIVERGENCES.md#e-still-unchecked-by-fixtures-coverage-limits);
   - the claims composition runs one implementation for every participant, so it is not mixed-implementation proof;
   - the independent provider has no Unix-socket binding, so SCN-16 and the Execution side of CMP-9 are checked only on the reference.
-- **Profile status headers:** EXECUTION, EVIDENCE, CONTEXT, KNOWLEDGE and VERIFICATION still carry their "proposed draft" headers from before acceptance, as EXECUTION did after M3. Refreshing them belongs with M6's complete operation documentation.
 - **Carried from M3:**
   - the independent provider has no Unix socket or backpressure support;
   - barrier- and signal-synchronized fixtures are coverage limits for other participants;
   - all Execution evidence is scripted, not real-adapter evidence.
-- **Deferred decision:** machine-readable feature-dependency advertising is an M6 decision (CMP-5).
+- **CMP-5:** decided (M6-Q1) and implemented.
 
 ## Active resources
 
-- No helper worktrees; see Git state for preserved evidence paths.
+- Helper worktrees `.worktrees/independent-m6` and `.worktrees/thirdparty-m6`, kept until the candidate merges (see Git state).
 - No background processes.
 
 ## State and prompt disposition
@@ -104,5 +125,9 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## Next action
 
-1. Owner decisions M6-Q1 to M6-Q3 on [M6](M6.md#owner-decisions-needed).
-2. Then M6 step 2: the four required gap closures (fixtures and mutants), followed by CMP-5 implementation per the decision and the third-party examples. Routine work continues autonomously; do not tag or publish Protocol 0.1 without the owner's authorization.
+1. Wait for the owner's decision on the release candidate (PR #7, issue #1).
+2. After acceptance and an authorized merge:
+   - verify that the merge tree equals the accepted head;
+   - create the tag only when authorized, and record the commit and tag in issue #1 and the release record's acceptance note;
+   - update STATE, this handoff and CONSUMERS;
+   - remove the helper worktrees and branches once integration and evidence are verified.

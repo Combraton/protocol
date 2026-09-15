@@ -1,6 +1,6 @@
-# Consumer handoff — Protocol 0.1 (draft for M6)
+# Consumer handoff — Protocol 0.1 (release candidate)
 
-What the PIO and CBR sessions pin, negotiate and run once the owner accepts a Protocol 0.1 release candidate. **Draft:** the release commit, tag and checksums are filled in from the release record ([M6](M6.md) A6) at acceptance.
+What the PIO and CBR sessions pin, negotiate and run once the owner accepts the Protocol 0.1 release candidate. The release record is [docs/release/0.1](../../release/0.1/README.md): profiles, features, dependencies, inventory with checksums, limitations. The accepted commit and tag are recorded at acceptance.
 - **Until then, pin nothing.** A release candidate under review is not a release.
 - **Out of scope here:** real PIO adapters, the real CBR memory engine and the Combraton implementation stay outside this milestone and this repository.
 
@@ -48,8 +48,25 @@ From the pinned release checkout (macOS or Linux):
 4. **Your implementation:** run the same runner against your own participant descriptor, in the role you serve.
    - Claim only the fixtures you pass.
    - Report skipped and unsupported outcomes; never fold them into passes.
-   - A client-only consumer, such as a kernel that calls Context and Evidence, instead runs the third-party composition fixtures with its own client descriptor (`conformance/thirdparty/`, added in M6 step 4).
+   - A client-only consumer, such as a kernel that calls Context and Evidence, instead runs the third-party composition fixtures with its own client descriptor ([conformance/thirdparty](../../../conformance/thirdparty/README.md)). The minimal kernel there is an example of the enforcement a consumer owns, not a library to depend on.
 5. **Mutants:** `check-mutants` applies to implementations that vendor the reference. A fresh implementation relies on the fixture set plus its own tests.
+
+## Starting after acceptance
+
+Do none of this before the owner accepts the release candidate and the tag exists.
+
+1. **Pin.** Check out the accepted tag. Run `python3 scripts/release_inventory.py --verify`, and record the tag, its commit and the inventory's `listing_sha256` in your repository.
+2. **Vendor or reference.** Take the `schemas/**` trees for the profiles you serve and call, and the fixture set, from that commit only. Keep `docs/spec/**` from the same commit as the normative text.
+3. **PIO session** (Execution provider; Context and Evidence client only when bindings use them):
+   - Serve `core/1` and `execution/1` with the features you implement.
+   - Run the conformance fixtures against your provider descriptor, over stdio or the Unix socket.
+   - Where bindings carry packets: when opening a session to the Context provider a binding names, call `core.feature_dependencies` and negotiate `context/1` with `context.claims` there; negotiate `evidence/1` at the Evidence provider the packet reference names; hash the bytes yourself. Re-read the packet facts at each required boundary.
+   - PIO without any Context provider is a supported configuration.
+4. **CBR session** (Knowledge and Context provider; Execution client only for PIO-backed investigations):
+   - Serve `core/1`, `knowledge/1` and `context/1` (with `context.claims`). Serve `evidence/1` only if CBR holds packet or support bytes itself.
+   - Run the Knowledge and Context fixtures against your provider descriptor.
+   - When CBR calls a PIO executor, negotiate `execution/1` there as a client and request its required Core features.
+5. **Gaps.** A behavior you need that the pinned contracts do not define goes to the protocol repository as a proposed new feature or major, with a demonstrating fixture. Never widen a pinned schema locally.
 
 ## What Protocol 0.1 does not guarantee
 

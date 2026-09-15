@@ -876,7 +876,7 @@ fn publish_one(
         })
         .collect();
     let applicability = json!({"basis": record["basis"], "conditions": job["conditions"]});
-    let format = if record["claims"] == true {
+    let format = if record["claims"] == true || mutants.on("claims-format-without-negotiation") {
         CLAIMS_PACKET_FORMAT
     } else {
         PACKET_FORMAT

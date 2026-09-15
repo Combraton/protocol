@@ -11,7 +11,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 ## 1. Dependencies and negotiation
 
 - `verification/1` depends on `core/1` with `core.events` and `core.capabilities`, and on `evidence/1` as a protocol dependency: contracts and receipts are exact sealed Evidence artifacts (§2). `core.grants` is optional, as for Evidence. Required Core features are enforced at negotiation.
-- Optional features (*candidate*): `verification.jobs` (§4) and `verification.record` (§5). Assessment (§7) is part of the base profile.
+- Optional features (*candidate*): `verification.jobs` (`evaluate_contract` and `job.inspect`, §4) and `verification.record` (`receipt.record`, §5). `receipt.inspect` and `receipt.assess` are part of the base profile, so a session with either feature, or neither, can read and assess the receipts it may read.
 - A CI publisher that only records receipts needs neither Execution nor Knowledge.
 
 ## 2. Identities (M5-Q5)
@@ -34,15 +34,16 @@ A contract is a sealed Evidence artifact in format `combraton-verification-contr
 
 | Member | Meaning |
 |---|---|
+| `format` | Required: `combraton-verification-contract/1` |
 | `outcome` | Free text: the outcome the contract is about |
-| `subjects` | `[ { role, kind } ]` with unique roles, for example `{ role: "tree", kind: "repository_tree" }` or `{ role: "output", kind: "evidence.artifact" }` |
-| `properties` | `[ { property_id, layer, required, statement } ]` with unique IDs; `layer` is `static`, `component`, `integration`, `journey`, `runtime_path` or `qualitative`. A lower layer never stands in for a higher one. |
+| `subjects` | Non-empty `[ { role, kind } ]` with unique roles, for example `{ role: "tree", kind: "repository_tree" }` or `{ role: "output", kind: "evidence.artifact" }` |
+| `properties` | Non-empty `[ { property_id, layer, required, statement } ]` with unique IDs and boolean `required`; `layer` is `static`, `component`, `integration`, `journey`, `runtime_path` or `qualitative`. A lower layer never stands in for a higher one. |
 | `environment` | `{ required_anchors: [ name ] }`: anchors whose values an assessment must match (§7). Empty when none. |
 | `evaluators` | `[ id ]`: evaluator IDs whose results this contract accepts, or `null` for any |
 | `freshness` | `{ max_age_seconds }` or `null`: how long after `observed_until` a receipt may be assessed as current |
 
 - **Reading a contract.** A holder reads a contract at its named provider, as an ordinary reader, and checks the digest. In the reference, a holder reads contracts only from its own store.
-- A command whose contract cannot be read is refused with `contract_unavailable` and `details.reason`: `not_found`, `not_sealed`, `unavailable`, `unreachable` or `invalid_format`. A readable contract whose digest differs is `artifact_digest_mismatch`.
+- A command whose contract cannot be read is refused with `contract_unavailable` and `details.reason`, decided in this order: `unreachable` (another provider this holder cannot read), `not_found`, `not_sealed`, `unavailable` (purged, pending purge, corrupt or otherwise unavailable), then `artifact_digest_mismatch` for a readable contract whose digest differs, then `invalid_format` for content that is not a contract as the table above requires. The artifact's media type is not checked.
 - A caller must be authorized to read the contract: `evidence.read` on the contract's artifact subject at this provider. Otherwise the operation is `permission_denied`, identical for a nonexistent contract.
 
 ## 4. Evaluating a contract (`verification.jobs`, VER-3, M5-Q9)
@@ -58,19 +59,28 @@ A contract is a sealed Evidence artifact in format `combraton-verification-contr
 
 - **Outcome: a job reference only.** `{ job, state: "queued" }`. A command never returns property results; the report is a separate receipt (VER-3).
 - **Evaluator capability.** Each installed evaluator version is advertised as the capability predicate `verification.evaluator.<id>.v<version>` (CORE §17). Evaluator IDs match `[a-z][a-z0-9_-]{0,63}` and versions `[a-z0-9_-]{1,32}`. Neither contains a dot, so the encoding is unambiguous: the name has exactly five dot-separated segments, the fourth is the ID, and the fifth is `v` followed by the version. Every predicate name is therefore a Core dotted name. For example, evaluator `journey` version `2` is `verification.evaluator.journey.v2`, and version `v2` would be `verification.evaluator.journey.vv2`. If that predicate's status is not `supported`, the command is refused with `capability_unavailable` at step 7. The provider never substitutes another version.
-- **Order at step 7.**
-  1. Evaluator capability.
+- **ID shared with receipts.** A job's receipt takes the job's ID. An `evaluate_contract` whose job ID already names a receipt, or a `receipt.record` whose receipt ID already names a job, is `precondition_failed` with `failed: [ { subject, expected: 0 } ]` naming the existing subject.
+- **Order at step 7.** After the Core revision preconditions (CORE §10):
+  0. The job ID names no receipt.
+  1. Evaluator capability. A version the snapshot does not list has no evidence of support, so its status is `unknown` (CORE §17.1); a listed version reports its own status.
   2. Contract readability (§3).
-  3. **Subject roles.** A missing, duplicated or unknown role is `invalid_envelope` at `/payload/subjects`, with details `missing`, `duplicated` or `unknown`.
+  3. **Subject roles.** A missing, duplicated or unknown role is `invalid_envelope` at `/payload/subjects`, with details `missing`, `duplicated` and `unknown`, each a list of names and always all three present.
 - **Pinned evaluator.** The job records `evaluator: { id, version }` and never changes it. Its receipt names that evaluator.
 - **Durable property results.** A verifier records each property result on the job as it is evaluated, in the owner transaction that observes it. A recorded result is never rewritten.
-- `verification.job.inspect` (query) `{ job }` → `{ job, state: "queued" | "running" | "completed", contract, subjects, evaluator, recorded: [ { property_id, result, reason? } ], receipt? }`. A job is `completed` exactly when its receipt is issued.
+- `verification.job.inspect` (query) `{ job }` → `{ job, state: "queued" | "running" | "completed", contract, subjects, evaluator, recorded: [ { property_id, result, reason? } ], receipt? }`. `recorded` lists only results the evaluator reported; results assigned at completion (below) appear only in the receipt. A job is `queued` when submitted, `running` from its first evaluation, and `completed` exactly when its receipt is issued; each change appends `verification.job.changed`.
 - **Losing the pinned evaluator.** When the predicate of the job's evaluator is no longer `supported`, including across a provider restart, the job completes at its next evaluation:
   - recorded results are kept;
   - every property without a recorded result is `indeterminate` with reason `evaluator_unavailable`.
 
   It is never `pass` or `fail`. A later installed version never continues the job.
 - **Ending without a result.** When the evaluator finishes without reporting a property, that property is `not_evaluated` with reason `not_reported`.
+- **Issued receipt members.**
+  - `environment` holds only the anchors the evaluator observed, never the requested ones (`{ anchors: {} }` when it observed none);
+  - `inputs` and `provenance` are what the evaluator reports (empty for the reference);
+  - `scope` is the contract's `outcome`;
+  - `observed_from` is when the job started running and `observed_until` when it completed.
+
+  Issuing appends `verification.receipt.issued`, then the receipt artifact's events, then `verification.job.changed` to `completed`.
 
 ## 5. Receipts (VER-1)
 
@@ -91,16 +101,17 @@ Receipt content, the canonical JSON sealed in format `combraton-verification-rec
 | `job` | The job, or `null` for a recorded receipt |
 | `provenance` | Execution and Evidence references for how the evaluation ran |
 
-- **Complete listing.** The following are `invalid_envelope`, with `path` and details `missing`, `duplicated` or `unknown`:
+- **Complete listing.** The following are `invalid_envelope`, with `path` and details `missing`, `duplicated` and `unknown` (each a list, all three always present):
   - a receipt whose subject roles or property IDs miss, duplicate or add to the contract's, at `/payload/subjects` or `/payload/properties`;
-  - a `reason` missing where it is required, or present where it is not.
+  - a `reason` missing where it is required, or present where it is not (step 2);
+  - `observed_from` after `observed_until`, at `/payload/observed_until` (step 2).
 
   Unavailable checks are listed as `not_evaluated` or `indeterminate`; they are never omitted and never collapsed into `pass` or `fail` (VER-1).
-- **Recording** (`verification.record`). `verification.receipt.record` (command): subject `{ kind: "verification.receipt", id }`, precondition revision 0. Its payload is the receipt content without `format`, `receipt`, `evaluator.principal` and `job`. The holder checks the contract (§3) and the listing, seals the receipt and records the mapping.
+- **Recording** (`verification.record`). `verification.receipt.record` (command): subject `{ kind: "verification.receipt", id }`, precondition revision 0. Its payload is the receipt content without `format`, `receipt`, `evaluator.principal` and `job`. The holder checks the contract (§3) and the listing, seals the receipt and records the mapping. The receipt is the command's primary subject, so `verification.receipt.recorded` precedes the artifact's events (CORE §16.3). The artifact's events are Evidence events for its publication (EVIDENCE §12). This profile does not fix which ones a holder's own publication appends; for example, `evidence.artifact.appended` may or may not appear, so readers MUST NOT depend on the artifact's event count or revision.
 - **Issuing.** A completed job's receipt has the job's ID as its receipt ID.
 - **Artifact convention** (conformance providers only, as CONTEXT §12): receipt `r` is sealed as artifact `receipt.<r>`.
 - Receipts are immutable. Re-evaluating produces a new receipt; a failed receipt stays visible after a later pass.
-- `verification.receipt.inspect` (query) `{ receipt }` → `{ reference, content }`.
+- `verification.receipt.inspect` (query) `{ receipt }` → `{ reference, content }`. When the sealed bytes cannot be read or fail integrity, the query is `unavailable`; content is never regenerated.
 
 ## 6. Results are scoped observations (VER-2)
 
@@ -139,21 +150,21 @@ Receipt content, the canonical JSON sealed in format `combraton-verification-rec
 |---|---|---|
 | Receipt | The reference's artifact or digest differs from the recorded mapping: `receipt_reference_mismatch` | The sealed bytes cannot be read or fail integrity: `receipt_unavailable` |
 | Contract | The receipt's contract reference is not exactly the requested reference (provider, artifact and digest): `contract_mismatch` | The requested contract cannot be read: `contract_unavailable` |
-| Subjects | Some role's digest differs from the receipt's: `subject_mismatch` | — |
-| Environment | A required anchor's value differs between request and receipt: `environment_mismatch` | A required anchor is missing from the request or the receipt: `environment_unverified` |
-| Evaluator | `evaluators` is listed and excludes the receipt's evaluator: `evaluator_not_permitted` | — |
-| Time | `assessed_at` is before `observed_until`: `before_observation`. `assessed_at` is at or after `valid_until`, or later than `observed_until` plus `max_age_seconds`: `stale`. | — |
+| Subjects | Some role's digest differs from the receipt's: `subject_mismatch` | The receipt cannot be used: its receipt check's reason |
+| Environment | A required anchor's value differs between request and receipt: `environment_mismatch` | A required anchor is missing from the request or the receipt: `environment_unverified`. The contract cannot be read: `contract_unavailable`. The receipt cannot be used: its reason. |
+| Evaluator | `evaluators` is listed and excludes the receipt's evaluator: `evaluator_not_permitted` | The contract cannot be read: `contract_unavailable`. The receipt cannot be used: its reason. |
+| Time | `assessed_at` is before `observed_until`: `before_observation`. `assessed_at` is at or after `valid_until`, or strictly later than `observed_until` plus `max_age_seconds`: `stale`. At exactly `observed_until` plus `max_age_seconds` the receipt is still current. | The receipt cannot be used: its reason |
 
 `before_observation` means a result dated after the requested time cannot show what was known then.
 
 **Property status.**
 - If any check is `failed` or `unverifiable`, every property is `not_satisfied`, with those reasons, whatever its recorded result.
 - Otherwise `pass` is `satisfied`, `fail` is `failed`, and `not_evaluated` or `indeterminate` is `not_satisfied`, with the result as its reason.
-- When the contract or the receipt's bytes cannot be read, `properties` is empty and `overall` is `not_satisfied`: no property result is presented without both.
+- When the contract cannot be read, or the receipt cannot be used (a reference that differs from its mapping, or bytes that cannot be read), `properties` is empty and `overall` is `not_satisfied`: no property result is presented without both. A receipt that cannot be used also makes the contract-mismatch comparison `unverifiable` with the receipt's reason.
 
-**Overall.** `failed` if any required property is `failed`; otherwise `not_satisfied` if any required property is not `satisfied`; otherwise `satisfied`.
+**Overall.** `not_satisfied` if any check is `failed` or `unverifiable`, or if `properties` is empty; otherwise `failed` if any required property is `failed`; otherwise `not_satisfied` if any required property is not `satisfied`; otherwise `satisfied`. A contract with only optional properties is therefore `satisfied` only when every check passed.
 
-**Authorization.** A receipt the reader may not read is `permission_denied`, identical to a nonexistent receipt (CORE-12). Assessment needs `verification.read` on the receipt and `evidence.read` on the contract's artifact subject.
+**Authorization.** A reader not authorized for the receipt gets `permission_denied`, identical for an existing and a nonexistent receipt (CORE-12); an authorized reader naming a receipt that does not exist gets `not_found`. Assessment needs `verification.read` on the receipt and `evidence.read` on the contract's artifact subject.
 
 ## 8. Rights
 
@@ -180,17 +191,17 @@ Reading a contract or cited evidence needs Evidence rights at its provider.
 |---|---|---|
 | `verification.job.changed` | job | `{ state, evaluator }` |
 | `verification.property.recorded` | job | `{ property_id, result, reason? }` |
-| `verification.receipt.issued` | receipt | `{ reference, job }` |
+| `verification.receipt.issued` | receipt | `{ reference, job }`, where `job` is the job ID |
 | `verification.receipt.recorded` | receipt | `{ reference }` |
 
 ## 11. Conformance and test controls
 
 - **Reference participants only.** A reference verifier drives a **scripted evaluator** from launch configuration `verifier` (*candidate*):
   - `evaluators: [ { id, version, status } ]`, from which the capability predicates are derived;
-  - `scripts`, mapping job IDs to steps: `wait_until` (instant), `property` (`property_id`, `result`, `reason?`), `observe` (`environment` anchors) and `complete`;
+  - `scripts`, mapping job IDs to steps: `wait_until` (instant), `property` (`property_id`, `result`, and `reason` exactly for `not_evaluated` and `indeterminate`), `observe` (`anchors` the evaluator observed), `valid_until` (instant) and `complete`;
   - `default_script` for other jobs.
 
-  Steps advance no later than the provider's next request, as EXECUTION §15. Restarting with different `evaluators` simulates an upgraded or lost evaluator (SCN-7).
+  Steps advance no later than the provider's next request, as EXECUTION §15. A job with no script completes at once; a script that runs out without `complete` leaves the job `running`. Restarting with different `evaluators` simulates an upgraded or lost evaluator (SCN-7).
 - No fixture depends on a real browser, CI system or model reviewer.
 
 ## 12. What verification does not establish

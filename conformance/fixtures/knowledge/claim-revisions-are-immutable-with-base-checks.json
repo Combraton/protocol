@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.claim-revisions-are-immutable-with-base-checks",
-  "version": 1,
+  "version": 2,
   "title": "Claim revisions are immutable and carry a digest any reader can recompute; revise checks its base revision and digest; the producer is the session principal; invalid planes, health, ancestry and validity are refused",
   "requirements": [
     "KNW-1",
@@ -24,7 +24,8 @@
   "polarity": "negative",
   "kills": [
     "claim-revision-overwritten",
-    "revise-base-unchecked"
+    "revise-base-unchecked",
+    "empty-roots-accepted"
   ],
   "steps": [
     {
@@ -279,12 +280,26 @@
           "record": {
             "statement": {
               "value": "v1"
-            },
-            "$canonical_sha256": {
-              "$var": "d_c1"
             }
           },
           "current_revision": 2
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "knowledge.claim.inspect",
+      "payload": {
+        "claim": "c1",
+        "revision": 1
+      },
+      "expect": {
+        "ok": {
+          "record": {
+            "$canonical_sha256": {
+              "$var": "d_c1"
+            }
+          }
         }
       }
     },
@@ -676,6 +691,192 @@
         "error": "invalid_envelope",
         "details": {
           "path": "/payload/validity"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.claim.propose",
+      "command_id": "claim-propose-c-empty-interval",
+      "subject": {
+        "kind": "knowledge.claim",
+        "id": "c-empty-interval"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.claim",
+            "id": "c-empty-interval"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "plane": "observed",
+        "statement": {
+          "subject": {
+            "kind": "app.service",
+            "id": "billing"
+          },
+          "predicate": "queue",
+          "value": "v1",
+          "cardinality": "single"
+        },
+        "scope": {
+          "id": "svc",
+          "qualifiers": {}
+        },
+        "support": [],
+        "derivation": {
+          "kind": "deterministic",
+          "inputs": []
+        },
+        "validity": {
+          "from": "2030-01-01T00:00:00Z",
+          "until": "2030-01-01T00:00:00Z"
+        }
+      },
+      "expect": {
+        "error": "invalid_envelope",
+        "details": {
+          "path": "/payload/validity"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.claim.propose",
+      "command_id": "claim-propose-c-rootless",
+      "subject": {
+        "kind": "knowledge.claim",
+        "id": "c-rootless"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.claim",
+            "id": "c-rootless"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "plane": "observed",
+        "statement": {
+          "subject": {
+            "kind": "app.service",
+            "id": "billing"
+          },
+          "predicate": "queue",
+          "value": "v1",
+          "cardinality": "single"
+        },
+        "scope": {
+          "id": "svc",
+          "qualifiers": {}
+        },
+        "support": [
+          {
+            "support_id": "s1",
+            "evidence": {
+              "provider": "conformance-provider",
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "a1"
+              },
+              "digest": "sha256:f55ff16f66f43360266b95db6f8fec01d76031054306ae4a4b380598f6cfd114"
+            },
+            "ancestry": {
+              "completeness": "complete",
+              "roots": []
+            }
+          }
+        ],
+        "derivation": {
+          "kind": "deterministic",
+          "inputs": []
+        }
+      },
+      "expect": {
+        "error": "invalid_envelope",
+        "details": {
+          "path": "/payload/support/0/ancestry/roots"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.claim.propose",
+      "command_id": "claim-propose-c-dup-support",
+      "subject": {
+        "kind": "knowledge.claim",
+        "id": "c-dup-support"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.claim",
+            "id": "c-dup-support"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "plane": "observed",
+        "statement": {
+          "subject": {
+            "kind": "app.service",
+            "id": "billing"
+          },
+          "predicate": "queue",
+          "value": "v1",
+          "cardinality": "single"
+        },
+        "scope": {
+          "id": "svc",
+          "qualifiers": {}
+        },
+        "support": [
+          {
+            "support_id": "s1",
+            "evidence": {
+              "provider": "conformance-provider",
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "a1"
+              },
+              "digest": "sha256:f55ff16f66f43360266b95db6f8fec01d76031054306ae4a4b380598f6cfd114"
+            },
+            "ancestry": {
+              "completeness": "unknown",
+              "roots": []
+            }
+          },
+          {
+            "support_id": "s1",
+            "evidence": {
+              "provider": "conformance-provider",
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "a2"
+              },
+              "digest": "sha256:2c3a4249d77070058649dbd822dcaf7957586fce428cfb2ca88b94741eda8b07"
+            },
+            "ancestry": {
+              "completeness": "unknown",
+              "roots": []
+            }
+          }
+        ],
+        "derivation": {
+          "kind": "deterministic",
+          "inputs": []
+        }
+      },
+      "expect": {
+        "error": "invalid_envelope",
+        "details": {
+          "path": "/payload/support"
         }
       }
     },

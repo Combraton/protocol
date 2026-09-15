@@ -5,6 +5,46 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "dependency-read-unauthorized",
+        "evaluates without knowledge.read on the claims its dependencies name",
+    ),
+    (
+        "authority-binds-under-grant",
+        "lets an authority principal bind a scope while acting under a grant",
+    ),
+    (
+        "empty-roots-accepted",
+        "accepts complete or partial ancestry that declares no roots",
+    ),
+    (
+        "absent-evaluator-unsupported",
+        "reports an evaluator version the snapshot does not list as unsupported instead of unknown",
+    ),
+    (
+        "receipt-events-artifact-first",
+        "appends the receipt artifact's events before the receipt's own event",
+    ),
+    (
+        "overall-ignores-checks",
+        "derives overall from required properties even when a check failed",
+    ),
+    (
+        "issued-environment-requested",
+        "reports the requested environment as observed in an issued receipt",
+    ),
+    (
+        "contract-unverifiable-checks-passed",
+        "passes environment and evaluator checks when the contract cannot be read",
+    ),
+    (
+        "receipt-id-collision-accepted",
+        "lets a job and a recorded receipt share one ID",
+    ),
+    (
+        "claims-format-without-negotiation",
+        "publishes packet format /2 for requests submitted without context.claims",
+    ),
+    (
         "dependency-digest-ignored",
         "resolves a dependency by claim and revision whatever its digest",
     ),

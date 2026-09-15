@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "verification.reconnect-with-changed-evaluator-keeps-pinned-meaning",
-  "version": 1,
+  "version": 2,
   "title": "A provider restarts with its evaluator version changed: the caller renegotiates and sees the capability change; the pinned job keeps its recorded result, marks unfinished properties indeterminate and never switches versions; the old version is capability_unavailable, the new one runs, and earlier receipts and knowledge evaluations keep their evaluator",
   "requirements": [
     "SCN-7",
@@ -684,7 +684,7 @@
         "error": "capability_unavailable",
         "details": {
           "capability": "verification.evaluator.journey.v1",
-          "status": "unsupported"
+          "status": "unknown"
         }
       }
     },

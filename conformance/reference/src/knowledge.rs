@@ -120,14 +120,20 @@ pub fn validate(
                     return bad("/payload/support", "duplicate support_id");
                 }
                 seen.push(entry["support_id"].clone());
-                if entry["ancestry"]["completeness"] == "unknown"
-                    && entry["ancestry"]["roots"]
-                        .as_array()
-                        .is_some_and(|r| !r.is_empty())
-                {
+                let unknown = entry["ancestry"]["completeness"] == "unknown";
+                let declared = entry["ancestry"]["roots"]
+                    .as_array()
+                    .is_some_and(|r| !r.is_empty());
+                if unknown && declared {
                     return Err((
                         format!("/payload/support/{index}/ancestry/roots"),
                         "unknown ancestry declares no roots",
+                    ));
+                }
+                if !unknown && !declared && !mutants.on("empty-roots-accepted") {
+                    return Err((
+                        format!("/payload/support/{index}/ancestry/roots"),
+                        "complete or partial ancestry declares at least one root",
                     ));
                 }
             }
@@ -576,7 +582,9 @@ fn availability(
         }
     }
     let total = available + unavailable + purged + unknown;
-    let state = if total > 0 && available == total {
+    let state = if total == 0 {
+        "unknown"
+    } else if available == total {
         "complete"
     } else if available > 0 {
         "partial"

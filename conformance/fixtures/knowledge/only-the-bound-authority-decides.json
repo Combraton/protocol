@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.only-the-bound-authority-decides",
-  "version": 1,
+  "version": 2,
   "title": "Only the scope's bound authority records reliance decisions: grants and derivation labels confer nothing, a second binding and stale or unknown epochs are refused, the authority may adopt its own claim recorded as author and decider, and a transfer keeps earlier decisions in effect",
   "requirements": [
     "KNW-6"
@@ -28,7 +28,8 @@
     "transfer-resets-reliance",
     "decision-epoch-optional",
     "decision-supersession-unchecked",
-    "bind-by-grant"
+    "bind-by-grant",
+    "authority-binds-under-grant"
   ],
   "steps": [
     {
@@ -216,6 +217,84 @@
         "delegation": {
           "allowed": false,
           "max_depth": 0
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "grant-issue-g-owner",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-owner"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-owner"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "owner",
+        "audience": "conformance-provider",
+        "rights": [
+          "knowledge.propose",
+          "knowledge.read",
+          "knowledge.decide"
+        ],
+        "resources": [
+          {
+            "kind": "knowledge.claim"
+          },
+          {
+            "kind": "knowledge.decision"
+          },
+          {
+            "kind": "knowledge.conflict"
+          },
+          {
+            "kind": "knowledge.evaluation"
+          },
+          {
+            "kind": "knowledge.authority"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.authority.bind",
+      "command_id": "authority-bind-owned-under-grant",
+      "subject": {
+        "kind": "knowledge.authority",
+        "id": "owned-under-grant"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.authority",
+            "id": "owned-under-grant"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "authority": "owner"
+      },
+      "set": {
+        "grant": "g-owner"
+      },
+      "expect": {
+        "error": "permission_denied",
+        "details": {
+          "reason": "not_authority"
         }
       }
     },
@@ -762,6 +841,152 @@
       }
     },
     {
+      "step": "stop"
+    },
+    {
+      "step": "start",
+      "config": {
+        "principal": "model",
+        "authority_principals": [
+          "owner"
+        ]
+      }
+    },
+    {
+      "step": "negotiate",
+      "payload": {
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.events",
+              "core.grants"
+            ],
+            "optional_features": []
+          },
+          {
+            "name": "knowledge",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          }
+        ]
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.decision.record",
+      "command_id": "model-reuses-decision-id",
+      "subject": {
+        "kind": "knowledge.decision",
+        "id": "dec-lead-adopts"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.decision",
+            "id": "dec-lead-adopts"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "c-model",
+          "revision": 1,
+          "digest": {
+            "$var": "d_c-model"
+          }
+        },
+        "decision": "rejected",
+        "validation_basis": {
+          "evidence": [],
+          "receipts": []
+        },
+        "rationale": "reusing a decision ID"
+      },
+      "set": {
+        "authority_epoch": 1,
+        "grant": "g-model"
+      },
+      "expect": {
+        "error": "precondition_failed",
+        "details": {
+          "failed": [
+            {
+              "subject": {
+                "kind": "knowledge.decision",
+                "id": "dec-lead-adopts"
+              },
+              "expected": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "stop"
+    },
+    {
+      "step": "start",
+      "config": {
+        "principal": "lead",
+        "authority_principals": [
+          "owner"
+        ]
+      }
+    },
+    {
+      "step": "negotiate",
+      "payload": {
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.events",
+              "core.grants"
+            ],
+            "optional_features": []
+          },
+          {
+            "name": "knowledge",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          }
+        ]
+      }
+    },
+    {
       "step": "command",
       "operation": "knowledge.decision.record",
       "command_id": "decision-record-dec-bad-digest",
@@ -1267,7 +1492,8 @@
         "ok": {
           "scope": "svc",
           "authority": "lead2",
-          "epoch": 2
+          "epoch": 2,
+          "revision": 2
         }
       }
     },

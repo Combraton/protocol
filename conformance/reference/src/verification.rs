@@ -80,14 +80,19 @@ pub fn predicates(config: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn status(capabilities: &Value, name: &str) -> String {
+fn status(capabilities: &Value, name: &str, mutants: &Mutants) -> String {
     capabilities
         .as_array()
         .into_iter()
         .flatten()
         .find(|p| p["name"] == name)
         .and_then(|p| p["status"].as_str())
-        .unwrap_or("unsupported")
+        // A predicate the snapshot does not list has no evidence of support (CORE section 17.1).
+        .unwrap_or(if mutants.on("absent-evaluator-unsupported") {
+            "unsupported"
+        } else {
+            "unknown"
+        })
         .to_string()
 }
 
@@ -155,15 +160,42 @@ pub fn read_contract(
     }
     let bytes = crate::evidence::sealed_bytes(tx, id)?;
     match serde_json::from_slice::<Value>(&bytes) {
-        Ok(contract)
-            if contract["format"] == CONTRACT_FORMAT
-                && contract["subjects"].is_array()
-                && contract["properties"].is_array() =>
-        {
-            Ok(Ok(contract))
-        }
+        Ok(contract) if contract_well_formed(&contract) => Ok(Ok(contract)),
         _ => unavailable("invalid_format"),
     }
+}
+
+/// A readable contract (VERIFICATION section 3): the format, unique non-empty roles and property
+/// IDs, and known layers.
+fn contract_well_formed(contract: &Value) -> bool {
+    const LAYERS: [&str; 6] = [
+        "static",
+        "component",
+        "integration",
+        "journey",
+        "runtime_path",
+        "qualitative",
+    ];
+    let unique = |list: &Value, key: &str| {
+        let items = names(list, key);
+        !items.is_empty()
+            && list.as_array().is_some_and(|l| l.len() == items.len())
+            && items
+                .iter()
+                .enumerate()
+                .all(|(i, n)| !items[..i].contains(n))
+    };
+    contract["format"] == CONTRACT_FORMAT
+        && unique(&contract["subjects"], "role")
+        && unique(&contract["properties"], "property_id")
+        && contract["properties"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|p| {
+                p["layer"].as_str().is_some_and(|l| LAYERS.contains(&l))
+                    && p["required"].is_boolean()
+            })
 }
 
 /// Missing, duplicated or unknown names against the contract's list.
@@ -217,8 +249,16 @@ pub fn check(
     let mutants = ctx.mutants;
     match operation {
         "verification.evaluate_contract" => {
+            // A job's receipt takes the job's ID, so the ID must not already name a receipt.
+            let id = params["subject"]["id"].as_str().unwrap_or_default();
+            if load(tx, RECEIPT, id)?.is_some() && !mutants.on("receipt-id-collision-accepted") {
+                return Ok(Err((
+                    "precondition_failed",
+                    json!({"failed": [{"subject": subject(RECEIPT, id), "expected": 0}]}),
+                )));
+            }
             let name = predicate_name(&payload["evaluator"]);
-            let current = status(ctx.capabilities, &name);
+            let current = status(ctx.capabilities, &name, mutants);
             if current != "supported"
                 && pinned_substitute(ctx.capabilities, &payload["evaluator"], mutants).is_none()
             {
@@ -240,6 +280,13 @@ pub fn check(
             Ok(roles_refusal(&contract, &payload["subjects"]).map_or(Ok(()), Err))
         }
         "verification.receipt.record" => {
+            let id = params["subject"]["id"].as_str().unwrap_or_default();
+            if load(tx, JOB, id)?.is_some() && !mutants.on("receipt-id-collision-accepted") {
+                return Ok(Err((
+                    "precondition_failed",
+                    json!({"failed": [{"subject": subject(JOB, id), "expected": 0}]}),
+                )));
+            }
             let contract = match read_contract(
                 tx,
                 &payload["contract"],
@@ -318,6 +365,7 @@ fn seal_receipt(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn store_receipt(
     tx: &Transaction,
     id: &str,
@@ -326,15 +374,26 @@ fn store_receipt(
     now: &str,
     event: &'static str,
     job: Option<&str>,
+    mutants: &Mutants,
 ) -> rusqlite::Result<(Value, Vec<Draft>)> {
-    let (reference, mut drafts) = seal_receipt(tx, id, content, ctx_provider, now)?;
+    let (reference, artifact_drafts) = seal_receipt(tx, id, content, ctx_provider, now)?;
     let record = json!({"reference": reference, "recorded_at": now});
     save(tx, RECEIPT, id, 1, &record)?;
     let mut payload = json!({"reference": reference});
     if let Some(job) = job {
         payload["job"] = json!(job);
     }
-    drafts.push((event, subject(RECEIPT, id), 1, payload));
+    // The receipt is the primary subject; its event comes first (CORE section 16.3).
+    let receipt_event: Draft = (event, subject(RECEIPT, id), 1, payload);
+    let drafts = if mutants.on("receipt-events-artifact-first") {
+        let mut all = artifact_drafts;
+        all.push(receipt_event);
+        all
+    } else {
+        let mut all = vec![receipt_event];
+        all.extend(artifact_drafts);
+        all
+    };
     Ok((reference, drafts))
 }
 
@@ -361,7 +420,7 @@ pub fn apply(
     match operation {
         "verification.evaluate_contract" => {
             let name = predicate_name(&payload["evaluator"]);
-            let evaluator = if status(ctx.capabilities, &name) == "supported" {
+            let evaluator = if status(ctx.capabilities, &name, mutants) == "supported" {
                 payload["evaluator"].clone()
             } else {
                 pinned_substitute(ctx.capabilities, &payload["evaluator"], mutants)
@@ -416,6 +475,7 @@ pub fn apply(
                 &ctx.now,
                 "verification.receipt.recorded",
                 None,
+                mutants,
             )?;
             if mutants.on("failure-marks-execution")
                 && payload["properties"]
@@ -513,7 +573,7 @@ fn advance(
 ) -> rusqlite::Result<()> {
     let job_subject = subject(JOB, id);
     // A lost pinned evaluator ends the job; recorded results stay (VERIFICATION section 4).
-    if status(capabilities, &predicate_name(&job["evaluator"])) != "supported" {
+    if status(capabilities, &predicate_name(&job["evaluator"]), mutants) != "supported" {
         if mutants.on("lost-evaluator-switches-version")
             && let Some(other) = pinned_substitute_any(capabilities, &job["evaluator"])
         {
@@ -653,7 +713,13 @@ fn complete(
         "subjects": job["subjects"],
         "contract": job["contract"],
         "evaluator": {"id": job["evaluator"]["id"], "version": job["evaluator"]["version"], "principal": provider_id},
-        "environment": job.get("observed_environment").cloned().unwrap_or_else(|| job["environment"].clone()),
+        "environment": job.get("observed_environment").cloned().unwrap_or_else(|| {
+            if mutants.on("issued-environment-requested") {
+                job["environment"].clone()
+            } else {
+                json!({"anchors": {}})
+            }
+        }),
         "inputs": [],
         "properties": properties,
         "observed_from": job.get("started_at").cloned().unwrap_or_else(|| job["submitted_at"].clone()),
@@ -671,6 +737,7 @@ fn complete(
         now,
         "verification.receipt.issued",
         Some(id),
+        mutants,
     )?;
     drafts.extend(receipt_drafts);
     job["state"] = json!("completed");
@@ -699,14 +766,43 @@ pub fn inspect_job(tx: &Transaction, id: &str) -> rusqlite::Result<Option<Value>
     }))
 }
 
-pub fn inspect_receipt(tx: &Transaction, id: &str) -> rusqlite::Result<Option<Value>> {
+/// `verification.receipt.inspect`: `Ok(None)` for no such receipt, `Err` when its sealed bytes
+/// cannot be read (VERIFICATION section 5); content is never regenerated.
+pub fn inspect_receipt(
+    tx: &Transaction,
+    id: &str,
+    evidence_config: &Value,
+    mutants: &Mutants,
+) -> rusqlite::Result<Result<Option<Value>, Refusal>> {
     let Some((_, record)) = load(tx, RECEIPT, id)? else {
-        return Ok(None);
+        return Ok(Ok(None));
     };
+    if !receipt_readable(tx, &record["reference"], evidence_config, mutants)? {
+        return Ok(Err(("unavailable", json!({}))));
+    }
     let content = content_of(tx, &record["reference"])?.unwrap_or(Value::Null);
-    Ok(Some(
+    Ok(Ok(Some(
         json!({"reference": record["reference"], "content": content}),
-    ))
+    )))
+}
+
+fn receipt_readable(
+    tx: &Transaction,
+    reference: &Value,
+    evidence_config: &Value,
+    mutants: &Mutants,
+) -> rusqlite::Result<bool> {
+    let artifact_id = reference["artifact"]["artifact"]["id"]
+        .as_str()
+        .unwrap_or_default();
+    Ok(match load(tx, crate::evidence::ARTIFACT, artifact_id)? {
+        Some((_, artifact)) => {
+            let observed =
+                crate::evidence::observed(tx, artifact_id, &artifact, evidence_config, mutants)?;
+            observed["state"] == "available" || mutants.on("receipt-bytes-unchecked")
+        }
+        None => false,
+    })
 }
 
 /// `verification.receipt.assess` (VERIFICATION section 7).
@@ -738,7 +834,10 @@ pub fn assess(
     // Receipt.
     let mapped = &record["reference"];
     let mut content = Value::Null;
+    // Why the receipt cannot be used, for the checks that depend on it.
+    let mut receipt_reason = "receipt_unavailable";
     if payload["receipt"] != *mapped {
+        receipt_reason = "receipt_reference_mismatch";
         set(
             &mut checks,
             "receipt",
@@ -818,7 +917,7 @@ pub fn assess(
             &mut checks,
             "contract",
             "unverifiable",
-            vec!["receipt_unavailable"],
+            vec![receipt_reason],
         );
     }
     if have_content {
@@ -850,6 +949,10 @@ pub fn assess(
         // Environment.
         let mut env_status = "passed";
         let mut env_reasons = vec![];
+        if contract.is_none() && !mutants.on("contract-unverifiable-checks-passed") {
+            env_status = "unverifiable";
+            env_reasons = vec!["contract_unavailable"];
+        }
         if let Some(contract) = &contract {
             for anchor in contract["environment"]["required_anchors"]
                 .as_array()
@@ -877,16 +980,25 @@ pub fn assess(
                 .as_array()
                 .is_none_or(|list| list.iter().any(|e| *e == content["evaluator"]["id"]))
         });
-        set(
-            &mut checks,
-            "evaluator",
-            if permitted { "passed" } else { "failed" },
-            if permitted {
-                vec![]
-            } else {
-                vec!["evaluator_not_permitted"]
-            },
-        );
+        if contract.is_none() && !mutants.on("contract-unverifiable-checks-passed") {
+            set(
+                &mut checks,
+                "evaluator",
+                "unverifiable",
+                vec!["contract_unavailable"],
+            );
+        } else {
+            set(
+                &mut checks,
+                "evaluator",
+                if permitted { "passed" } else { "failed" },
+                if permitted {
+                    vec![]
+                } else {
+                    vec!["evaluator_not_permitted"]
+                },
+            );
+        }
         // Time.
         let until = content["observed_until"].as_str().unwrap_or_default();
         let mut time_reasons = vec![];
@@ -917,12 +1029,7 @@ pub fn assess(
         );
     } else {
         for name in ["subjects", "environment", "evaluator", "time"] {
-            set(
-                &mut checks,
-                name,
-                "unverifiable",
-                vec!["receipt_unavailable"],
-            );
+            set(&mut checks, name, "unverifiable", vec![receipt_reason]);
         }
     }
     let mut reasons: Vec<Value> = Vec::new();
@@ -974,7 +1081,7 @@ pub fn assess(
         .iter()
         .filter(|p| p["required"] == true)
         .collect();
-    let overall = if properties.is_empty() {
+    let overall = if properties.is_empty() || (blocking && !mutants.on("overall-ignores-checks")) {
         "not_satisfied"
     } else if required.iter().any(|p| p["status"] == "failed") {
         "failed"

@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "verification.assessment-never-passes-missing-unavailable-or-outdated",
-  "version": 1,
+  "version": 2,
   "title": "Assessment is read-only and states its time and basis: every contract role must be named once; exact contract references, subject digests, required environment anchors, permitted evaluators, observation time, validity and freshness are checked; unverifiable, stale, not evaluated and indeterminate are never satisfied; a caller-selected time never establishes present validity",
   "requirements": [
     "VER-4"
@@ -40,7 +40,9 @@
     "stale-ignored",
     "environment-unverified-satisfied",
     "assess-roles-incomplete-accepted",
-    "receipt-bytes-unchecked"
+    "receipt-bytes-unchecked",
+    "overall-ignores-checks",
+    "contract-unverifiable-checks-passed"
   ],
   "steps": [
     {
@@ -394,6 +396,163 @@
             "state": "sealed"
           }
         }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.prepare",
+      "command_id": "upload-prepare-c-optional",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-optional"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-optional"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "digest": "sha256:1e622517c066326e427d352a0467561b2771cf76b95f765089b29d79557e0bc2",
+        "size": 377,
+        "media_type": "text/plain",
+        "producer": {
+          "producer_id": "fixture-producer"
+        },
+        "source": {
+          "kind": "test_report",
+          "id": "run-1"
+        },
+        "scope": "project-a",
+        "capture": {
+          "captured_at": "2030-01-01T00:00:00Z",
+          "anchors": [
+            {
+              "kind": "code_tree",
+              "id": "tree-1"
+            }
+          ]
+        },
+        "coverage": {
+          "completeness": "complete",
+          "covered": [
+            "report"
+          ],
+          "gaps": []
+        },
+        "retention_class": "standard"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.append",
+      "command_id": "upload-append-c-optional",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-optional"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-optional"
+          },
+          "revision": 1
+        }
+      ],
+      "payload": {
+        "offset": 0,
+        "data_base64": "eyJlbnZpcm9ubWVudCI6eyJyZXF1aXJlZF9hbmNob3JzIjpbXX0sImV2YWx1YXRvcnMiOm51bGwsImZvcm1hdCI6ImNvbWJyYXRvbi12ZXJpZmljYXRpb24tY29udHJhY3QvMSIsImZyZXNobmVzcyI6bnVsbCwib3V0Y29tZSI6InVwbG9hZCBwcm9kdWNlcyB0aGUgZXhwZWN0ZWQgYXJ0aWZhY3QiLCJwcm9wZXJ0aWVzIjpbeyJsYXllciI6InF1YWxpdGF0aXZlIiwicHJvcGVydHlfaWQiOiJkb2NzLnJldmlldyIsInJlcXVpcmVkIjpmYWxzZSwic3RhdGVtZW50IjoicmVhZHMgd2VsbCJ9XSwic3ViamVjdHMiOlt7ImtpbmQiOiJyZXBvc2l0b3J5X3RyZWUiLCJyb2xlIjoidHJlZSJ9LHsia2luZCI6ImV2aWRlbmNlLmFydGlmYWN0Iiwicm9sZSI6Im91dHB1dCJ9XX0="
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.seal",
+      "command_id": "seal-c-optional",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-optional"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-optional"
+          },
+          "revision": 2
+        }
+      ],
+      "payload": {},
+      "expect": {
+        "ok": {
+          "outcome": {
+            "state": "sealed"
+          }
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "verification.receipt.record",
+      "command_id": "receipt-record-r-optional",
+      "subject": {
+        "kind": "verification.receipt",
+        "id": "r-optional"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "verification.receipt",
+            "id": "r-optional"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-optional"
+          },
+          "digest": "sha256:1e622517c066326e427d352a0467561b2771cf76b95f765089b29d79557e0bc2"
+        },
+        "evaluator": {
+          "id": "journey",
+          "version": "1"
+        },
+        "environment": {
+          "anchors": {}
+        },
+        "inputs": [],
+        "properties": [
+          {
+            "property_id": "docs.review",
+            "result": "pass",
+            "evidence": []
+          }
+        ],
+        "observed_from": "2030-01-01T00:00:00Z",
+        "observed_until": "2030-01-01T00:01:40Z",
+        "valid_until": null,
+        "scope": "upload journey on staging",
+        "provenance": []
+      },
+      "capture": {
+        "ra_r-optional": "/result/outcome/reference/artifact/digest"
       }
     },
     {
@@ -1563,6 +1722,228 @@
       "payload": {
         "receipt": {
           "provider": "conformance-provider",
+          "receipt": "r-valid",
+          "artifact": {
+            "provider": "conformance-provider",
+            "artifact": {
+              "kind": "evidence.artifact",
+              "id": "receipt.r-valid"
+            },
+            "digest": {
+              "$var": "ra_r-valid"
+            }
+          }
+        },
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-assess"
+          },
+          "digest": "sha256:5f7a783bb38fe87baf42374fa5e389177ec3f2f443aa59c1d84919205b709a25"
+        },
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "environment": {
+          "anchors": {
+            "browser": "chromium-120"
+          }
+        },
+        "at": "2030-01-01T00:01:59Z"
+      },
+      "expect": {
+        "ok": {
+          "checks": {
+            "time": {
+              "status": "passed"
+            }
+          },
+          "overall": "satisfied",
+          "present_validity": "not_established"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.assess",
+      "payload": {
+        "receipt": {
+          "provider": "conformance-provider",
+          "receipt": "r-valid",
+          "artifact": {
+            "provider": "conformance-provider",
+            "artifact": {
+              "kind": "evidence.artifact",
+              "id": "receipt.r-valid"
+            },
+            "digest": {
+              "$var": "ra_r-valid"
+            }
+          }
+        },
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-assess"
+          },
+          "digest": "sha256:5f7a783bb38fe87baf42374fa5e389177ec3f2f443aa59c1d84919205b709a25"
+        },
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "environment": {
+          "anchors": {
+            "browser": "chromium-120"
+          }
+        },
+        "at": "2030-01-01T00:02:00Z"
+      },
+      "expect": {
+        "ok": {
+          "checks": {
+            "time": {
+              "status": "failed",
+              "reasons": [
+                "stale"
+              ]
+            }
+          },
+          "overall": "not_satisfied"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.assess",
+      "payload": {
+        "receipt": {
+          "provider": "conformance-provider",
+          "receipt": "r-optional",
+          "artifact": {
+            "provider": "conformance-provider",
+            "artifact": {
+              "kind": "evidence.artifact",
+              "id": "receipt.r-optional"
+            },
+            "digest": {
+              "$var": "ra_r-optional"
+            }
+          }
+        },
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-optional"
+          },
+          "digest": "sha256:1e622517c066326e427d352a0467561b2771cf76b95f765089b29d79557e0bc2"
+        },
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t13"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ]
+      },
+      "expect": {
+        "ok": {
+          "checks": {
+            "subjects": {
+              "status": "failed"
+            }
+          },
+          "properties": [
+            {
+              "property_id": "docs.review",
+              "required": false,
+              "status": "not_satisfied"
+            }
+          ],
+          "overall": "not_satisfied",
+          "present_validity": "not_established"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.assess",
+      "payload": {
+        "receipt": {
+          "provider": "conformance-provider",
+          "receipt": "r-optional",
+          "artifact": {
+            "provider": "conformance-provider",
+            "artifact": {
+              "kind": "evidence.artifact",
+              "id": "receipt.r-optional"
+            },
+            "digest": {
+              "$var": "ra_r-optional"
+            }
+          }
+        },
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-optional"
+          },
+          "digest": "sha256:1e622517c066326e427d352a0467561b2771cf76b95f765089b29d79557e0bc2"
+        },
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ]
+      },
+      "expect": {
+        "ok": {
+          "overall": "satisfied",
+          "present_validity": "established"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.inspect",
+      "payload": {
+        "receipt": "r-gone"
+      },
+      "expect": {
+        "error": "unavailable"
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.assess",
+      "payload": {
+        "receipt": {
+          "provider": "conformance-provider",
           "receipt": "r-gone",
           "artifact": {
             "provider": "conformance-provider",
@@ -1662,6 +2043,18 @@
           "checks": {
             "receipt": {
               "status": "failed",
+              "reasons": [
+                "receipt_reference_mismatch"
+              ]
+            },
+            "contract": {
+              "status": "unverifiable",
+              "reasons": [
+                "receipt_reference_mismatch"
+              ]
+            },
+            "time": {
+              "status": "unverifiable",
               "reasons": [
                 "receipt_reference_mismatch"
               ]
@@ -1803,6 +2196,61 @@
       "payload": {
         "receipt": {
           "provider": "conformance-provider",
+          "receipt": "r-pass",
+          "artifact": {
+            "provider": "conformance-provider",
+            "artifact": {
+              "kind": "evidence.artifact",
+              "id": "receipt.r-pass"
+            },
+            "digest": {
+              "$var": "ra_r-pass"
+            }
+          }
+        },
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-assess"
+          },
+          "digest": "sha256:5f7a783bb38fe87baf42374fa5e389177ec3f2f443aa59c1d84919205b709a25"
+        },
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "environment": {
+          "anchors": {
+            "browser": "chromium-120"
+          }
+        },
+        "at": "2030-01-01T01:01:40Z"
+      },
+      "expect": {
+        "ok": {
+          "checks": {
+            "time": {
+              "status": "passed"
+            }
+          },
+          "overall": "satisfied",
+          "time_basis": "caller_selected"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.assess",
+      "payload": {
+        "receipt": {
+          "provider": "conformance-provider",
           "receipt": "r-lost",
           "artifact": {
             "provider": "conformance-provider",
@@ -1843,6 +2291,18 @@
         "ok": {
           "checks": {
             "contract": {
+              "status": "unverifiable",
+              "reasons": [
+                "contract_unavailable"
+              ]
+            },
+            "environment": {
+              "status": "unverifiable",
+              "reasons": [
+                "contract_unavailable"
+              ]
+            },
+            "evaluator": {
               "status": "unverifiable",
               "reasons": [
                 "contract_unavailable"

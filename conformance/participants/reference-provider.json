@@ -422,7 +422,17 @@
       "dependency-digest-ignored",
       "dependency-provider-ignored",
       "missing-dependency-satisfied",
-      "reference-provider-unchecked"
+      "reference-provider-unchecked",
+      "dependency-read-unauthorized",
+      "authority-binds-under-grant",
+      "empty-roots-accepted",
+      "absent-evaluator-unsupported",
+      "receipt-events-artifact-first",
+      "overall-ignores-checks",
+      "issued-environment-requested",
+      "contract-unverifiable-checks-passed",
+      "receipt-id-collision-accepted",
+      "claims-format-without-negotiation"
     ]
   }
 }

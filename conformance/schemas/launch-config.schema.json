@@ -773,7 +773,29 @@
                       "type": "string"
                     }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "if": {
+                    "properties": {
+                      "result": {
+                        "enum": [
+                          "not_evaluated",
+                          "indeterminate"
+                        ]
+                      }
+                    }
+                  },
+                  "then": {
+                    "required": [
+                      "reason"
+                    ]
+                  },
+                  "else": {
+                    "not": {
+                      "required": [
+                        "reason"
+                      ]
+                    }
+                  }
                 },
                 "observe": {
                   "type": "object",
@@ -833,7 +855,29 @@
                     "type": "string"
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "if": {
+                  "properties": {
+                    "result": {
+                      "enum": [
+                        "not_evaluated",
+                        "indeterminate"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "reason"
+                  ]
+                },
+                "else": {
+                  "not": {
+                    "required": [
+                      "reason"
+                    ]
+                  }
+                }
               },
               "observe": {
                 "type": "object",

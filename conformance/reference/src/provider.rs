@@ -1350,6 +1350,37 @@ impl Provider {
             {
                 return Ok(Some(Vec::new()));
             }
+            // Evaluating reads the claims its local dependencies name (KNOWLEDGE section 10).
+            "knowledge.applicability.evaluate" => {
+                let mut needed =
+                    crate::grants::required_rights(operation, params).unwrap_or_default();
+                if !self.mutants.on("dependency-read-unauthorized") {
+                    let reader = self.store.reader().map_err(storage)?;
+                    let reference = &params["payload"]["claim"];
+                    if reference["provider"] == self.identity.provider_id.as_str()
+                        && let Some(entry) = crate::knowledge::revision_entry(
+                            &reader,
+                            reference["claim"].as_str().unwrap_or_default(),
+                            reference["revision"].as_i64().unwrap_or(0),
+                        )
+                        .map_err(storage)?
+                    {
+                        for dependency in entry["record"]["dependencies"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            if dependency["provider"] == self.identity.provider_id.as_str() {
+                                needed.push((
+                                    "knowledge.read".to_string(),
+                                    json!({"kind": crate::knowledge::CLAIM, "id": dependency["claim"]}),
+                                ));
+                            }
+                        }
+                    }
+                }
+                return Ok(Some(needed));
+            }
             "evidence.release" => {
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
                 let owner = crate::evidence::hold_owner(&self.store, id).map_err(storage)?;
@@ -1671,7 +1702,10 @@ impl Provider {
             "core.grant.issue" => self.authorize_issuing(params),
             // Only provider authority principals bind scopes; a grant never does (KNOWLEDGE 6).
             "knowledge.authority.bind" | "knowledge.authority.transfer" => {
-                if self.is_authority() || self.mutants.on("bind-by-grant") {
+                // A grant restricts even an authority principal, and no right covers binding.
+                let under_grant = params.get("grant").is_some()
+                    && !self.mutants.on("authority-binds-under-grant");
+                if (self.is_authority() && !under_grant) || self.mutants.on("bind-by-grant") {
                     Ok(())
                 } else {
                     denied("not_authority")
@@ -2761,9 +2795,18 @@ impl Provider {
             "verification.receipt.inspect" => {
                 let reader = self.store.reader().map_err(storage)?;
                 let id = params["payload"]["receipt"].as_str().unwrap_or_default();
-                crate::verification::inspect_receipt(&reader, id)
-                    .map_err(storage)?
-                    .ok_or_else(|| reject("not_found", json!({})))
+                match crate::verification::inspect_receipt(
+                    &reader,
+                    id,
+                    &self.identity.evidence_store,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                {
+                    Ok(Some(result)) => Ok(result),
+                    Ok(None) => Err(reject("not_found", json!({}))),
+                    Err((code, details)) => Err(reject(code, details)),
+                }
             }
             "verification.receipt.assess" => {
                 let reader = self.store.reader().map_err(storage)?;

@@ -117,6 +117,24 @@ fn matrix_ids(repo: &Path) -> Result<BTreeSet<String>, String> {
         .collect())
 }
 
+/// The path of the first pattern object that has a `$` directive and other members.
+fn mixed_directive(pattern: &Value, path: String) -> Option<String> {
+    match pattern {
+        Value::Object(map) => {
+            if map.len() > 1 && map.keys().any(|k| k.starts_with('$')) {
+                return Some(if path.is_empty() { "/".into() } else { path });
+            }
+            map.iter()
+                .find_map(|(key, value)| mixed_directive(value, format!("{path}/{key}")))
+        }
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(i, value)| mixed_directive(value, format!("{path}/{i}"))),
+        _ => None,
+    }
+}
+
 fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> {
     let fixtures = load_fixtures(&options.repo, None)?;
     let known = matrix_ids(&options.repo)?;
@@ -196,6 +214,21 @@ fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> 
                     );
                     ok = false;
                 }
+            }
+        }
+        // A pattern object with a `$` directive is that directive only; other members would be
+        // silently ignored, so they are refused.
+        for (index, step) in fixture.value["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            if let Some(path) = mixed_directive(&step["expect"], String::new()) {
+                println!(
+                    "{label}: step {index}: pattern at {path} mixes a $ directive with other members"
+                );
+                ok = false;
             }
         }
         let kills = fixture.value["kills"].as_array().map_or(0, Vec::len);

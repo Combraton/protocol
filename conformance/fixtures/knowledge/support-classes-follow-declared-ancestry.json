@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.support-classes-follow-declared-ancestry",
-  "version": 1,
+  "version": 2,
   "title": "Support is classified from declared, provider-qualified ancestry: shared roots are one lineage, pairwise overlap without a common root is overlapping, only complete disjoint ancestry is multiple, and partial, unknown or equal-digest ancestry stays undetermined; wrappers are never origins",
   "requirements": [
     "KNW-4"
@@ -123,6 +123,98 @@
         "ok": {
           "support": {
             "class": "unsupported",
+            "unknown_ancestry": []
+          },
+          "availability": {
+            "state": "unknown",
+            "counts": {
+              "available": 0,
+              "unavailable": 0,
+              "purged": 0,
+              "unknown": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.claim.propose",
+      "command_id": "claim-propose-s-one",
+      "subject": {
+        "kind": "knowledge.claim",
+        "id": "s-one"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.claim",
+            "id": "s-one"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "plane": "observed",
+        "statement": {
+          "subject": {
+            "kind": "app.service",
+            "id": "billing"
+          },
+          "predicate": "queue",
+          "value": "v1",
+          "cardinality": "single"
+        },
+        "scope": {
+          "id": "svc",
+          "qualifiers": {}
+        },
+        "support": [
+          {
+            "support_id": "e1",
+            "evidence": {
+              "provider": "conformance-provider",
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "summary-1"
+              },
+              "digest": "sha256:87feb6a997ac21b2ea41714775583b5605166b0ace5f59b1e97edb8000a40553"
+            },
+            "ancestry": {
+              "completeness": "partial",
+              "roots": [
+                {
+                  "kind": "evidence",
+                  "provider": "conformance-provider",
+                  "artifact": {
+                    "kind": "evidence.artifact",
+                    "id": "root-a"
+                  },
+                  "digest": "sha256:0a16c2d64ed82e34fef8780a5148b423071b39fbc06b63f270c03b2eab5bbdb8"
+                }
+              ]
+            }
+          }
+        ],
+        "derivation": {
+          "kind": "deterministic",
+          "inputs": []
+        }
+      },
+      "capture": {
+        "d_s-one": "/result/outcome/reference/digest"
+      }
+    },
+    {
+      "step": "query",
+      "operation": "knowledge.claim.inspect",
+      "payload": {
+        "claim": "s-one"
+      },
+      "expect": {
+        "ok": {
+          "support": {
+            "class": "single_lineage",
             "unknown_ancestry": []
           }
         }

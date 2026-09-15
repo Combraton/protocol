@@ -51,7 +51,7 @@ Both carry the same content members; `revise` adds `supersedes`. Outcome: `{ ref
 | `plane` | `normative` (what should hold), `observed` (what an observation reports), or `interpretive` (an explanation or inference). An unknown plane is `invalid_envelope` (KNW-2). |
 | `statement` | `{ subject: { kind, id }, predicate, value, cardinality }`. `value` is canonical JSON of at most 4096 bytes. `cardinality` says whether the predicate admits several values at once for one subject: `single`, `multiple` or `unknown`. |
 | `scope` | `{ id, qualifiers }`. `id` names the scope. `qualifiers` is an object of string values that narrows it, for example `{ "environment": "staging" }`; an empty object means no narrowing was declared. |
-| `validity` | `{ from?, until? }`, instants. The half-open interval `[from, until)` when the claim holds or was observed. An absent bound is **unknown**; it is never filled from the recorded time and never read as unbounded. |
+| `validity` | `{ from?, until? }`, instants. The half-open interval `[from, until)` when the claim holds or was observed. An absent bound is **unknown**; it is never filled from the recorded time and never read as unbounded. When both are present, `from` MUST be before `until`: an empty or inverted interval is `invalid_envelope` at `/payload/validity` (step 2). |
 | `basis` | Optional target anchors the claim concerns: `{ repositories: [ { id, tree } ], environment?, build?, completeness: "complete" \| "partial" }` |
 | `support` | `[ { support_id, evidence, ancestry } ]` (§5) |
 | `derivation` | `{ kind: "deterministic" \| "model_assisted" \| "human", record?, inputs }`. Descriptive only: it never grants or denies any permission (§6). `record` and `inputs` are Evidence references. |
@@ -66,6 +66,7 @@ Both carry the same content members; `revise` adds `supersedes`. Outcome: `{ ref
 
 `producer` is the session principal. An absent `validity`, `basis` or `supersedes` is recorded as `null`, absent `dependencies` and `conditions` as `[]`, and an absent `health` as `not_applicable`. The reference `digest` is the `sha256` canonical digest (ENCODING) of this record. `knowledge.claim.inspect` returns the record, so any reader can recompute the digest.
 
+- **Unique IDs.** `support_id` values are unique within a revision, and so are `condition_id` values; a duplicate is `invalid_envelope` at `/payload/support` or `/payload/conditions` (step 2).
 - **Base check** (KNW-1). A stale Core precondition is `precondition_failed`. A `supersedes.revision` other than the current revision is `invalid_envelope` at `/payload/supersedes/revision`, and a wrong digest at `/payload/supersedes/digest`. A provider MUST NOT overwrite a revision or merge concurrent revisions silently.
 - **Producer.** A revision's producer is always the session principal, whatever `derivation.kind` says.
 - **New revisions start unaccepted.** No member of `propose` or `revise` sets reliance. A new revision is `proposed` until a decision names it (§6). This includes extracted instructions: a `normative` claim a model derived from a transcript is only `proposed` (KNW-9).
@@ -81,7 +82,7 @@ Both carry the same content members; `revise` adds `supersedes`. Outcome: `{ ref
 | `health` | `healthy`, `degraded`, `failing`, `unknown` or `not_applicable` | The revision record (§3) |
 | `availability` | `{ state, counts: { available, unavailable, purged, unknown } }` | The support evidence as the provider observes it at the read (§5) |
 | `support` | `{ class, unknown_ancestry }` | The support entries (§5) |
-| `conflicts` | `[ { conflict, kind, status, state } ]` | Conflict records naming this revision (§7) |
+| `conflicts` | `[ { conflict, kind, status, state } ]` | Conflict records naming exactly this revision (§7), open and resolved, in recorded order |
 
 A revision that is `accepted_for_use` and `invalid_for_target` for some target reports both. A historically accepted claim whose evidence was purged stays `accepted_for_use`, with availability `purged`. A provider MUST NOT collapse these facets into one status.
 
@@ -89,7 +90,7 @@ A revision that is `accepted_for_use` and `invalid_for_target` for some target r
 
 Each support entry is `{ support_id, evidence: { provider, artifact, digest }, ancestry: { completeness, roots } }`:
 - `roots` are the origins the producer declares for this support. Each root is an exact, provider-qualified reference: `{ kind: "evidence", provider, artifact, digest }` or `{ kind: "claim", provider, claim, revision, digest }`.
-- `completeness` is `complete` (these are all its origins), `partial` (some origins may be missing) or `unknown` (nothing is declared; `roots` MUST then be empty, otherwise `invalid_envelope`).
+- `completeness` is `complete` (these are all its origins), `partial` (some origins may be missing) or `unknown` (nothing is declared). With `unknown`, `roots` MUST be empty; with `complete` or `partial`, `roots` MUST name at least one root. Otherwise the command is `invalid_envelope` at `/payload/support/<i>/ancestry/roots`.
 - **A wrapper is not an origin.** The support entry's own `evidence` artifact is never a root unless the producer lists it. With `unknown` ancestry the entry has no known origin, so it can never add a lineage.
 - **Root identity** is the whole reference. Two roots are **the same** when every member is equal. Two roots with different references but an equal digest are **not known to differ**: equal bytes may be one origin copied, so such a pair is never treated as disjoint.
 
@@ -104,7 +105,7 @@ Each support entry is `{ support_id, evidence: { provider, artifact, digest }, a
 2. `undetermined`: some entry has `unknown` ancestry, and no two entries are `disjoint`.
 3. `single_lineage`: one root is the same in every entry.
 4. `multiple_lineages`: at least two entries are `disjoint`.
-5. `overlapping_lineages`: every pair of entries is `shared`, but no root is common to all.
+5. `overlapping_lineages`: there are at least two entries, every pair of entries is `shared`, and no root is common to all.
 6. `undetermined`: any other case.
 
 For example:
@@ -120,7 +121,7 @@ For example:
   - `available`, `unavailable` or `purged` for artifacts in a store it reads;
   - `unknown` for artifacts it cannot check.
 
-  `state` is `complete` when all are available, `partial` when some are, `unknown` when none are and some are unknown, `purged` when all are purged, and `unavailable` otherwise. It names no artifact.
+  With no support entries, `state` is `unknown`. Otherwise it is `complete` when all are available, `partial` when some are, `unknown` when none are and some are unknown, `purged` when all are purged, and `unavailable` otherwise. It names no artifact.
 
 ## 6. Authority bindings and reliance decisions (KNW-6, M5-Q3)
 
@@ -128,10 +129,10 @@ For example:
 |---|---|---|
 | `knowledge.authority.bind` | command | Subject `{ kind: "knowledge.authority", id: scope }`, precondition revision 0. Payload `{ authority: principal }`. Records epoch 1. |
 | `knowledge.authority.transfer` | command | Subject is the binding, with a precondition on its current revision. Payload `{ authority: principal }`. Raises the epoch by one. |
-| `knowledge.authority.get` | query | `{ scope }` → `{ scope, authority, epoch }` |
+| `knowledge.authority.get` | query | `{ scope }` → `{ scope, authority, epoch, revision }`, where `revision` is the binding subject's Core revision |
 | `knowledge.decision.record` | command | Subject `{ kind: "knowledge.decision", id }`, precondition revision 0 |
 
-- **Binding.** Only the provider's authority principals (CORE §15.1) bind or transfer, and a grant never lets anyone else do so: anyone else gets `permission_denied` with `not_authority`, whatever grant it names. Binding a scope that is already bound fails its revision-0 precondition, `precondition_failed`. A scope has exactly one accepting authority. There is no hierarchy between scopes in 0.1: scope IDs match only when equal.
+- **Binding.** Only the provider's authority principals (CORE §15.1) bind or transfer, and a grant never lets anyone else do so: anyone else gets `permission_denied` with `not_authority`, whatever grant it names. An authority principal that names a grant is restricted to that grant (CORE §15.5), and no right covers binding, so it too gets `not_authority`. Binding a scope that is already bound fails its revision-0 precondition, `precondition_failed`. A scope has exactly one accepting authority. There is no hierarchy between scopes in 0.1: scope IDs match only when equal.
 - **Decision payload.**
 
   | Member | Meaning |
@@ -144,13 +145,13 @@ For example:
   | `rationale` | Free text |
 
   The command's `authority_epoch` (CORE §5) carries the binding epoch; without it the command is `invalid_envelope` at `/authority_epoch` (step 2).
-- **Who decides.** After Core authorization with rights `knowledge.decide` on the decision and `knowledge.read` on the claim (CORE §15.5), step 7 checks, in this order:
-  1. The named revision does not exist: `not_found`.
+- **Who decides.** After Core authorization with rights `knowledge.decide` on the decision and `knowledge.read` on the claim (CORE §15.5), step 7 checks the Core revision preconditions first (CORE §10), then in this order:
+  1. The named revision does not exist at this provider, including a reference naming another provider: `not_found`.
   2. The claim's scope has no binding: `permission_denied` with `not_authority`.
   3. The session principal is not the bound authority: `permission_denied` with `not_authority`. A grant never makes a principal an authority, whatever rights it carries. No deciding is delegated in 0.1.
   4. `authority_epoch` lower than the binding's epoch: `stale_authority_epoch`; higher: `unknown_authority_epoch`.
   5. The reference's digest differs from the revision's: `invalid_envelope` at `/payload/claim/digest`.
-  6. `supersedes_decision` absent while a decision about the revision exists, or not the latest one: `precondition_failed` with details `{ latest_decision }`.
+  6. `supersedes_decision` absent while a decision about the revision exists, present when none exists, or not the latest one: `precondition_failed` with details `{ latest_decision }` (`null` when none exists).
 - **Authentication and binding, not labels, control permission.** A revision's `derivation.kind` has no effect on who may decide. A model producer that is not the bound authority cannot accept its output, even if it labels the derivation `human`.
 - **The bound authority may adopt its own claim.** When the session principal is also the revision's producer, the decision is recorded with `author_is_decider: true`, and inspect and history report it. Such a decision is an adoption by its author, never a separate review. A human authority can therefore state a requirement and then adopt it through a separate decision, without an artificial producer identity.
 - **Transfer preserves decisions.** Decisions recorded under an earlier epoch stay in effect until the current authority records a later decision about the same revision. A transfer never resets reliance.
@@ -187,10 +188,11 @@ So "staging uses 5 workers" and "production uses 3 workers" are not comparable (
 
   Otherwise it is `potential`, and the record lists which dimensions were uncertain: `uncertain: [ "qualifiers" | "basis" | "validity" | "cardinality" | "plane" ]`. A potential conflict is a report worth checking, not an established incompatibility.
 - **Nothing is removed.** Neither kind deletes, rewrites or demotes a revision. While a record is `open`, its competing values are all listed. `knowledge.claim.inspect` lists the record for both revisions.
-- **Opening checks** (step 7, after `knowledge.propose` on the record and `knowledge.read` on both claims): a named revision does not exist, `not_found`; a reference digest differs, `invalid_envelope` at `/payload/revisions/<i>/digest`; then the comparison above. Naming the same revision twice is `invalid_envelope` at `/payload/revisions` (step 2).
+- **Opening checks** (step 7, after `knowledge.propose` on the record and `knowledge.read` on both claims, and after the Core revision preconditions): a named revision does not exist at this provider, `not_found`; a reference digest differs, `invalid_envelope` at `/payload/revisions/<i>/digest`; then the comparison above. Naming the same revision twice is `invalid_envelope` at `/payload/revisions` (step 2).
 - **Who opens and who resolves.** Any principal with `knowledge.propose` may open a record, including a model producer, and may add a suggested distinguishing observation in `note`.
   - `knowledge.conflict.resolve` (command, precondition on the record's revision) records `{ resolution: "select" | "narrow_scope" | "reject_support" | "supersede" | "request_observation" | "not_a_conflict", selected?, rationale }`, with `authority_epoch`.
-  - After authorization with `knowledge.decide` on the record, step 7 checks: the record does not exist or is already resolved, `not_found`; then checks 2 to 4 of §6 for the revisions' scope; then `selected`, required exactly for `select` and naming one of the two revisions, otherwise `invalid_envelope` at `/payload/selected`. Only the bound authority resolves. Recency and producer confidence never resolve a record.
+  - `authority_epoch` is required, as for decisions (`invalid_envelope` at `/authority_epoch`, step 2).
+  - After authorization with `knowledge.decide` on the record, step 7 checks the Core revision preconditions, then: the record does not exist or is already resolved, `not_found`; then checks 2 to 4 of §6 for the revisions' scope; then `selected`, required exactly for `select` and naming one of the two revisions, otherwise `invalid_envelope` at `/payload/selected`. Only the bound authority resolves. Recency and producer confidence never resolve a record.
   - A resolution changes no revision and records no reliance decision; those remain separate operations.
 
 ## 8. Applicability (KNW-7, M5-Q4)
@@ -262,7 +264,7 @@ Each list is in recorded order. `position` is the stream position `{ epoch, sequ
 | `knowledge.read` | `claim.inspect` and `claim.history` on covered claims, `authority.get`, and events of covered subjects |
 | `knowledge.decide` | Needed for `decision.record` and `conflict.resolve`, and never sufficient (§6) |
 
-Commands that name revisions also need `knowledge.read` on those claims.
+Rights on named revisions: `decision.record` also needs `knowledge.read` on its claim; `conflict.open` on both claims; `applicability.evaluate` on its claim and on every claim its dependencies name at this provider, because the findings reveal whether those revisions exist here. `conflict.resolve`, `claim.revise` and references inside claim content need no further right, and references naming another provider add none.
 
 ## 11. Events
 

@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.dependencies-resolve-only-exact-references",
-  "version": 1,
+  "version": 2,
   "title": "A dependency resolves only as an exact local provider, claim, revision and digest: another digest, another provider, a missing, future or self reference stays unchecked with its reason and the claim needs_check, and no unrelated evaluation satisfies it; commands naming a revision under another provider are not_found",
   "requirements": [
     "KNW-7",
@@ -27,7 +27,8 @@
     "dependency-digest-ignored",
     "dependency-provider-ignored",
     "missing-dependency-satisfied",
-    "reference-provider-unchecked"
+    "reference-provider-unchecked",
+    "dependency-read-unauthorized"
   ],
   "steps": [
     {
@@ -1543,6 +1544,138 @@
       },
       "expect": {
         "error": "not_found"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "core.grant.issue",
+      "command_id": "grant-issue-g-evaluator",
+      "subject": {
+        "kind": "core.grant",
+        "id": "g-evaluator"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "core.grant",
+            "id": "g-evaluator"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "holder": "evaluator",
+        "audience": "conformance-provider",
+        "rights": [
+          "knowledge.propose",
+          "knowledge.read"
+        ],
+        "resources": [
+          {
+            "kind": "knowledge.claim",
+            "id": "c-exact"
+          },
+          {
+            "kind": "knowledge.evaluation"
+          }
+        ],
+        "delegation": {
+          "allowed": false,
+          "max_depth": 0
+        }
+      }
+    },
+    {
+      "step": "stop"
+    },
+    {
+      "step": "start",
+      "config": {
+        "principal": "evaluator",
+        "authority_principals": [
+          "owner"
+        ]
+      }
+    },
+    {
+      "step": "negotiate",
+      "payload": {
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.events",
+              "core.grants"
+            ],
+            "optional_features": []
+          },
+          {
+            "name": "knowledge",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          }
+        ]
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.applicability.evaluate",
+      "command_id": "applicability-evaluate-ev-unread-dependency",
+      "subject": {
+        "kind": "knowledge.evaluation",
+        "id": "ev-unread-dependency"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.evaluation",
+            "id": "ev-unread-dependency"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "c-exact",
+          "revision": 1,
+          "digest": {
+            "$var": "d_c-exact"
+          }
+        },
+        "target": {
+          "repositories": [
+            {
+              "id": "repo-a",
+              "tree": "t1"
+            }
+          ],
+          "completeness": "complete"
+        }
+      },
+      "set": {
+        "grant": "g-evaluator"
+      },
+      "expect": {
+        "error": "permission_denied",
+        "details": {
+          "reason": "out_of_scope"
+        }
       }
     },
     {

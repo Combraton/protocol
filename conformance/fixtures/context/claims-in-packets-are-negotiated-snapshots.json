@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "context.claims-in-packets-are-negotiated-snapshots",
-  "version": 1,
+  "version": 2,
   "title": "Under context.claims a packet carries exact claim snapshots: labels cannot promote an unaccepted claim, only invalid_for_target makes a section stale, needs_check stays current, an altered claim is never carried, the named revision is kept; later rejections are reported as claim changes and claim invalidations without rewriting the packet; sessions without the feature see M4 behavior",
   "requirements": [
     "KNW-10",
@@ -46,7 +46,8 @@
     "claim-latest-substituted",
     "claim-digest-unchecked",
     "claims-without-negotiation",
-    "claim-invalidation-unreported"
+    "claim-invalidation-unreported",
+    "claims-format-without-negotiation"
   ],
   "steps": [
     {
@@ -1403,6 +1404,46 @@
             }
           ]
         }
+      },
+      "capture": {
+        "p_r1": "/result/packets/0/reference/artifact/digest"
+      }
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "packet.r-1.1"
+        },
+        "digest": {
+          "$var": "p_r1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "data_base64": {
+            "$base64_json": {
+              "format": "combraton-context-packet/2",
+              "sections": {
+                "$contains": {
+                  "section_id": "s-a",
+                  "claim": {
+                    "reference": {
+                      "provider": "conformance-provider",
+                      "claim": "A",
+                      "revision": 1,
+                      "digest": {
+                        "$var": "d_A"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     {
@@ -1582,6 +1623,51 @@
       },
       "set": {
         "authority_epoch": 1
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.applicability.evaluate",
+      "command_id": "applicability-evaluate-ev-L-again",
+      "subject": {
+        "kind": "knowledge.evaluation",
+        "id": "ev-L-again"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.evaluation",
+            "id": "ev-L-again"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "L",
+          "revision": 1,
+          "digest": {
+            "$var": "d_L"
+          }
+        },
+        "target": {
+          "repositories": [
+            {
+              "id": "repo-a",
+              "tree": "t1"
+            }
+          ],
+          "completeness": "complete"
+        }
+      },
+      "expect": {
+        "ok": {
+          "outcome": {
+            "result": "applicable",
+            "supersedes_evaluation": "ev-L"
+          }
+        }
       }
     },
     {
@@ -2035,6 +2121,378 @@
             {
               "item_id": "i-p",
               "result": "satisfied"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "context.request.inspect",
+      "payload": {
+        "request": "r-plain"
+      },
+      "capture": {
+        "p_plain": "/result/packets/0/reference/artifact/digest"
+      }
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "packet.r-plain.1"
+        },
+        "digest": {
+          "$var": "p_plain"
+        }
+      },
+      "expect": {
+        "ok": {
+          "data_base64": {
+            "$base64_json": {
+              "format": "combraton-context-packet/1",
+              "sections": [
+                {
+                  "section_id": "s-p",
+                  "claim": {
+                    "$absent": true
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "stop"
+    },
+    {
+      "step": "start",
+      "config": {
+        "principal": "owner",
+        "authority_principals": [
+          "owner"
+        ],
+        "clock": {
+          "controlled": "2030-01-01T00:00:00Z"
+        },
+        "context": {
+          "scripts": {
+            "r-1": [
+              {
+                "section": {
+                  "section_id": "s-a",
+                  "item_id": "i-a",
+                  "label": "binding",
+                  "content": "billing must use queue v2",
+                  "claim": {
+                    "provider": "conformance-provider",
+                    "claim": "A",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_A"
+                    }
+                  }
+                }
+              },
+              {
+                "section": {
+                  "section_id": "s-r",
+                  "item_id": "i-r",
+                  "label": "binding",
+                  "content": "run migrations before tests",
+                  "claim": {
+                    "provider": "conformance-provider",
+                    "claim": "R",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_R"
+                    }
+                  }
+                }
+              },
+              {
+                "section": {
+                  "section_id": "s-s",
+                  "item_id": "i-s",
+                  "label": "observation",
+                  "content": "the parser handles a BOM",
+                  "claim": {
+                    "provider": "conformance-provider",
+                    "claim": "S",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_S"
+                    }
+                  }
+                }
+              },
+              {
+                "section": {
+                  "section_id": "s-n",
+                  "item_id": "i-n",
+                  "label": "observation",
+                  "content": "retries are capped",
+                  "claim": {
+                    "provider": "conformance-provider",
+                    "claim": "N",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_N"
+                    }
+                  }
+                }
+              },
+              {
+                "section": {
+                  "section_id": "s-x",
+                  "item_id": "i-x",
+                  "label": "binding",
+                  "content": "the altered claim",
+                  "claim": {
+                    "provider": "conformance-provider",
+                    "claim": "X",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_X"
+                    }
+                  }
+                }
+              },
+              {
+                "section": {
+                  "section_id": "s-l",
+                  "item_id": "i-l",
+                  "label": "binding",
+                  "content": "ledger uses queue v1",
+                  "claim": {
+                    "provider": "conformance-provider",
+                    "claim": "L",
+                    "revision": 1,
+                    "digest": {
+                      "$var": "d_L"
+                    }
+                  }
+                }
+              },
+              {
+                "publish": {}
+              }
+            ],
+            "r-plain": [
+              {
+                "section": {
+                  "section_id": "s-p",
+                  "item_id": "i-p",
+                  "label": "observation",
+                  "content": "readme",
+                  "source": {
+                    "repository": "repo-a",
+                    "path": "README",
+                    "tree": "t1"
+                  }
+                }
+              },
+              {
+                "publish": {}
+              }
+            ]
+          }
+        },
+        "knowledge": {
+          "serve_altered_claims": [
+            "X"
+          ],
+          "evaluator": {
+            "id": "reference-conditions",
+            "version": "2",
+            "condition_kinds": [
+              "dirty_snapshot"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": "negotiate",
+      "payload": {
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.events",
+              "core.grants"
+            ],
+            "optional_features": []
+          },
+          {
+            "name": "knowledge",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          },
+          {
+            "name": "evidence",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": []
+          },
+          {
+            "name": "context",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [],
+            "optional_features": [
+              "context.advisory",
+              "context.required_before_start",
+              "context.claims"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.applicability.evaluate",
+      "command_id": "applicability-evaluate-ev-L-v2",
+      "subject": {
+        "kind": "knowledge.evaluation",
+        "id": "ev-L-v2"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.evaluation",
+            "id": "ev-L-v2"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "L",
+          "revision": 1,
+          "digest": {
+            "$var": "d_L"
+          }
+        },
+        "target": {
+          "repositories": [
+            {
+              "id": "repo-a",
+              "tree": "t1"
+            }
+          ],
+          "completeness": "complete"
+        }
+      },
+      "expect": {
+        "ok": {
+          "outcome": {
+            "result": "unknown",
+            "evaluator": {
+              "version": "2"
+            }
+          }
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "context.packet.inspect",
+      "payload": {
+        "packet": "r-1",
+        "revision": 1
+      },
+      "expect": {
+        "ok": {
+          "claim_changes": [
+            {
+              "section_id": "s-a",
+              "claim": {
+                "provider": "conformance-provider",
+                "claim": "A",
+                "revision": 1,
+                "digest": {
+                  "$var": "d_A"
+                }
+              },
+              "change": "reliance_changed"
+            },
+            {
+              "section_id": "s-l",
+              "claim": {
+                "provider": "conformance-provider",
+                "claim": "L",
+                "revision": 1,
+                "digest": {
+                  "$var": "d_L"
+                }
+              },
+              "change": "applicability_changed"
+            },
+            {
+              "section_id": "s-l",
+              "claim": {
+                "provider": "conformance-provider",
+                "claim": "L",
+                "revision": 1,
+                "digest": {
+                  "$var": "d_L"
+                }
+              },
+              "change": "lineage_revised"
+            }
+          ],
+          "invalidated_items": [
+            {
+              "item_id": "i-a",
+              "claim": {
+                "provider": "conformance-provider",
+                "claim": "A",
+                "revision": 1,
+                "digest": {
+                  "$var": "d_A"
+                }
+              },
+              "reason": "permitted_use_lost"
+            }
+          ],
+          "unverified_items": [
+            {
+              "item_id": "i-l",
+              "claim": {
+                "provider": "conformance-provider",
+                "claim": "L",
+                "revision": 1,
+                "digest": {
+                  "$var": "d_L"
+                }
+              },
+              "reason": "applicability_not_established"
             }
           ]
         }

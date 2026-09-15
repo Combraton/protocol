@@ -145,6 +145,17 @@ fn directive_match(
                 &format!("{path}(sha256)"),
             )
         }
+        "$base64_json" => {
+            // The decoded bytes parse as JSON matching the argument pattern: how a reader checks
+            // what a fetched document says, such as a packet's format.
+            let found = actual
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{path}: expected a base64 string"))?;
+            let bytes = decode_base64(found).ok_or_else(|| format!("{path}: not base64"))?;
+            let document: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| format!("{path}: decoded bytes are not JSON"))?;
+            matches(argument, Some(&document), vars, &format!("{path}(json)"))
+        }
         "$canonical_sha256" => {
             // The sha256 digest of the value's canonical encoding matches the argument pattern:
             // how a reader recomputes a record digest (KNOWLEDGE section 3).

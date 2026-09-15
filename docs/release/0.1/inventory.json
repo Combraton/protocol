@@ -82,8 +82,8 @@
     },
     {
       "path": "conformance/fixtures/composition/thirdparty-kernel-enforces-required-claim-boundary.json",
-      "sha256": "90edb2c102f05ca8cfeee2d074d9ff0dadb523f93f547e638c63a0d4bd77af19",
-      "bytes": 51859
+      "sha256": "fff7a25ba859c307d0497663e67db2d34bd6f1536b9b58f73edf18cb22345d4c",
+      "bytes": 54111
     },
     {
       "path": "conformance/fixtures/composition/thirdparty-publisher-feeds-reference-verification.json",
@@ -2113,7 +2113,7 @@
   ],
   "totals": {
     "files": 420,
-    "bytes": 2927943,
-    "listing_sha256": "3f5082452d662c823300debffd85130bb12a1f850c21b15017c2f66dca888b31"
+    "bytes": 2930195,
+    "listing_sha256": "80b39377b10685c29bb5823e69ee539ef91bb1eace5b049f2894b603ce08b41d"
   }
 }

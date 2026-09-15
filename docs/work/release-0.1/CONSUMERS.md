@@ -1,12 +1,12 @@
-# Consumer handoff — Protocol 0.1 (release candidate)
+# Consumer handoff — Protocol 0.1 (v0.1.0)
 
-What the PIO and CBR sessions pin, negotiate and run once the owner accepts the Protocol 0.1 release candidate. The release record is [docs/release/0.1](../../release/0.1/README.md): profiles, features, dependencies, inventory with checksums, limitations. The accepted commit and tag are recorded at acceptance.
+What the PIO and CBR sessions pin, negotiate and run for Protocol 0.1, released as tag `v0.1.0`. The release record is [docs/release/0.1](../../release/0.1/README.md): profiles, features, dependencies, inventory with checksums, limitations. The tagged commit and asset checksums are in the GitHub release's `release-manifest.json` and in issue #1.
 - **Until then, pin nothing.** A release candidate under review is not a release.
 - **Out of scope here:** real PIO adapters, the real CBR memory engine and the Combraton implementation stay outside this milestone and this repository.
 
 ## What to pin
 
-- **Only the accepted release.** Pin the commit the owner accepts, reached through the Protocol 0.1 tag created on the owner's authorization.
+- **Only the accepted release.** Pin tag `v0.1.0` and the exact commit named in its `release-manifest.json`, either from the source archive (after checking `SHA256SUMS` and `BUNDLE-SHA256SUMS`) or from a Git checkout of the tag.
   - Any other `main` commit, branch or later merge is not equivalent to the accepted release, even when the files you use look unchanged.
   - The release record names the accepted commit.
 - **Schemas.** The `schemas/<profile>/<major>/` trees for the profiles you implement or call, verified against the release record's per-file SHA-256 checksums.
@@ -53,9 +53,9 @@ From the pinned release checkout (macOS or Linux):
 
 ## Starting after acceptance
 
-Do none of this before the owner accepts the release candidate and the tag exists.
 
-1. **Pin.** Check out the accepted tag. Run `python3 scripts/release_inventory.py --verify`, and record the tag, its commit and the inventory's `listing_sha256` in your repository.
+
+1. **Pin.** Download the `v0.1.0` source archive and verify it as described in the release notes, or check out the tag. Run `python3 scripts/release_inventory.py --verify`, and record the tag, its commit, the inventory's `listing_sha256` and the bundle SHA-256 in your repository.
 2. **Vendor or reference.** Take the `schemas/**` trees for the profiles you serve and call, and the fixture set, from that commit only. Keep `docs/spec/**` from the same commit as the normative text.
 3. **PIO session** (Execution provider; Context and Evidence client only when bindings use them):
    - Serve `core/1` and `execution/1` with the features you implement.

@@ -1,9 +1,9 @@
 # Protocol 0.1 release record
 
-> **Status: release candidate, not released.**
-> - **Owner acceptance.** The owner accepts or refuses the candidate named in [issue #1](https://github.com/Combraton/protocol/issues/1) and on [PR #7](https://github.com/Combraton/protocol/pull/7).
-> - **Before acceptance.** There is no tag and no publication. No `main` commit is equivalent to a release.
-> - **At acceptance.** The accepted commit and its tag are recorded in the issue and in the tag itself. This file cannot name its own commit.
+> **Status: Protocol 0.1, released as tag `v0.1.0` after the owner's acceptance.**
+> - **Where the release is identified.** The tagged commit, the asset checksums and the CI evidence are in the GitHub release's `release-manifest.json` and `SHA256SUMS`, and in [issue #1](https://github.com/Combraton/protocol/issues/1). This file cannot name its own commit.
+> - **What is not equivalent.** No other commit, branch or later `main` merge is equivalent to the release.
+> - **Release notes.** [NOTES](NOTES.md) is the body of the GitHub release notes.
 
 ## What the release contains
 
@@ -39,29 +39,22 @@ It also records an aggregate `listing_sha256` over the whole listing, so adding,
 
 MIT ([LICENSE](../../../LICENSE)).
 
-## Reproducing and verifying from a clean checkout
+## Reproducing and verifying
 
-On macOS or Linux, with the Rust toolchain pinned in `rust-toolchain.toml` and Python 3:
+**Two supported procedures:**
+- **Extracted release archive** (no Git metadata): see [NOTES](NOTES.md#verifying) and [VERIFICATION](../../VERIFICATION.md). Check `SHA256SUMS`, then `BUNDLE-SHA256SUMS` inside the bundle, then run `scripts/release_inventory.py --verify` (file-system mode) and the build and conformance commands.
+- **Git checkout** of tag `v0.1.0`: `release_inventory.py --verify` uses `git ls-files`. The pinned-M5 compatibility commands work only here.
+
+The release assets are produced reproducibly by [`scripts/release.py`](../../../scripts/release.py) from the exact tagged commit. The archive is deterministic: sorted entries, the commit time, fixed ownership, and gzip without a timestamp.
 
 ```sh
-git clone https://github.com/Combraton/protocol && cd protocol
-git checkout <the accepted release tag>
-python3 scripts/release_inventory.py --verify      # every pinned file matches its checksum
-python3 scripts/check_docs.py && python3 scripts/check_operations.py
-cargo build --workspace --locked && cargo test --workspace --locked
-./target/debug/combraton-conformance self-test
-./target/debug/combraton-conformance check-fixtures
-./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json
-./target/debug/combraton-conformance run --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
-./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
-./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider.json
-./target/debug/combraton-conformance check-mutants --participant conformance/participants/reference-provider-unix.json --out conformance/results/reference-unix
-python3 conformance/scripts/build_pinned.py m5      # compatibility: the accepted M5 build and fixture set
-./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-reference
-./target/debug/combraton-conformance run --participant conformance/participants/pinned/m5-reference-provider.json --filter compat. --out conformance/results/compat/pinned-m5-provider
+python3 scripts/release.py bundle --commit v0.1.0 --version 0.1.0 --out dist
+python3 scripts/release.py verify-bundle --archive dist/combraton-protocol-0.1.0-source.tar.gz --work "$(mktemp -d)" --full
+python3 scripts/release.py evidence --run <CI run id> --out dist/combraton-protocol-0.1.0-evidence.tar.gz
+python3 scripts/release.py finalize --tag v0.1.0 --version 0.1.0 --commit v0.1.0 --tested-head <PR head> --ci-run <CI run id> --assets dist
 ```
 
-CI runs the same steps on Ubuntu and macOS ([conformance workflow](../../../.github/workflows/conformance.yml)), plus the different-OS-user check and the deterministic race regression.
+CI builds the bundle from the pushed commit and runs the archive path from a fresh extraction on Ubuntu and macOS (conformance workflow, job "Source bundle from a fresh extraction"). It also runs the full checkout commands, the different-OS-user check and the deterministic race regression.
 
 ## Evidence
 

@@ -114,6 +114,37 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  bundle:
+    name: Source bundle from a fresh extraction (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, pinned at setup
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build the source bundle twice from this commit and require identical bytes
+        run: |
+          version=$(python3 -c 'import re;print(re.search(r"^version = \"([^\"]+)\"", open("Cargo.toml").read(), re.M).group(1))')
+          python3 scripts/release.py bundle --commit HEAD --version "$version" --out "$RUNNER_TEMP/dist-a"
+          python3 scripts/release.py bundle --commit HEAD --version "$version" --out "$RUNNER_TEMP/dist-b"
+          cmp "$RUNNER_TEMP/dist-a/combraton-protocol-$version-source.tar.gz" "$RUNNER_TEMP/dist-b/combraton-protocol-$version-source.tar.gz"
+          echo "version=$version" >> "$GITHUB_ENV"
+      - name: Consumer path from the extracted bundle (no Git metadata), full checks
+        run: python3 scripts/release.py verify-bundle --archive "$RUNNER_TEMP/dist-a/combraton-protocol-$version-source.tar.gz" --work "$RUNNER_TEMP/extracted" --full
+      - name: Upload the bundle verification record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundle-verification-${{ matrix.os }}
+          path: ${{ runner.temp }}/extracted/verify-bundle.json
+          if-no-files-found: warn
+          retention-days: 30
+
   crosscheck:
     name: Non-Rust encoding cross-checks
     runs-on: ubuntu-latest

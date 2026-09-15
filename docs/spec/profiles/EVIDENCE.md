@@ -34,7 +34,7 @@ Fixed at `prepare`, immutable once sealed:
 
 | Field | Meaning |
 |---|---|
-| `digest`, `size`, `media_type` | The declared content, verified at seal (§4). The digest uses an algorithm this provider supports for digests (ENCODING §3: `sha256`, and `sha512` when it advertises `core.digest-sha512`); another algorithm is `unsupported_digest_algorithm` with `algorithm` and `supported`, and a digest of the wrong length is `invalid_envelope` at `/payload/digest`. |
+| `digest`, `size`, `media_type` | The declared content, verified at seal (§4). The digest uses an algorithm this provider supports for digests (ENCODING §3: `sha256`, and `sha512` when its `core.describe` manifest lists `core.digest-sha512`). Another algorithm is `unsupported_digest_algorithm` with `algorithm` and `supported`, and a digest of the wrong length is `invalid_envelope` at `/payload/digest`. Both are decided at step 2, with the rest of the descriptor's validation. |
 | `producer` | `{ principal, producer_id? }`. `principal` is always the session principal of the `prepare` command (EVD-4); a prepare naming another principal is `invalid_envelope` at `/payload/producer/principal`. |
 | `source` | What was captured: `{ kind, id }`, for example a terminal stream, a test report, or a build log of a named execution |
 | `scope` | The visibility scope the artifact belongs to; opaque to this profile |

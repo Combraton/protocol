@@ -6,7 +6,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-15, M4 steps 2–6 done: the Evidence and Context reference providers, the multi-participant runner, Execution integration and the cross-profile scenarios. Owner decisions M4-Q1 to M4-Q7 are incorporated.
+- **Checkpoint:** 2026-09-15, M4 steps 1–8 done and presented for owner acceptance. It is not merged.
 - **Status:** M0–M3 merged. M4 in progress on `release-0.1/m4` ([M4 task](M4.md)). Protocol 0.1 is not released.
 
 ## Goal, decisions and constraints
@@ -70,7 +70,11 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - `check-mutants` passes on both bindings;
   - each new composition scenario ran as intended 10 of 10 times;
   - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass.
-- CI evidence: [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
+- **M4 step 7 (local, macOS, head before close-out):**
+  - reference: stdio 229 pass and 20 skipped; Unix socket 249 pass;
+  - `check-mutants` passes on both bindings;
+  - independent after the seventh pass: 225 pass, 0 fail, 4 unsupported, 20 skipped.
+- **CI:** Ubuntu and macOS were green at `39e9dc8`, where the uploaded artifacts show stdio 226 pass and 20 skipped, Unix socket 246 pass, independent 196 pass, 20 skipped and 30 unsupported, and all mutants killed (307 of 307 stdio pairs, 42 of 42 Unix pairs). The final head's results are on [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
 
 ## What remains uncertain
 
@@ -86,7 +90,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## Active resources
 
-None.
+- Worktree `.worktrees/independent-m4` (branch `release-0.1/m4-independent`, merged into `release-0.1/m4`). It is kept until M4 merges.
 
 ## State and prompt disposition
 
@@ -94,5 +98,5 @@ None.
 
 ## Next action
 
-1. M4 step 7: independent pass. A spec-only helper, in a separate worktree, extends the independent Python provider to `evidence/1`, `context/1` and `execution.context_revalidation` over stdio. Divergences are resolved as in M3.
-2. M4 step 8: close-out. Update state, handoff, the PR and the issue checkpoint, gather CI evidence, and present M4 for acceptance, including the [points for the owner](M4.md#points-for-the-owner-at-acceptance).
+1. Owner review of M4 and its [points for the owner](M4.md#points-for-the-owner-at-acceptance). Point 4, whether an execution blocked at dispatch releases its capacity slot, awaits a decision.
+2. After acceptance and green checks on the final head, merge PR #5 if the owner authorizes it. Then remove the helper worktree `.worktrees/independent-m4` once its branch is verified as merged; its run evidence is preserved locally under `conformance/results/independent-m4-pass-evidence/`.

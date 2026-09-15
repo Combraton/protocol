@@ -39,7 +39,7 @@ The documents now state what the fixtures, the reference and, after section H.3,
 | H3-LIVE-ITEMS | **spec:** while preparing, items already met report `satisfied` |
 | H3-AUTHORITY-ENTRIES | **spec:** `authority_revision` is the revision the packet was prepared against, after corrections; older content is historical |
 | H3-PUBLISH-REVISION | **spec:** one request revision per publication |
-| H3-JOB-ID, H-CTX-IDS | **spec:** job ID, packet artifact ID and compiler name are conformance conventions in CONTEXT §12, not requirements on callers |
+| H3-JOB-ID, H-CTX-IDS | **spec:** the job ID and packet artifact ID are conformance conventions in CONTEXT §12, not requirements on callers (the compiler name was dropped from the conventions in C.1) |
 | H-SUBMIT-STATES | **spec:** a submit outcome is `preparing` or `refused` |
 | H-ARTIFACT-PROVIDER-OPTIONAL | **spec:** a reference without `provider` means the provider asked; references carried to other participants always name it |
 | H-CONTENT-DIGEST-ALG | **spec:** content digests use the algorithms the provider supports for digests; others are `unsupported_digest_algorithm`, and wrong lengths `invalid_envelope`. **reference** aligned. **fixture:** `evidence.descriptor-provenance-coverage-and-locator-rules` v2. |
@@ -56,6 +56,19 @@ The documents now state what the fixtures, the reference and, after section H.3,
 H-EVD-NEG, H-CTX-NEG, H-EVD-FEATURE-OPS, H-TERMINAL-COVERAGE, H-STAGING-TIMEOUT, H-SEAL-REPEAT, H-FETCH, H-DELETION, H-MANIFEST, H-BOUND-WORK, H-EVD-READ-RIGHTS, H-CTX-OBLIGATION-STEP, H-CTX-BUDGET, H-CTX-UNSATISFIED-REASONS, H-CTX-DEADLINE, H-CTX-INVESTIGATE, H-CTX-JOB-END, H-CTX-CANCEL, H-CTX-PUBLISH-EVENTS, H-CTX-UPDATES, H-CTX-CORRECTION, H-CTX-EVENT-VISIBILITY, H-REVAL-SCOPE, H-REVAL-HELD, H-REVAL-OBSERVE and H-REVAL-BLOCKS match the documents and the reference, or differ only where the documents leave the choice to the provider.
 
 H-REVAL-BOUNDARIES: whether advisory bindings are also checked at dispatch is left to the provider. Advisory bindings never block, and checks are recorded only when their result changes.
+
+## C.1 Seventh pass (realignment, base `8500948`)
+
+The helper realigned the independent provider with the resolved documents (`6e9bebf`, `35f09a5`, merged). Its full suite gave 225 pass, 0 fail, 4 unsupported and 20 skipped; the Evidence, Context and revalidation subsets all pass. Its remaining open points:
+
+| Tag | Resolution |
+|---|---|
+| H7-COMPILER-NAME | **spec:** the provenance `compiler` names the implementation; it is no longer a conformance convention (no fixture checks it) |
+| H7-SHA512-ADVERTISED | **spec:** sha512 content digests are accepted when the `core.describe` manifest lists `core.digest-sha512`. The independent provider accepts sha512 without listing it, which no fixture exercises. |
+| H7-DIGEST-ALG-STEP | **spec:** decided at step 2. The independent provider decides at step 7; the fixture cannot tell the two apart, which is a recorded coverage limit. |
+| H7-REVALIDATION-NO-CHECK | No change: every binding under the feature is checked at admission, so it always has a latest check |
+| H7-STAGED-INTEGRITY, H7-EXPIRED-HOLD-IN-LOSS, H7-PACKET-CITATION-TRACKED | No change: consistent with the documents |
+| H7-PARTIAL-UNREACHABLE | Coverage limit: nothing in the reference store controls produces `partial` availability |
 
 ## D. Still unchecked by fixtures (coverage limits)
 

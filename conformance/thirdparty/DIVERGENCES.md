@@ -216,3 +216,18 @@ Nothing failed in those runs. Three interface questions were left for the owner:
 - **Question.** Rule 4 has two clauses: `unverified_items` naming a required item, and a required item of the revision whose publication-time result is not `satisfied`. The mutant "ignores `invalidated_items` and `unverified_items` (rules 3 and 4)". Does it also ignore the second clause?
 - **Implemented.** The mutant treats `invalidated_items` and `unverified_items` as empty and keeps everything else: rules 1 and 2, and the publication-time item-result clause of rule 4. The facts' item results are not claim invalidation at read time, so the mutant differs from the correct kernel only in the two lists the interface names. Its check records report what it computed.
 - **Basis.** Interface; own judgment for the second clause. It makes no difference in fixture version 3, where every item was satisfied at publication.
+
+### TP-25: runs at `47bef1d` (kernel fixture version 3)
+- **Normal run.** `run: 1 fixtures (1 pass), 0 not passing`.
+  - The client log shows the items due at 00:03:00 decided in work-list order, each item's records published before the next: `w-req` (`stale`, withheld), `w-adv` (`stale`, dispatched with a gap), `w-tampered` and `w-altered` (`unsatisfied`, withheld), then `w-marker` (`current`, dispatched).
+  - `w-marker` was dispatched after every earlier item at that instant was decided (TP-23).
+- **Kernel mutants.** Each fails at the step the fixture's `client_kills` names, and each reason contains the expected substring:
+
+| Mutant | Intended | Observed step and reason | Cause, from the client log |
+|---|---|---|---|
+| `ignores-required-boundary` | 49, `expected error not_found, received success` | 49: `expected error not_found, received success` for `evidence.inspect` of `dispatch.w-tampered` | Honest checks, but every due item was dispatched: `w-req`, `w-tampered`, `w-altered`. |
+| `trusts-advertised-digest` | 51, `decision` | 51: `result/data_base64(json)/decision: expected "withhold", found "dispatch"` for `check.w-altered.1` | Without its own hash, the altered `packet.r-3.1` counted as held: state `current`, and `w-altered` was dispatched. |
+| `ignores-claim-invalidation` | 53, `expected error not_found, received success` | 53: `expected error not_found, received success` for `evidence.inspect` of `dispatch.w-req` | `invalidated_items` for `i-req` was ignored, so `w-req` was `current` and dispatched. The byte checks still held: `w-tampered` and `w-altered` were `unsatisfied` and withheld, which the steps before 53 require. |
+
+- No client stderr log contains a credential (`ccred1`).
+- **Unresolved.** Nothing.

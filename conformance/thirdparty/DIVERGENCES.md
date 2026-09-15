@@ -194,3 +194,25 @@ Nothing failed in those runs. Three interface questions were left for the owner:
 
 - No client stderr log contains a credential (`ccred1`).
 - **Unresolved.** Nothing.
+
+## After the second interface update (`23cf286`)
+
+`23cf286` wrote down the kernel's evaluation order, added the kernel mutant `ignores-claim-invalidation` to the interface and `minimal-executor/participant.json`, and brought kernel fixture version 3. Version 3 adds the advisory item `w-marker` as a synchronization point and states the intended failing step of each kernel mutant.
+
+### TP-23: evaluation and publication order
+- **Location.** Interface "Decision", "Order" (new).
+- **Question.** Does the kernel already evaluate due items in work-list order within one poll? Does it publish each item's records before evaluating the next item, and retry failed publications before evaluating that item again?
+- **Checked against the code** (`Kernel.run`, `Kernel.step`, `Kernel.publish_pending`), unchanged since `fbc71fe`:
+  - Each poll reads the clock once, then walks `self.items` in configuration order.
+  - For a due item without queued records, `step` evaluates it and queues its check record, then its dispatch record, and `publish_pending` publishes them in that order. Only then does the loop reach the next item.
+  - If publication fails, the records stay queued and the loop moves on to the next item.
+  - At later polls, an item with queued records only retries them (same bytes, same command identities) and is skipped for evaluation in that poll. It is evaluated again at a poll after its queue is empty.
+  - A dispatch counts as done only when its record is sealed.
+- **Implemented.** No code change; the kernel already meets the written order. The kernel README now describes it.
+- **Basis.** Interface and code inspection.
+
+### TP-24: scope of `ignores-claim-invalidation`
+- **Location.** Interface "Mutants"; evaluation rules 3 and 4.
+- **Question.** Rule 4 has two clauses: `unverified_items` naming a required item, and a required item of the revision whose publication-time result is not `satisfied`. The mutant "ignores `invalidated_items` and `unverified_items` (rules 3 and 4)". Does it also ignore the second clause?
+- **Implemented.** The mutant treats `invalidated_items` and `unverified_items` as empty and keeps everything else: rules 1 and 2, and the publication-time item-result clause of rule 4. The facts' item results are not claim invalidation at read time, so the mutant differs from the correct kernel only in the two lists the interface names. Its check records report what it computed.
+- **Basis.** Interface; own judgment for the second clause. It makes no difference in fixture version 3, where every item was satisfied at publication.

@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
 import combraton_client as cc  # noqa: E402
 
 CALLER = "thirdparty-minimal-executor"
-MUTANTS = {"ignores-required-boundary", "trusts-advertised-digest"}
+MUTANTS = {"ignores-required-boundary", "trusts-advertised-digest", "ignores-claim-invalidation"}
 CONFIG_FORMAT = "combraton-thirdparty-kernel-config/1"
 CHECK_FORMAT = "combraton-thirdparty-kernel-check/1"
 DISPATCH_FORMAT = "combraton-thirdparty-kernel-dispatch/1"
@@ -202,14 +202,19 @@ class Kernel:
             # An item whose obligation is not stated is not known to be advisory.
             return obligations.get(item_id) != "advisory"
 
+        # Deliberately broken mutant: read-time claim facts are ignored.
+        ignore_claims = self.mutant == "ignores-claim-invalidation"
+        invalidated = [] if ignore_claims else (facts.get("invalidated_items") or [])
+        unverified_facts = [] if ignore_claims else (facts.get("unverified_items") or [])
+
         # 3. Stale.
-        stale = [e.get("item_id") for e in facts.get("invalidated_items") or []
+        stale = [e.get("item_id") for e in invalidated
                  if isinstance(e, dict) and not_advisory(e.get("item_id"))]
         if stale:
             return "stale", ["invalidated required item: %s" % i for i in stale]
 
         # 4. Unknown.
-        unverified = [e.get("item_id") for e in facts.get("unverified_items") or []
+        unverified = [e.get("item_id") for e in unverified_facts
                       if isinstance(e, dict) and not_advisory(e.get("item_id"))]
         unsatisfied = [i for i, ob in obligations.items()
                        if ob != "advisory" and results.get(i) != "satisfied"]

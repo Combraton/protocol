@@ -1735,3 +1735,53 @@ Each was written before any fixture was opened. Basis: own judgment unless state
 - **HM5B-TIME-WITHOUT-CONTRACT** (VERIFICATION §7). With the contract unreadable, `max_age_seconds` is unknown; the Time row names no contract reason, so Time is decided from `valid_until` and `observed_until` alone. `properties` is empty and `overall` is `not_satisfied` anyway.
 - **HM5B-CONTRACT-MEMBERS** (VERIFICATION §3). "Content that is not a contract as the table above requires": a member the table does not list, or an ill-typed member, is still `invalid_format` here, as in H.M5; the table does not say whether contracts are closed objects. Unchanged.
 - **HM5B-DUPLICATE-PATH-ORDER** (KNOWLEDGE §3, §5). Each support entry is validated in order, including its roots rule; duplicate `support_id` values are checked after the entries, and duplicate `condition_id` values after the conditions.
+
+#### Runs
+
+Readings committed as `f6d6122`; implementation of the change list and the readings as `cde7009` ("M5 independent: realign with the resolved documents"), before any fixture was opened. 273 fixtures at `6cec5f6`, runner rebuilt.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Eleventh-pass code (`87f84ec` tree) at this base | 238 | 7 | 0 | 0 | 4 | 24 |
+| First complete run after `cde7009`, and one repeat | 245 | 0 | 0 | 0 | 4 | 24 |
+
+- Baseline summary: `run: 273 fixtures (7 fail, 238 pass, 24 skipped, 4 unsupported), 7 not passing` (the seven fixtures the coordinator listed).
+- After the realignment: `run: 273 fixtures (245 pass, 24 skipped, 4 unsupported), 0 not passing`. Filtered: `--filter knowledge.` `run: 10 fixtures (10 pass), 0 not passing`; `--filter verification.` `run: 5 fixtures (5 pass), 0 not passing`; `--filter context.claims` `run: 1 fixtures (1 pass), 0 not passing`.
+- The 4 unsupported are the backpressure fixtures; the 24 skipped are 12 `socket.*` and 12 `composition.*`.
+- `tests/check_vectors.py` (0 failures), `probe_provider.py` (19/19), `probe_m2.py` (43/43) and `probe_f.py` (31/31) pass.
+
+**No fixture failed, so no fixture was read, and nothing was changed after a run.** Every change in this pass has basis spec text (the change list) or own judgment (the readings above); none is fixture-informed.
+
+#### Fixture sensitivity
+
+A throwaway probe (not committed) copied this implementation, applied one deviation at a time, and ran `--filter knowledge.`, `--filter verification.` and `--filter context.claims`. Only runner output was read.
+
+Noticed (the fixture and step that fail):
+- no finding `reason` (`knowledge.dependencies-resolve-only-exact-references` step 8);
+- no `knowledge.read` on dependency claims (same fixture, step 33);
+- `from == until` accepted (`knowledge.claim-revisions-are-immutable-with-base-checks` step 16), rootless complete ancestry accepted (step 17), duplicate `support_id` accepted (step 18);
+- availability `complete` with no entries (`knowledge.support-classes-follow-declared-ancestry` step 3);
+- decision preconditions after the authority checks (`knowledge.only-the-bound-authority-decides` step 27);
+- an unlisted evaluator `unsupported` (evaluate step 13, reconnect step 18);
+- ID collisions accepted, and `receipt.record` over a job ID accepted (evaluate step 19);
+- `receipt.issued` `job` as a subject (evaluate step 27);
+- `applicability_changed` by evaluation rather than result (`context.claims-in-packets-are-negotiated-snapshots` step 31);
+- format `/2` without `context.claims` (claims step 40).
+
+Unguarded (every M5 fixture still passes): HM5B-SELF-OR-REMOTE reversed; resolve preconditions after the authority checks; `current` omitted from the collision entry (HM5B-COLLISION-DETAILS); the collision checked after the evaluator capability; `scope: "verification job <id>"`; `receipt.issued` after the artifact's events; a queued job losing its evaluator completing without `running` (HM5B-QUEUED-LOSS); `format` optional in contracts; empty contract `properties`; both assessment reason orders and dropping `contract_unavailable` when the receipt is also unusable (HM5B-UNUSABLE-REASON-ORDER); a historical claim section satisfying a `hypothesis` item (HM5B-HISTORICAL-CLAIM-REASON); claim reasons ahead of scripted `unmet` (HM5B-SCRIPTED-UNMET-SCOPE); a `hypothesis` item not invalidated when its claim becomes `invalid_for_target` at the read; `applicability_not_established` for every reliance; resolved conflicts in snapshots.
+
+#### Remaining contradictions, silences and unchecked resolutions
+
+None fails a fixture.
+
+- **HM5B-STEP7-CORE-ORDER** (above). CORE §10 step 7 says capabilities, then authority epoch, then preconditions. KNOWLEDGE §6 puts preconditions before the epoch check, and VERIFICATION §4 puts preconditions before its evaluator predicate. Implemented per the profiles. Suggested: CORE §10 should say that a profile may order its own step 7 checks, or the profiles should say they override it. For decisions the fixture checks preconditions before the authority checks; for resolve the order is unguarded. Basis: spec text (contradiction between documents).
+- **HM5B-SELF-OR-REMOTE** (above). Unguarded. Suggested: KNOWLEDGE §8 should say that the reasons are checked in table order, or that `self_reference` requires this provider. Basis: own judgment.
+- **HM5B-HISTORICAL-CLAIM-REASON** (above). CONTEXT §14 now requires a non-historical section, but the table gives no reason for a `hypothesis` or `reference` item whose only section is historical, nor says whether such an item is invalidated at the read when its claim becomes `invalid_for_target`. Both unguarded. Suggested: add `invalid_for_target` to the `hypothesis`/`reference` row, and name it for all reliances under "Invalidated items". Basis: own judgment.
+- **HM5B-SCRIPTED-UNMET-SCOPE** (above). CONTEXT §12's precedence is unguarded, as M5-DIVERGENCES §D already lists. It also reverses H.M5's reading for `knowledge_unavailable` and `claim_digest_mismatch`; the text names "a claim check" without excluding them. Basis: spec text.
+- **HM5B-COLLISION-DETAILS** (above). VERIFICATION §4 writes `failed: [ { subject, expected: 0 } ]` without `current`; CORE §12 adds `current` "if permitted". Implemented with `current` when readable; unguarded. The fixture checks a collision (evaluate step 19) but not the entry's members beyond what passes both ways. Basis: spec text (CORE) against a shorter profile shape.
+- **HM5B-QUEUED-LOSS** (above). Unguarded. Suggested: VERIFICATION §4 should say whether a job completed by evaluator loss before running reports `running` first, and what `observed_from` is then. Basis: own judgment.
+- **HM5B-ISSUED-EVENTS** (above). VERIFICATION §4's issued event order is unguarded, as M5-DIVERGENCES §D lists. Basis: spec text.
+- **HM5B-UNUSABLE-REASON-ORDER** and **HM5B-TIME-WITHOUT-CONTRACT** (above). Unguarded. VERIFICATION §7 lists reasons per cell but no order when several cells apply, and gives Time no contract dependency. Basis: own judgment.
+- **HM5B-CONTRACT-MEMBERS** (above). VERIFICATION §3 does not say whether unknown contract members make the content `invalid_format`, and the required `format` and non-empty lists are unguarded (M5-DIVERGENCES §D lists rarer format violations). Basis: own judgment.
+- **Resolutions no fixture checks here** (from the probe): KNOWLEDGE §7 resolve order; VERIFICATION §3 `format` required and non-empty `properties`; §4 `scope` from `outcome` and the issued event order; CONTEXT §14 snapshot conflicts open only and `unverified_items` limited to `binding`/`evidence` items; CONTEXT §12 scripted-unmet precedence. Duplicate `condition_id` and `decision.record` without read on its claim were not probed, and are listed as unchecked in M5-DIVERGENCES §D.
+- **Coverage limits unchanged.** No Unix-socket binding, so `context.knowledge_provider` peers and `execution.claim_revalidation` are not implemented and `composition.claims-in-packets-block-only-the-required-boundary` is skipped (SCN-16 and the Execution side of CMP-9 are checked only on the reference). Claims are read only from this provider's own store.

@@ -4,7 +4,7 @@
 
 `combraton-independent-python-core` `0.1.0-dev.0` is a second implementation of the Core provider and of an executor. It speaks the stdio form of the stream binding and implements `core/1` together with the conformance-only `core-test/1` profile, including the Core features `core.grants` (CORE §15), `core.events` (§16), `core.capabilities` (§17) and `core.effects` (§19), and `core.authenticate` as a stdio session answers it (§18). Since the M3 pass it also implements `execution/1` (EXECUTION §1–§14) over the scripted executor of decision 007, with the clock file and store faults. Since the M4 pass it implements `evidence/1` with `evidence.manifests` and `evidence.retention_control` over a scripted store, `context/1` with its six features over scripted preparation (packets sealed as Evidence artifacts in its own store), and `execution.context_revalidation` for a single provider. Since the M5 pass it implements `knowledge/1` (all 11 operations, over its own store, with the `knowledge` launch control), `verification/1` with `verification.jobs` and `verification.record` over a scripted evaluator (contracts read from, and receipts sealed in, its own evidence store), and `context.claims` for claims in its own knowledge store. Its value is that it was written **from the published documents only**, without reading the reference provider. Where the documents leave a question open, it records the question instead of copying the reference's answer.
 
-It was written in eleven spec-only passes:
+It was written in twelve spec-only passes:
 
 1. the Core command path (M1 fixtures, base `f42d21a`);
 2. the three M2 features (base `3b32037`);
@@ -16,26 +16,27 @@ It was written in eleven spec-only passes:
 8. the owner's M4 close-out (base `63f1bb0`): capacity released while blocked before dispatch, pinning, typed grant constraints and `evidence.work_binding`, and the new store controls;
 9. realignment with the resolution of that pass's findings (base `9591551`): `require_current` needs `fetch.context`, `basis_changes` merges, `superseded_by` names the current revision, and a delivery timeout ends released work with `deadline_passed`;
 10. realignment at `0e80475`: released work ending before dispatch emits its cause first and the scheduling change last, with evidence class `scheduling` (EXECUTION §15.1);
-11. `knowledge/1`, `verification/1` and `context.claims` (M5, base `950f3e0`).
+11. `knowledge/1`, `verification/1` and `context.claims` (M5, base `950f3e0`);
+12. realignment with the resolution of that pass's findings (base `6cec5f6`): dependencies resolve only as exact local references with a finding `reason`, named-revision rights, stricter claim content checks, Core preconditions first, unlisted evaluator versions `unknown`, job and receipt ID collisions refused, issued receipt members and event order, the contract format, the assessment's dependent checks, and non-historical claim sections.
 
-The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), and in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md). The third to tenth passes read the documents before the fixtures.
+The later passes also read the resolution records [M2-DIVERGENCES](../../../docs/work/release-0.1/M2-DIVERGENCES.md) in the fifth and sixth passes, [M3-DIVERGENCES](../../../docs/work/release-0.1/M3-DIVERGENCES.md), in the seventh [M4-DIVERGENCES](../../../docs/work/release-0.1/M4-DIVERGENCES.md), and in the twelfth [M5-DIVERGENCES](../../../docs/work/release-0.1/M5-DIVERGENCES.md). The third to twelfth passes read the documents before the fixtures.
 
 ## What it was written from
 
 Allowed and read:
 
 - `docs/spec/profiles/CORE.md`, `docs/spec/profiles/EXECUTION.md` (fourth pass), `docs/spec/profiles/EVIDENCE.md` and `docs/spec/profiles/CONTEXT.md` (sixth pass), `docs/spec/profiles/KNOWLEDGE.md` and `docs/spec/profiles/VERIFICATION.md` (eleventh pass), `docs/spec/bindings/STREAM.md`, `docs/spec/bindings/ENCODING.md`
-- `docs/decisions/007-execution-test-controls.md`, `docs/work/release-0.1/M3.md` and `docs/work/release-0.1/MATRIX.md` (fourth pass); `docs/work/release-0.1/M4.md` and the M4 rows of the matrix (sixth pass); `docs/work/release-0.1/M5.md` and the M5 rows (eleventh pass)
+- `docs/decisions/007-execution-test-controls.md`, `docs/work/release-0.1/M3.md` and `docs/work/release-0.1/MATRIX.md` (fourth pass); `docs/work/release-0.1/M4.md` and the M4 rows of the matrix (sixth pass); `docs/work/release-0.1/M5.md` and the M5 rows (eleventh pass, and its step 5 record in the twelfth)
 - `schemas/**`
 - `conformance/README.md` (including its launch configuration section), `docs/VERIFICATION.md`, `conformance/schemas/fixture.schema.json`, `conformance/schemas/launch-config.schema.json`
-- `docs/work/release-0.1/M2-DIVERGENCES.md` (second to fifth passes), `docs/work/release-0.1/M3-DIVERGENCES.md` (fifth and sixth passes) and `docs/work/release-0.1/M4-DIVERGENCES.md` (seventh pass)
+- `docs/work/release-0.1/M2-DIVERGENCES.md` (second to fifth passes), `docs/work/release-0.1/M3-DIVERGENCES.md` (fifth and sixth passes) `docs/work/release-0.1/M4-DIVERGENCES.md` (seventh pass) and `docs/work/release-0.1/M5-DIVERGENCES.md` (twelfth pass, with `git diff 950f3e0 6cec5f6` restricted to `docs/spec`, `schemas`, `conformance/README.md`, `conformance/schemas`, M5 and M5-DIVERGENCES)
 - `conformance/fixtures/**`, `conformance/vectors/encoding.json`
 - `conformance/participants/*.json`, used only as format examples for the descriptor
 - the transcripts and manifests the runner wrote for this implementation
 
 Not read: `conformance/reference/**`, `conformance/crosscheck/**` and `conformance/runner/src/**`, nor their history. The runner was used only as a black-box binary.
 
-In the first two passes the fixtures were read **before** the code was written, so some choices on points the prose leaves open were informed by what the fixtures expect. [DIVERGENCES.md](DIVERGENCES.md) marks each such choice. The third to sixth passes wrote their change lists from the documents first and read the fixtures afterwards (sections F, G, G.5 and H). The fourth pass committed its implementation before opening any `execution/`, `socket/` or M3 Core fixture; the fifth read the five re-versioned fixtures only after its first run. The sixth recorded its readings (H.1) and committed its implementation before opening any `evidence/`, `context/`, `composition/` or M4 `execution/` fixture. The eleventh committed its implementation (`97b5471`) before opening any M5 fixture, and then read only the five that failed (DIVERGENCES H.M5).
+In the first two passes the fixtures were read **before** the code was written, so some choices on points the prose leaves open were informed by what the fixtures expect. [DIVERGENCES.md](DIVERGENCES.md) marks each such choice. The third to sixth passes wrote their change lists from the documents first and read the fixtures afterwards (sections F, G, G.5 and H). The fourth pass committed its implementation before opening any `execution/`, `socket/` or M3 Core fixture; the fifth read the five re-versioned fixtures only after its first run. The sixth recorded its readings (H.1) and committed its implementation before opening any `evidence/`, `context/`, `composition/` or M4 `execution/` fixture. The eleventh committed its implementation (`97b5471`) before opening any M5 fixture, and then read only the five that failed (DIVERGENCES H.M5). The twelfth committed its readings (`f6d6122`) and its realignment (`cde7009`) before opening any fixture; its first complete run had no failure, so it read no fixture (DIVERGENCES H.M5b).
 
 ## Layout
 
@@ -197,6 +198,15 @@ The eleventh pass, at `950f3e0` (DIVERGENCES H.M5), claims `knowledge/1`, `verif
 | After six fixture-driven changes, and one repeat | 243 | 0 | 0 | 0 | 4 | 24 |
 
 The six changes (HM5-VALIDITY-ORDER, HM5-RECORDED-FILL, HM5-LISTING-DETAILS, HM5-ASSESS-REFERENCE-MISMATCH, HM5-UNLISTED-EVALUATOR, HM5-ASSESS-MISSING) follow fixture expectations the documents do not state; one of them (HM5-ASSESS-MISSING) contradicts the literal text of VERIFICATION §7. A throwaway sensitivity probe found 16 of 25 deliberate deviations unnoticed by the M5 fixtures (H.M5).
+
+The twelfth pass, at `6cec5f6` (DIVERGENCES H.M5b), realigns with the resolution of H.M5 ([M5-DIVERGENCES](../../../docs/work/release-0.1/M5-DIVERGENCES.md)). Claims are unchanged:
+
+| Run (base `6cec5f6`, 273 fixtures) | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Eleventh-pass code | 238 | 7 | 0 | 0 | 4 | 24 |
+| First complete run after the realignment from the documents, and one repeat | 245 | 0 | 0 | 0 | 4 | 24 |
+
+Nothing was changed after a fixture run, and no fixture was read. A throwaway sensitivity probe (H.M5b) records which of this pass's readings the fixtures check.
 
 Passing is weaker evidence than it looks. `tests/fixture_sensitivity.py` shows which deliberate deviations from the documents still pass every fixture; see DIVERGENCES sections D, E.4 and F.5. It has not been extended to the M3 fixtures.
 

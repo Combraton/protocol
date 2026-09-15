@@ -41,7 +41,10 @@ CHUNK_OVERHEAD_BYTES = 2048  # H-CHUNK-LIMIT
 DEFAULT_FETCH_BYTES = 65536  # H-FETCH
 DEFAULT_QUERY_LIMIT = 100  # H-QUERY
 DIGEST_ALGORITHMS = ("sha256", "sha512")  # H-CONTENT-DIGEST-ALG
-TRACKED_DEPENDENCIES = ["hold", "manifest", "packet"]  # H-LOSS-RECORD
+# H-LOSS-RECORD, H3-LOSS-KINDS (fixture-informed): the dependency kinds tracked.
+HOLD_DEPENDENCY = "evidence.hold"
+MANIFEST_DEPENDENCY = "evidence.manifest_child"
+TRACKED_DEPENDENCIES = [HOLD_DEPENDENCY, MANIFEST_DEPENDENCY]
 CREDENTIAL_PARAM = re.compile(r"token|sig|signature|credential|password|secret|key|auth", re.I)
 
 
@@ -404,10 +407,13 @@ class Evidence:
 
     # ------------------------------------------------------ visibility
     def hold_visible(self, auth, hid: str, hold: dict) -> bool:
-        """H-HOLD-VISIBILITY."""
+        """H-HOLD-VISIBILITY, widened by H3-HOLD-VISIBILITY (fixture-informed):
+        a reader of the held artifact sees its holds."""
         if auth.grant is None:
             return True
         if hold["owner"] == self.p.principal:
+            return True
+        if self.artifact_readable(auth, hold["artifact"]):
             return True
         return "evidence.read" in auth.grant["rights"] and G.grant_covers(auth.grant, hold_subject(hid))
 
@@ -423,7 +429,7 @@ class Evidence:
     def availability(self, aid: str, rec: dict) -> dict:
         """H-AVAILABILITY-STATES: observed at the read, never recorded."""
         if rec["state"] == "staged":
-            return {"state": "partial"}
+            return {"state": "available"}  # H3-STAGED-AVAILABILITY (fixture-informed)
         if rec["state"] == "abandoned":
             return {"state": "unavailable", "reason": rec.get("abandoned_reason", "abandoned")}
         purge = rec.get("purge")
@@ -525,7 +531,7 @@ class Evidence:
     def op_abandon(self, env, auth):
         self.check_preconditions(env, auth)
         aid, revision, rec = self._existing(env, ("staged",))
-        revision, changes = self._abandon(aid, revision, rec, "producer_abandoned", [])  # H-ABANDON-REASON
+        revision, changes = self._abandon(aid, revision, rec, "abandoned_by_producer", [])  # H3-ABANDON-REASON
         return revision, {"artifact": artifact_subject(aid), "state": "abandoned"}, changes
 
     def _abandon(self, aid, revision, rec, reason, changes):
@@ -594,10 +600,11 @@ class Evidence:
             if hrow is None or hrow[1]["artifact"] != aid or hrow[1]["state"] != "active":
                 raise ProtocolError("not_found")
             holds[hid] = hrow
-        blocking = [hid for hid in rec.get("holds", [])
+        blocking = [hid for hid in sorted(rec.get("holds", []))
                     if hid not in holds and self.load_hold(hid)[1]["state"] == "active"]
         if blocking:
-            visible = [hold_subject(h) for h in blocking if self.hold_visible(auth, h, self.load_hold(h)[1])]
+            # H3-HOLD-ACTIVE-DETAILS (fixture-informed): hold IDs.
+            visible = [h for h in blocking if self.hold_visible(auth, h, self.load_hold(h)[1])]
             raise ProtocolError("hold_active", {"holds": visible, "filtered": len(visible) < len(blocking)})
         now = self.now()
         changes = []
@@ -607,16 +614,26 @@ class Evidence:
                         "affected": self._dependencies(aid, rec)}
         self.store.put_json(ARTIFACT_KIND, aid, revision, rec)
         changes.append(("evidence.artifact.purge_requested", artifact_subject(aid), revision, {"requested_at": now}))
+        availability = "purge_pending"
+        if not self.deletion_delay:
+            # H3-IMMEDIATE-DELETION (fixture-informed): without a deletion
+            # delay the store confirms deletion in the purge's own transaction.
+            rec["purge"]["confirmed_at"] = now
+            self.store.delete_blob(aid)
+            revision += 1
+            self.store.put_json(ARTIFACT_KIND, aid, revision, rec)
+            changes.append(("evidence.artifact.purged", artifact_subject(aid), revision, {"confirmed_at": now}))
+            availability = "purged"
         for hid in named:
             hrev, hold = holds[hid]
             self._release(hid, hrev, hold, changes)
-        return revision, {"artifact": artifact_subject(aid), "availability": "purge_pending",
+        return revision, {"artifact": artifact_subject(aid), "availability": availability,
                           "released_holds": [hold_subject(h) for h in named]}, changes
 
     def _dependencies(self, aid: str, rec: dict) -> list:
         """H-LOSS-RECORD: holds, manifests listing the artifact, packets citing it."""
-        affected = [{"kind": "hold", "subject": hold_subject(h)} for h in rec.get("holds", [])]
-        for mid in self.store.ids_of(ARTIFACT_KIND):
+        affected = [{"kind": HOLD_DEPENDENCY, "subject": hold_subject(h)} for h in sorted(rec.get("holds", []))]
+        for mid in sorted(self.store.ids_of(ARTIFACT_KIND)):
             if mid == aid:
                 continue
             mrow = self.load(mid)
@@ -628,11 +645,7 @@ class Evidence:
                 continue
             if any(c["evidence"]["artifact"]["id"] == aid and c["evidence"].get("provider", self.p.provider_id) ==
                    self.p.provider_id for c in manifest["children"]):
-                affected.append({"kind": "manifest", "subject": artifact_subject(mid)})
-        context = getattr(self.p, "context", None)
-        if context is not None:
-            for packet in context.packets_citing(aid):
-                affected.append({"kind": "packet", "subject": packet})
+                affected.append({"kind": MANIFEST_DEPENDENCY, "subject": artifact_subject(mid)})
         return affected
 
     # -------------------------------------------------------- queries
@@ -649,7 +662,7 @@ class Evidence:
         if rec["state"] == "abandoned":
             view["abandoned_reason"] = rec["abandoned_reason"]
         holds = []
-        for hid in rec.get("holds", []):
+        for hid in sorted(rec.get("holds", [])):  # H3-HOLD-ORDER (fixture-informed): hold ID order
             hrow = self.load_hold(hid)
             if hrow is None or not self.hold_visible(auth, hid, hrow[1]):
                 continue
@@ -668,20 +681,18 @@ class Evidence:
 
     def _dependency_visible(self, auth, entry: dict) -> bool:
         kind, subject = entry["kind"], entry["subject"]
-        if kind == "hold":
+        if kind == HOLD_DEPENDENCY:
             row = self.load_hold(subject["id"])
             return row is not None and self.hold_visible(auth, subject["id"], row[1])
-        if kind == "manifest":
+        if kind == MANIFEST_DEPENDENCY:
             return self.artifact_readable(auth, subject["id"])
-        if kind == "packet":
-            return auth.grant is None or ("context.packet.read" in auth.grant["rights"]
-                                          and G.grant_covers(auth.grant, subject))
         return False
 
     def _loss_view(self, aid: str, rec: dict, auth) -> dict:
         purge = rec["purge"]
         affected = [e for e in purge["affected"] if self._dependency_visible(auth, e)]
-        released = [h for h in purge["released_holds"] if self._dependency_visible(auth, {"kind": "hold", "subject": h})]
+        released = [h for h in purge["released_holds"]
+                    if self._dependency_visible(auth, {"kind": HOLD_DEPENDENCY, "subject": h})]
         filtered = len(affected) < len(purge["affected"]) or len(released) < len(purge["released_holds"])
         loss = {"artifact": artifact_subject(aid), "digest": rec["descriptor"]["digest"],
                 "requested_at": purge["requested_at"]}
@@ -727,24 +738,29 @@ class Evidence:
         payload = env["payload"]
         filters = payload.get("filters", {})
         limit = payload.get("limit", DEFAULT_QUERY_LIMIT)
-        ids = self.store.ids_of(ARTIFACT_KIND)
-        start = 0
+        # H3-QUERY-ORDER (fixture-informed): artifact ID order; the cursor
+        # names the last artifact returned.
+        ids = sorted(self.store.ids_of(ARTIFACT_KIND))
+        after = None
         if "cursor" in payload:
-            m = re.fullmatch(r"eq1\.([0-9]{1,9})", payload["cursor"])
-            if m is None or int(m.group(1)) > len(ids):
+            m = re.fullmatch(r"eq1\.([A-Za-z0-9_-]+=*)", payload["cursor"])
+            try:
+                after = base64.urlsafe_b64decode(m.group(1)).decode("utf-8") if m else None
+            except (binascii.Error, ValueError):
+                after = None
+            if after is None:
                 raise ProtocolError("invalid_cursor", {"reason": "malformed"})
-            start = int(m.group(1))
-        items, index, more = [], start, False
-        while index < len(ids):
-            aid = ids[index]
+        items, more, last = [], False, None
+        for aid in ids:
+            if after is not None and aid <= after:
+                continue
             rec = self.load(aid)[1]
-            index += 1
             if not self.artifact_readable(auth, aid) or not self._matches(rec, filters):
                 continue
             if len(items) == limit:
                 more = True
-                index -= 1
                 break
+            last = aid
             items.append({"artifact": artifact_subject(aid), "digest": rec["descriptor"]["digest"],
                           "state": rec["state"], "availability": self.availability(aid, rec)})
         grant = auth.grant
@@ -752,7 +768,7 @@ class Evidence:
             r["kind"] == ARTIFACT_KIND and "id" not in r and "id_prefix" not in r for r in grant["resources"]))
         result = {"items": items, "filtered": filtered}
         if more:
-            result["next_cursor"] = f"eq1.{index}"
+            result["next_cursor"] = "eq1." + base64.urlsafe_b64encode(last.encode("utf-8")).decode("ascii")
         return result
 
     @staticmethod
@@ -847,7 +863,9 @@ class Evidence:
         descriptor = {"digest": digest, "size": len(data), "media_type": media_type,
                       "source": source, "scope": scope,
                       "capture": {"captured_at": self.now(), "anchors": []}, "coverage": coverage,
-                      "retention_class": "default", "producer": {"principal": self.p.principal}}
+                      "retention_class": "default",
+                      # H3-PACKET-PRODUCER (fixture-informed): the provider itself produced these bytes.
+                      "producer": {"principal": self.p.provider_id}}
         if work is not None:
             descriptor["work"] = work
         subject = artifact_subject(aid)

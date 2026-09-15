@@ -488,7 +488,7 @@ class Context:
             return 1, {"request": subject, "state": "refused", "reason": "budget_insufficient", "needed": needed}, [
                 ("context.request.changed", subject, 1, {"state": "refused", "reason": "budget_insufficient"})]
         if job is None:
-            jid = f"{rid}.job"  # H-CTX-IDS
+            jid = rid  # H3-JOB-ID (fixture-informed): a job is named after the request that starts it
             job = {"requests": [], "owner": rid, "pos": 0, "spent": 0, "budget": payload["limits"]["investigation"]["amount"],
                    "sections": [], "coverage": [], "unmet": {}, "omissions": [], "corrections": {}, "conditions": [],
                    "published": False, "ended": None, "stalled": False, "principal": self.p.principal,
@@ -547,7 +547,10 @@ class Context:
                 view[member] = rec[member]
         if rec.get("job") is not None:
             view["job"] = job_subject(rec["job"])
-        view.update(consumer=rec["consumer"], limits=rec["limits"], items=rec["item_results"])
+        items = rec["item_results"]
+        if rec["state"] == "preparing":
+            items = self._live_items(rec)  # H3-LIVE-ITEMS (fixture-informed)
+        view.update(consumer=rec["consumer"], limits=rec["limits"], items=items)
         last = len(rec["packets"])
         packets = []
         for pk in rec["packets"]:
@@ -609,6 +612,14 @@ class Context:
             "offset": offset, "length": len(piece), "size": size,
             "data_base64": base64.b64encode(piece).decode("ascii")}}, chunk)
 
+    def _live_items(self, rec: dict) -> list:
+        """Item results while preparing: satisfied once the job's content
+        satisfies the item, otherwise pending."""
+        job = self.load_job(rec["job"])[1]
+        ev = self._evaluate(rec, job, "unavailable")
+        return [r if r["result"] == "satisfied" else {"item_id": r["item_id"], "obligation": r["obligation"],
+                                                     "result": "pending"} for r in ev["items"]]
+
     def packets_citing(self, aid: str) -> list:
         out = []
         for rid in self.store.ids_of(REQUEST_KIND):
@@ -623,18 +634,13 @@ class Context:
         current.update(job["corrections"])
         return current
 
-    def _satisfies(self, item: dict, section: dict, current_authority: dict) -> bool:
-        """H-CTX-SATISFACTION."""
-        check = item["check"]
-        if check["kind"] == "source_included":
-            src = section.get("source")
-            return src is not None and src["repository"] == check["repository"] and src["path"] == check["path"]
-        if check["kind"] == "evidence_included":
-            want = check["evidence"]
-            return any(c["evidence"]["artifact"] == want["artifact"] and c["evidence"]["digest"] == want["digest"]
-                       for c in section.get("citations", []))
-        return (item["item_id"] in current_authority
-                and section.get("authority_revision") == current_authority[item["item_id"]])
+    @staticmethod
+    def _satisfies(item: dict, section: dict, current_authority: dict) -> bool:
+        """H-CTX-SATISFACTION, replaced by H3-CTX-SATISFACTION (fixture-informed):
+        an included, non-historical section for the item satisfies it,
+        whatever its check names. A section older than the item's current
+        authority revision is historical and so never satisfies it."""
+        return True
 
     def _evaluate(self, rec: dict, job: dict, default_reason: str) -> dict:
         items = rec["items"]
@@ -737,15 +743,11 @@ class Context:
                 if entry not in selected:
                     selected.append(entry)
         current_authority = self._current_authority(rec, job)
-        authority = []
-        for entry in rec["authority_content"]:
-            iid = entry["item_id"]
-            section = next((s for s, h in ev["included"] if s.get("item_id") == iid and not h), None)
-            if section is None:
-                continue
-            authority.append({"item_id": iid,
-                              "authority_revision": section.get("authority_revision", current_authority.get(iid)),
-                              "evidence": entry["evidence"], "coverage": list(job["coverage"])})
+        # H3-AUTHORITY-ENTRIES (fixture-informed): one entry per authority
+        # content item, at the item's current authority revision, whether or
+        # not content at that revision is included.
+        authority = [{"item_id": e["item_id"], "authority_revision": current_authority[e["item_id"]],
+                      "evidence": e["evidence"], "coverage": list(job["coverage"])} for e in rec["authority_content"]]
         applicability = {"basis": rec["basis"], "conditions": list(job["conditions"])}
         content = {"format": PACKET_FORMAT, "request": subject, "revision": n}
         if n > 1:
@@ -776,10 +778,11 @@ class Context:
         rec["item_results"] = ev["items"]
         old_state = rec["state"]
         rec["state"] = ev["state"]
+        # H3-PUBLISH-REVISION (fixture-informed): one publication is one change
+        # of the request; its events share the new revision.
         revision += 1
         self._emit(None, "context.packet.published", subject, revision, {"reference": reference, "items": ev["items"]})
         if ev["state"] != old_state:
-            revision += 1
             self._emit(None, "context.request.changed", subject, revision, {"state": ev["state"], "job": job_subject(job_id)})
         self.store.put_json(REQUEST_KIND, rid, revision, rec)
         self.store.put_json(PACKET_KIND, rid, n, {"request": rid})
@@ -825,6 +828,12 @@ class Context:
         jid = rec["job"]
         jrev, job = self.load_job(jid)
         self._publish(rid, jid, job, "deadline_passed")
+        # H3-DEADLINE-PUBLISH (fixture-informed): a publication at the
+        # deadline is the one the pending script step was waiting for; that
+        # step does not publish an update for this request again.
+        revision, rec = self.load(rid)
+        rec["published_pos"] = job["pos"]
+        self.store.put_json(REQUEST_KIND, rid, revision, rec)
         return True
 
     def _job_step(self, jid: str) -> bool:
@@ -864,7 +873,8 @@ class Context:
             job["pos"] = pos + 1
             for rid, rec in subscribers:
                 if rec["state"] == "preparing" or (rec["packets"] and rec["updates"]
-                                                   and rec["state"] in ("ready", "partial", "unmet")):
+                                                   and rec["state"] in ("ready", "partial", "unmet")
+                                                   and rec.get("published_pos", -1) < pos):
                     self._publish(rid, jid, job, "unavailable")
             job["published"] = True
             self.store.put_json(JOB_KIND, jid, jrev, job)

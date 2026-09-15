@@ -566,7 +566,7 @@ class Executor:
         """EXECUTION 13.1 "What the executor checks": typed conditions against
         the observed basis only (H-REVAL-OBSERVE). Returns the parts of a check
         record that do not depend on the boundary."""
-        basis = x.get("observed_basis", {})
+        basis = self.observed_basis_of(x)
         repos = basis.get("repositories", {})
         results = []
         if "context" in binding.get("fetch", {}):
@@ -783,7 +783,7 @@ class Executor:
         }
         if "execution.context_revalidation" in features:
             # EXECUTION 13.1: the extension applies to work submitted under it (H-REVAL-SCOPE).
-            x.update(revalidation=True, observed_basis=V.loads(V.canonical_text(self.observed_basis)), checks=[])
+            x.update(revalidation=True, checks=[])
         for member in ("predecessor", "correlation", "origin"):
             if member in payload:
                 x[member] = payload[member]
@@ -1586,14 +1586,27 @@ class Executor:
             self._xevent(st, "execution.transition.blocked", dict(block))
         return changed or new_boundary or st["rev"] != before
 
+    def observed_basis_of(self, x: dict) -> dict:
+        """What revalidation can observe for an execution: this start's
+        launch ``observed_basis`` with the execution's own ``observe_basis``
+        observations merged over it (H-REVAL-OBSERVE; the launch part is
+        re-read at every start, H3-OBSERVED-BASIS-RESTART)."""
+        basis = V.loads(V.canonical_text(self.observed_basis))
+        overlay = x.get("observations", {})
+        for rid, repo in overlay.get("repositories", {}).items():
+            basis.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
+        if "environment_digest" in overlay:
+            basis["environment_digest"] = overlay["environment_digest"]
+        return basis
+
     def _step_observe_basis(self, st, x, val, now):
         """Launch step observe_basis: the execution's observed basis changes,
         merged per repository and member (H-REVAL-OBSERVE)."""
-        basis = x.setdefault("observed_basis", {})
+        overlay = x.setdefault("observations", {})
         for rid, repo in val.get("repositories", {}).items():
-            basis.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
+            overlay.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
         if "environment_digest" in val:
-            basis["environment_digest"] = val["environment_digest"]
+            overlay["environment_digest"] = val["environment_digest"]
 
     def _send_responses(self, st) -> None:
         """EXECUTION 15.1: when every requested action is answered,

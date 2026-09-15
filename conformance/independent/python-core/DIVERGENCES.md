@@ -1899,3 +1899,30 @@ None fails a fixture.
 - **HM6-QUEUED-WAIT-STEPS**, **HM6-WAIT-LOSS.** Whether the `running` event and the first non-wait step's events share an evaluation is not stated; loss after the wait instant passed but before the next step ran is not fixture-checked. Basis: own judgment / spec text.
 - **Requirements no fixture checks on this participant:** CORE §4.3 exact result, order, `requires` feature order, read-only (no command record, no event, session left unnegotiated), boundedness, and "exactly what negotiation enforces"; CORE §4.2 feature-triggered required, optional-profile and optional forms and the `unsupported_required_feature` refusal; the query refused before authentication on a shared transport. The profile-triggered forms remain checked by `execution.requires-core-features` and `execution.optional-request-missing-core-features-is-unselected`, which pass.
 - **Coverage limits unchanged** from H.M5b (no Unix-socket binding; `execution.claim_revalidation` not implemented).
+
+### H.M6b (base 68e430d)
+
+> Fifteenth spec-only pass, a very short realignment with the coordinator's resolution of H.M6 (commit `5e1061f`, merged with the fourteenth pass at `68e430d`). Read first: `git diff a77219e 68e430d -- docs/spec docs/work/release-0.1/M6.md` (CORE §4.2 "Order", "One item per cause" and item order; CORE §15.5; EXECUTION §1; the release-candidate status headers and the dropped *candidate* marks across the profiles; EVIDENCE §9's `affected` kinds now optional to track; M6.md unchanged in that range). Read rules unchanged: no `conformance/reference/**`, `conformance/runner/src/**`, `conformance/crosscheck/**`, `conformance/thirdparty/**`, `conformance/scripts/**`, their history or diffs, or reference `mutants` lists. No fixture was opened.
+
+#### Change list, from the documents
+
+| # | Resolved text | Before (H.M6) | Change |
+|---|---|---|---|
+| 1 | CORE §4.2 "Order": profile-triggered first; feature-triggered judged against the profiles and features still selected, applied again until nothing changes; a profile not selected contributes no feature items | HM6-DEPENDENCY-STATE: judged against the selection before dependencies; a required feature's item listed even for a profile already refused for a missing Core feature | Rounds over the selection left by the profile-triggered pass: each round judges every selected feature against the current selection, then applies all results. A profile dropped by a Core feature (or refused for an unknown required feature) contributes no feature items. |
+| 2 | CORE §4.2 "One item per cause": an optional profile left unselected by a required feature's dependency is reported with that one item, its other features not listed | HM6-UNSELECTED-PROFILE-ITEMS: the feature and profile items, optional-feature items dropped | Same within a round; in addition, feature items that an earlier round reported for that profile's optional features are withdrawn when a later round drops the profile |
+| 3 | CORE §4.2: item order within `unsatisfied` and `unselected` not significant | HM6-ITEM-ORDER (own judgment) | No behavior change; `tests/probe_m6.py` now compares item lists without order |
+| 4 | CORE §15.5 lists `core.feature_dependencies` as unprotected | HM6-QUERY-PROTECTION (own judgment) | No behavior change; comment cites the text |
+| 5 | EXECUTION §1: only a provider supporting `execution.claim_revalidation` reports its `feature` entry | HM6-UNSUPPORTED-TRIGGER | No change |
+
+**Already as resolved, unchanged:** the refusal code by item kind (HM6-REFUSAL-CODE), a feature in both lists treated as required (HM6-REQUIRED-TWICE), `requires` feature order, the query envelope and read-only behavior, and every VERIFICATION §11 reading. The status-header and *candidate*-mark edits change no behavior here; EVIDENCE §9's optional `context.packet_citation` and `execution.output` kinds were never tracked by this provider.
+
+#### Readings of points the resolution leaves open
+
+- **HM6B-DEPENDENCY-ORDER** (CORE §4.2 "Order"). "Applied again until nothing changes" is read as rounds: every still-selected feature is judged against the selection at the start of the round, then all results of the round are applied, then the next round starts. Judging and removing one feature at a time would differ only in which of two simultaneously failing features is reported (HM6B-SIMULTANEOUS). Basis: spec text, own judgment for the round granularity.
+- **HM6B-ONE-ITEM** (CORE §4.2 "One item per cause"). When a later round drops an optional profile for a required feature, items an earlier round already put in `unselected` for that profile's optional features are withdrawn, so the profile is reported with its cause only ("its other features are not listed"). Basis: spec text read literally; the alternative keeps the earlier items because they were reported while the profile was still selected.
+- **HM6B-SIMULTANEOUS** (CORE §4.2). If two required features of one profile fail in the same round, both are listed: for a required profile both are unsatisfied items (§4.2 "lists every unsatisfied item"), and for an optional profile both are reported, each being a cause. "That one item" is read as covering the single-cause case. Unreachable in 0.1, which declares one feature dependency. Basis: own judgment.
+- **HM6B-REQUIRED-PROFILE-ROUNDS** (CORE §4.2). A required profile refused by a required feature's dependency is removed from the selection in that round, so later rounds can report features of other profiles that depended on it; a refused negotiation still returns only `unsatisfied`. Basis: own judgment (the text's rounds apply to the selection, whatever the profile's `required` flag).
+
+#### Implementation and runs
+
+Code and probe changed in one commit (below), before any fixture was opened. `tests/probe_m6.py` now also runs a second scratch change with a synthetic chained dependency (`execution.actions` requiring `execution.claim_revalidation`, declared by no document) to exercise rounds and HM6B-ONE-ITEM; the committed provider declares only the documented dependency.

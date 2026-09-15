@@ -129,20 +129,68 @@ def main() -> int:
              ("ok", {"core": CORE_EXEC, "execution": ["execution.claim_revalidation", "execution.context_revalidation"]},
               [])),
             ("neither requested", [core(CORE_EXEC), execution()], ("ok", {"core": CORE_EXEC, "execution": []}, [])),
-            ("missing Core feature and feature dependency (HM6-REFUSAL-CODE)",
+            ("required profile missing Core feature: no feature items (HM6B-DEPENDENCY-ORDER)",
              [core(["core.events", "core.capabilities"]), execution(req=["execution.claim_revalidation"])],
-             ("unsupported_profile", [item("core.effects"), item("execution.claim_revalidation")])),
-            ("missing Core feature, both features requested (HM6-DEPENDENCY-STATE)",
+             ("unsupported_profile", [item("core.effects")])),
+            ("missing Core feature, both features requested (HM6B-DEPENDENCY-ORDER)",
              [core(["core.events", "core.capabilities"]),
               execution(req=["execution.claim_revalidation", "execution.context_revalidation"])],
              ("unsupported_profile", [item("core.effects")])),
-            ("optional profile missing Core feature, optional feature (HM6-DEPENDENCY-STATE)",
+            ("optional profile missing Core feature, optional feature (HM6B-DEPENDENCY-ORDER)",
              [core(["core.events"]), execution(required=False, opt=["execution.claim_revalidation"])],
              ("ok", {"core": ["core.events"]}, [item("core.capabilities"), item("core.effects")])),
+            ("optional profile missing Core feature, required feature (HM6B-DEPENDENCY-ORDER)",
+             [core(["core.events"]), execution(required=False, req=["execution.claim_revalidation"])],
+             ("ok", {"core": ["core.events"]}, [item("core.capabilities"), item("core.effects")])),
+            ("unknown required profile beside a feature item (HM6-REFUSAL-CODE)",
+             [core(CORE_EXEC), execution(req=["execution.claim_revalidation"]),
+              {"name": "nope", "majors": [1], "required": True, "required_features": [], "optional_features": []}],
+             ("unsupported_profile", [{"profile": "nope", "reason": "unknown_profile"},
+                                      item("execution.claim_revalidation")])),
+            ("no common major beside a feature item (HM6-REFUSAL-CODE)",
+             [core(CORE_EXEC), execution(req=["execution.claim_revalidation"]),
+              {"name": "core-test", "majors": [9], "required": True, "required_features": [], "optional_features": []}],
+             ("unsupported_version", [{"profile": "core-test", "reason": "no_common_major"},
+                                      item("execution.claim_revalidation")])),
         ]
+
+        def unordered(result):
+            # CORE 4.2: the order of items within unsatisfied and unselected is
+            # not significant (HM6B-ITEM-ORDER).
+            key = lambda i: sorted(i.items())  # noqa: E731
+            return tuple(sorted(x, key=key) if isinstance(x, list) else x for x in result)
+
         for n, (label, profiles, want) in enumerate(cases):
             c = fresh(f"case-{n}")
-            probe("HM6-FEATURE-DEP", label, outcome(c.negotiate(profiles)), want)
+            probe("HM6-FEATURE-DEP", label, unordered(outcome(c.negotiate(profiles))), unordered(want))
+            c.close()
+
+        # A second scratch change adds a synthetic chained dependency, only to
+        # exercise repeated rounds and "one item per cause": execution.actions
+        # requires execution.claim_revalidation. No document declares it.
+        marker = '    ("execution", "execution.claim_revalidation"): [("execution", 1, ["execution.context_revalidation"])],\n'
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        assert src.count(marker) == 1
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src.replace(marker, marker + '    ("execution", "execution.actions"): '
+                                                  '[("execution", 1, ["execution.claim_revalidation"])],\n'))
+        chained = [
+            ("chain, optional profile: dropped with the one item of its cause (HM6B-ONE-ITEM)",
+             [core(CORE_EXEC), execution(required=False, req=["execution.actions"],
+                                         opt=["execution.claim_revalidation", "nope.feature"])],
+             ("ok", {"core": CORE_EXEC}, [item("execution.actions")])),
+            ("chain, optional features: both removed over two rounds",
+             [core(CORE_EXEC), execution(opt=["execution.claim_revalidation", "execution.actions"])],
+             ("ok", {"core": CORE_EXEC, "execution": []},
+              [item("execution.claim_revalidation"), item("execution.actions")])),
+            ("chain, required feature in a required profile: refused in the second round",
+             [core(CORE_EXEC), execution(req=["execution.actions"], opt=["execution.claim_revalidation"])],
+             ("unsupported_required_feature", [item("execution.actions")])),
+        ]
+        for n, (label, profiles, want) in enumerate(chained):
+            c = fresh(f"chain-{n}")
+            probe("HM6B-ROUNDS", label, unordered(outcome(c.negotiate(profiles))), unordered(want))
             c.close()
 
     print(f"{sum(P.RESULTS)}/{len(P.RESULTS)} probes as documented")

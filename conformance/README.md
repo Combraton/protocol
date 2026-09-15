@@ -1,22 +1,22 @@
 # Conformance suite
 
-> **Status: draft for Protocol 0.1, milestones M1–M2 (Core command path, grants, events, capabilities; stdio and Unix-socket bindings).** Nothing here is a released conformance claim. Design: [decision 001](../docs/decisions/001-conformance-suite-architecture.md). Plan: [release plan](../docs/work/release-0.1/PLAN.md). Commands: [VERIFICATION](../docs/VERIFICATION.md).
+> **Status: Protocol 0.1 release candidate (milestones M1–M5 accepted; M6 under review).** The suite becomes a released conformance claim only when the owner accepts the release candidate. Design: [decision 001](../docs/decisions/001-conformance-suite-architecture.md). Plan: [release plan](../docs/work/release-0.1/PLAN.md). Commands: [VERIFICATION](../docs/VERIFICATION.md). Release record: [docs/release/0.1](../docs/release/0.1/README.md).
 
 This directory holds the normative, language-neutral conformance material for Protocol:
 
 | Path | Contents |
 |---|---|
-| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. 155 fixtures: `stream/` for the binding, `core/` for Core (grants, events and capabilities fixtures are M2), `socket/` for the Unix-socket binding. |
+| `fixtures/` | Declarative JSON fixtures: scripted exchanges with expected outcomes, requirement IDs and the mutants each fixture must fail. Per directory: `stream/` (binding), `core/`, `socket/` (Unix-socket binding), `execution/`, `evidence/`, `context/`, `knowledge/`, `verification/`, `composition/` (several participants, Unix socket only) and `compat/` (run only against a pinned older build). `check-fixtures` reports the current count. |
 | `vectors/` | Encoding and digest test vectors |
 | `schemas/` | Schema for fixture files |
 | `participants/` | Descriptors telling the runner how to launch an implementation under test |
 | `runner/` | The black-box runner (Rust crate `combraton-conformance`) |
-| `reference/` | The reference provider and its 147 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product). Its `tests/` hold implementation-specific checks, such as constructed cursors, that portable fixtures must not rely on. |
+| `reference/` | The reference provider and its mutants, listed in `participants/reference-provider*.json` (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product). Its `tests/` hold implementation-specific checks, such as constructed cursors, that portable fixtures must not rely on. |
 | `scripts/repeat_fixture.py` | Runs one fixture repeatedly; every run must pass on the provider, or fail at the expected step and reason on the mutant (deterministic race evidence) |
 | `thirdparty/` | Client-only third-party consumers written from the contracts only (M6-Q2): `minimal-executor` (an independent execution kernel, not an `execution/1` provider) and `minimal-publisher` (an Evidence publisher), with the harness interface they are written against |
 | `scripts/build_pinned.py` | Exports and builds an accepted older release (`m5` = `6ed4727`) under `target/pinned-<name>/` for compatibility checks: `participants/pinned/` launches that build (fixtures with `requires_pinned` run only there), and `run --fixtures target/pinned-m5/src/conformance/fixtures` runs the older fixture set, unmodified, against current providers |
 | `scripts/peer_user_check.py` | Different-OS-user check for the Unix-socket binding, run as root through passwordless `sudo` (CI) |
-| `independent/python-core/` | Independent Core provider in Python written from the documents only, with its divergence log (M2) |
+| `independent/python-core/` | Independent provider in Python (Core, Execution, Evidence, Context, Knowledge, Verification over stdio) written from the documents only, with its divergence log (M2–M6) |
 | `crosscheck/` | Independent non-Rust checks of the encoding vectors (Python `rfc8785`, Node `canonicalize`) |
 
 ## How it works

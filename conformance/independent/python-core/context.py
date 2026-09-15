@@ -576,7 +576,7 @@ class Context:
         facts = dict(pk["facts"])
         facts["current"] = pk["revision"] == len(rec["packets"])
         if pk["revision"] < len(rec["packets"]):
-            facts["superseded_by"] = {"revision": pk["revision"] + 1}  # CONTEXT 8 (H8-INVALIDATED-ITEMS)
+            facts["superseded_by"] = {"revision": len(rec["packets"])}  # CONTEXT 8: the current revision
         # CONTEXT 8 "Corrections after publication": reported at the read; the
         # stored facts never change.
         job = self.load_job(rec["job"])[1]

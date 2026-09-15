@@ -181,6 +181,9 @@ def context_binding_request(v, path: str, revalidation: bool = False) -> None:
         E.subject(v["request"], ptr(path, "request"), "context.request")
     if "require_current" in v and not isinstance(v["require_current"], bool):
         raise Invalid(ptr(path, "require_current"), "must be a boolean")
+    if v.get("require_current") is True and "context" not in v.get("fetch", {}):
+        # EXECUTION 13.1: currency is read at the context provider.
+        raise Invalid(ptr(path, "require_current"), "require_current needs fetch.context")
     if "conditions" in v:
         import context as CTX
         E.array(v["conditions"], ptr(path, "conditions"), max_items=64)

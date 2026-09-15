@@ -1359,6 +1359,11 @@ class Executor:
             # obligations stay overdue (G5-TIMEOUT-OBLIGATIONS).
             self._overdue(st, x["delivery_id"])
             self._determine(st, "ambiguous" if dispatched else "failed_before_delivery", evidence, close=False)
+            if not dispatched and x.get("scheduling", {}).get("capacity") == "released":
+                # EXECUTION 13.1: a passed delivery timeout ends released work
+                # with scheduling reason deadline_passed (H9-TIMEOUT-SCHEDULING).
+                x.pop("blocked", None)
+                self._set_scheduling(st, "released", "deadline_passed")
             progressed = True
         # EXECUTION 8: execution_deadline applies while runtime is not exited.
         if x["runtime"] != "exited" and due("execution_deadline", admitted_at):
@@ -1681,21 +1686,20 @@ class Executor:
             basis["environment_digest"] = overlay["environment_digest"]
 
     def host_basis(self) -> dict:
-        """The host's observed basis (H8-BASIS-CHANGES): launch
-        ``observed_basis``, then, in time order, due ``basis_changes``
-        (replacing) and recorded ``observe_host_basis`` steps (merging)."""
+        """The host's observed basis (H8-BASIS-CHANGES as resolved): launch
+        ``observed_basis``, then due ``basis_changes`` and recorded
+        ``observe_host_basis`` steps, each merged in time order."""
         now = self.now()
-        timeline = [(c["at"], 0, i, "replace", c["observed_basis"])
+        # Conformance README: basis_changes merge per member and repository,
+        # like observe_host_basis, in time order (H.9).
+        timeline = [(c["at"], 0, i, "merge", c["observed_basis"])
                     for i, c in enumerate(self.basis_changes) if c["at"] <= now]
         text = self.store.get_kv("host_observations")
         for i, obs in enumerate(V.loads(text) if text else []):
             timeline.append((obs["recorded_at"], 1, i, "merge", obs["basis"]))
         basis = V.loads(V.canonical_text(self.observed_basis))
-        for _, _, _, how, value in sorted(timeline, key=lambda t: t[:3]):
-            if how == "replace":
-                basis = V.loads(V.canonical_text(value))
-            else:
-                self._merge_basis(basis, value)
+        for _, _, _, _, value in sorted(timeline, key=lambda t: t[:3]):
+            self._merge_basis(basis, value)
         return basis
 
     def _step_observe_host_basis(self, st, x, val, now):

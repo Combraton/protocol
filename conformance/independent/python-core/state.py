@@ -24,6 +24,7 @@ One database file in the data directory holds:
   subject state (conformance README ``events.unvouched_last``);
 - ``snapshot_base``: subject states as of the retention boundary, folded from
   the discarded events, used for ``gap`` snapshots (CORE 16.4);
+- ``blobs``: the staged or sealed bytes of each evidence artifact (M4);
 - ``outputs``: each execution's output spool (EXECUTION 14.1): the offset of
   the oldest retained byte, the retained bytes and the declared lost ranges.
 
@@ -92,6 +93,10 @@ CREATE TABLE IF NOT EXISTS snapshot_base (
     revision INTEGER NOT NULL,
     state    TEXT NOT NULL,
     PRIMARY KEY (kind, id)
+);
+CREATE TABLE IF NOT EXISTS blobs (
+    artifact TEXT PRIMARY KEY,
+    data     BLOB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS outputs (
     execution TEXT PRIMARY KEY,
@@ -286,6 +291,18 @@ class Store:
             "INSERT INTO outputs (execution, start, data, lost) VALUES (?, ?, ?, ?) "
             "ON CONFLICT (execution) DO UPDATE SET start = excluded.start, data = excluded.data, lost = excluded.lost",
             (execution, start, data, V.canonical_text(lost)))
+
+    # -- evidence bytes (EVIDENCE 4)
+    def blob(self, artifact: str):
+        row = self.db.execute("SELECT data FROM blobs WHERE artifact = ?", (artifact,)).fetchone()
+        return bytes(row[0]) if row else None
+
+    def set_blob(self, artifact: str, data: bytes) -> None:
+        self.db.execute("INSERT INTO blobs (artifact, data) VALUES (?, ?) "
+                        "ON CONFLICT (artifact) DO UPDATE SET data = excluded.data", (artifact, data))
+
+    def delete_blob(self, artifact: str) -> None:
+        self.db.execute("DELETE FROM blobs WHERE artifact = ?", (artifact,))
 
     # -- grants (subjects of kind core.grant)
     def grant(self, gid: str):

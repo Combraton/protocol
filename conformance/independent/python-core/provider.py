@@ -12,7 +12,8 @@ conformance-only core-test/1 profile (CORE 13), including the M2 Core
 features core.grants (CORE 15), core.events (CORE 16) and core.capabilities
 (CORE 17), the M3 Core feature core.effects (CORE 19) and execution/1
 (docs/spec/profiles/EXECUTION.md) over a scripted executor, with the clock
-file and store faults of decision 007. Standard library only.
+file and store faults of decision 007, and the M4 profiles evidence/1 over a
+scripted store and context/1 over scripted preparation. Standard library only.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import clock as C  # noqa: E402
+import context as CTX  # noqa: E402
+import evidence as EVD  # noqa: E402
 import envelope as E  # noqa: E402
 import events as EV  # noqa: E402
 import execution_envelope as XE  # noqa: E402
@@ -43,14 +46,23 @@ MIB = 1048576
 CORE_FEATURES = ["core.digest-sha512", "core.grants", "core.events", "core.capabilities", "core.effects"]
 EXECUTION_FEATURES = ["execution.steering", "execution.actions", "execution.controller", "execution.workspaces",
                       "execution.usage", "execution.context", "execution.discovery", "execution.continuation",
-                      "execution.output"]
+                      "execution.output", "execution.context_revalidation"]
+EVIDENCE_FEATURES = ["evidence.manifests", "evidence.retention_control"]
+CONTEXT_FEATURES = ["context.advisory", "context.required_before_start", "context.required_before_transition",
+                    "context.shared_jobs", "context.updates", "context.expand"]
 # EXECUTION 1: the Core features execution/1 requires. Published only in that
 # document; core.describe keeps depends_on: ["core"].
 EXECUTION_REQUIRED_CORE_FEATURES = ["core.events", "core.capabilities", "core.effects"]
+# EVIDENCE 1 and CONTEXT 1: the Core features those profiles require
+# (H-EVD-NEG, H-CTX-NEG).
+REQUIRED_CORE_FEATURES = {"execution": EXECUTION_REQUIRED_CORE_FEATURES, "evidence": ["core.events"],
+                          "context": ["core.events"]}
 SUPPORTED_PROFILES = {
     "core": {"majors": [1], "features": CORE_FEATURES, "depends_on": []},
     "core-test": {"majors": [1], "features": [], "depends_on": ["core"]},
     "execution": {"majors": [1], "features": EXECUTION_FEATURES, "depends_on": ["core"]},
+    "evidence": {"majors": [1], "features": EVIDENCE_FEATURES, "depends_on": ["core"]},
+    "context": {"majors": [1], "features": CONTEXT_FEATURES, "depends_on": ["core"]},
 }
 IDLE_RECHECK_SECONDS = 0.1  # real time, never the virtual clock (decision 007)
 DECLARED_UNSUPPORTED = [
@@ -82,7 +94,9 @@ AUTHORITY_SCOPE = "core-test"
 # EXECUTION 11 "base rights": execution.read covers execution events; the
 # controller subject follows the same right (G-CONTROLLER-VISIBILITY).
 PROFILE_READ_RIGHTS = {"core-test.subject": "core-test.read", "core-test.authority": "core-test.read",
-                       XE.EXECUTION_KIND: "execution.read", XE.CONTROLLER_KIND: "execution.read"}
+                       XE.EXECUTION_KIND: "execution.read", XE.CONTROLLER_KIND: "execution.read",
+                       EVD.ARTIFACT_KIND: "evidence.read", CTX.REQUEST_KIND: "context.read",
+                       CTX.PACKET_KIND: "context.packet.read"}
 ALL_EXECUTIONS = {"kind": XE.EXECUTION_KIND, "id": None}  # coverage needs a kind-wide resource
 CAPABILITIES_KIND = "core.capabilities"
 NOTIFY_CHUNK = 100
@@ -101,6 +115,9 @@ RETRY = {
     "unknown_authority_epoch": "no", "precondition_failed": "after_reconcile", "invalid_cursor": "no",
     "not_found": "no", "permission_denied": "no", "unavailable": "same_command", "internal_error": "after_reconcile",
     "authentication_required": "no", "authentication_failed": "no", "already_authenticated": "no",
+    # CORE 12, EVIDENCE 6 (M4).
+    "upload_offset_mismatch": "after_reconcile", "upload_size_exceeded": "no", "upload_incomplete": "after_reconcile",
+    "content_digest_mismatch": "no", "artifact_digest_mismatch": "no", "hold_active": "after_reconcile",
 }
 RPC_CODE = {
     "parse_error": -32700, "invalid_utf8": -32700, "frame_too_large": -32010,
@@ -131,7 +148,7 @@ class ConfigError(Exception):
 
 
 CONFIG_KEYS = {"format", "principal", "authority_principals", "provider_id", "limits", "dedupe",
-               "events", "capabilities", "clock", "executor", "faults", "test_barriers"}
+               "events", "capabilities", "clock", "executor", "faults", "test_barriers", "evidence_store", "context"}
 
 
 def _short_string(value, what: str) -> str:
@@ -228,6 +245,14 @@ def load_config(path: str) -> dict:
     except (TypeError, AttributeError, ValueError) as exc:
         raise ConfigError(f"executor configuration is malformed: {exc!r}") from None
 
+    try:
+        evidence_store = EVD.parse_store_config(cfg.get("evidence_store", {}))
+        context = CTX.parse_context_config(cfg.get("context", {}))
+    except (EVD.EvidenceConfigError, CTX.ContextConfigError) as exc:
+        raise ConfigError(str(exc)) from None
+    except (TypeError, AttributeError, ValueError) as exc:
+        raise ConfigError(f"evidence or context configuration is malformed: {exc!r}") from None
+
     faults = cfg.get("faults", {})
     parsed_faults = {"commit_unavailable": {}, "response_internal_error": {}}
     if not isinstance(faults, dict) or set(faults) - set(parsed_faults):
@@ -265,6 +290,8 @@ def load_config(path: str) -> dict:
         "clock": fixed,
         "clock_file": clock_file,
         "executor": executor,
+        "evidence_store": evidence_store,
+        "context": context,
         "faults": parsed_faults,
     }
 
@@ -321,6 +348,11 @@ class Auth:
             # CORE 19.4: an effect subject is visible exactly when its target is.
             row = self.provider.store.get_json(XE.EFFECT_KIND, subject["id"])
             return row is not None and self.grant_shows(row[1]["descriptor"]["target"])
+        if kind == EVD.HOLD_KIND:
+            row = self.provider.store.get_json(EVD.HOLD_KIND, subject["id"])
+            return row is not None and self.provider.evidence.hold_visible(self, subject["id"], row[1])
+        if kind == CTX.JOB_KIND:
+            return self.provider.context.job_visible(self.grant, subject["id"])
         right = PROFILE_READ_RIGHTS.get(kind)
         return right is not None and right in self.grant["rights"] and G.grant_covers(self.grant, subject)
 
@@ -361,10 +393,14 @@ class Provider:
         self.store = store
         self.session = Session()
         self.executor = Executor(self, config["executor"])
+        self.evidence = EVD.Evidence(self, config["evidence_store"])
+        self.context = CTX.Context(self, config["context"])
         self.faults = {kind: dict(entries) for kind, entries in config["faults"].items()}
         # One lock serializes request processing and the idle re-check.
         self.lock = threading.RLock()
         x = self.executor
+        ev = self.evidence
+        cx = self.context
         cv = _core_validator
         self.ops = {
             # operation: (profile, feature, kind, validator, handler)
@@ -400,6 +436,24 @@ class Provider:
                                          x.op_discovery),
             "execution.output.read": ("execution", "execution.output", "query", XE.output_read_params,
                                       x.op_output_read),
+            # EVIDENCE 4, 5, 9
+            "evidence.upload.prepare": ("evidence", None, "command", ev.v_prepare, ev.op_prepare),
+            "evidence.upload.append": ("evidence", None, "command", ev.v_append, ev.op_append),
+            "evidence.seal": ("evidence", None, "command", ev.v_simple(EVD.ARTIFACT_KIND), ev.op_seal),
+            "evidence.upload.abandon": ("evidence", None, "command", ev.v_simple(EVD.ARTIFACT_KIND), ev.op_abandon),
+            "evidence.inspect": ("evidence", None, "query", ev.v_inspect, ev.op_inspect),
+            "evidence.query": ("evidence", None, "query", ev.v_query, ev.op_query),
+            "evidence.fetch": ("evidence", None, "query", ev.v_fetch, ev.op_fetch),
+            "evidence.hold": ("evidence", "evidence.retention_control", "command", ev.v_hold, ev.op_hold),
+            "evidence.release": ("evidence", "evidence.retention_control", "command", ev.v_simple(EVD.HOLD_KIND),
+                                 ev.op_release),
+            "evidence.purge": ("evidence", "evidence.retention_control", "command", ev.v_purge, ev.op_purge),
+            # CONTEXT 3, 6
+            "context.request.submit": ("context", None, "command", cx.v_submit, cx.op_submit),
+            "context.request.cancel": ("context", None, "command", cx.v_cancel, cx.op_cancel),
+            "context.request.inspect": ("context", None, "query", cx.v_request_inspect, cx.op_request_inspect),
+            "context.packet.inspect": ("context", None, "query", cx.v_packet_inspect, cx.op_packet_inspect),
+            "context.expand": ("context", "context.expand", "query", cx.v_expand, cx.op_expand),
         }
 
     # ------------------------------------------------------------- clock
@@ -440,6 +494,19 @@ class Provider:
             self.clock.refresh()
             self._handle_frame(frame)
 
+    def tick(self, allow_crash: bool) -> bool:
+        """Executor, evidence store and context preparation work that is due
+        now, until nothing more can happen."""
+        progressed_any = False
+        for _ in range(10000):
+            progressed = self.executor.tick(allow_crash=allow_crash)
+            progressed = self.evidence.tick() or progressed
+            progressed = self.context.tick() or progressed
+            if not progressed:
+                break
+            progressed_any = True
+        return progressed_any
+
     def idle_recheck(self) -> None:
         """Executor observations and deadlines advance without a request
         (EXECUTION 4 "Watching", CORE 19.4). Only a tick that committed
@@ -448,7 +515,7 @@ class Provider:
         (G-IDLE-RECHECK)."""
         with self.lock:
             self.clock.refresh()
-            if self.executor.tick(allow_crash=True):
+            if self.tick(allow_crash=True):
                 self.deliver_notifications()
 
     def _handle_frame(self, frame: bytes) -> None:
@@ -490,7 +557,7 @@ class Provider:
             # Script steps and timeouts due by now are visible to this request
             # ("no later than the provider's next request"). A scripted crash
             # never happens here, only between requests.
-            self.executor.tick(allow_crash=False)
+            self.tick(allow_crash=False)
             result = self.dispatch(msg["method"], msg["params"])
             response = {"jsonrpc": "2.0", "id": rid, "result": result}
         except ProtocolError as exc:
@@ -506,7 +573,7 @@ class Provider:
         # The executor acts on what the request committed (dispatch after the
         # submit's transaction, forwarding after a cancel's) and then reports.
         try:
-            if self.executor.tick(allow_crash=True):
+            if self.tick(allow_crash=True):
                 self.deliver_notifications()
         except Exception as exc:
             log("executor tick failed:", repr(exc))
@@ -543,6 +610,9 @@ class Provider:
         ]
         if feature is not None and not s.feature_selected(feature) and feature not in unsatisfied:
             unsatisfied.append(feature)
+        if method == "context.request.submit":
+            # CONTEXT 3: an item obligation whose feature was not negotiated.
+            unsatisfied.extend(f for f in self.context.submit_features(params) if f not in unsatisfied)
         if unsatisfied:
             raise ProtocolError("unsupported_required_feature", {"features": unsatisfied})
         if kind == "query":
@@ -702,6 +772,10 @@ class Provider:
         if method == "core.effects.abort_obligation":
             return self.authorize_under(env, [("core.effects.abort_obligation",
                                                self._effect_target(env["subject"]["id"]))])
+        if method.startswith("evidence."):
+            return self.evidence.authorize(method, env)
+        if method.startswith("context."):
+            return self.context.authorize(method, env)
         if method == "core-test.subject.put":
             needs = [("core-test.write", env["subject"])]
             needs += [("core-test.read", p["subject"]) for p in env["preconditions"] if p["subject"] != env["subject"]]
@@ -722,19 +796,28 @@ class Provider:
         # visibility rule. A grant field there is validated, not evaluated.
         return Auth(self, None)
 
-    def authorize_under(self, env: dict, needs: list) -> Auth:
-        grant_id = env.get("grant")
-        if grant_id is None:
-            if self.is_authority:
-                return Auth(self, None)
-            raise denied("grant_required")
-        row = self.store.grant(grant_id)
+    def make_auth(self, grant: dict | None) -> Auth:
+        return Auth(self, grant)
+
+    def usable_grant(self, env: dict) -> dict:
+        """The grant a request names, checked in CORE 15.5 order up to its
+        rights: held by this principal, active, unexpired, epoch current."""
+        row = self.store.grant(env["grant"])
         if row is None or row[1]["holder"] != self.principal:
             raise denied("grant_not_found")
         record = row[1]
         problem = G.usable_problem(record, self.now(), self.epoch_of)
         if problem:
             raise denied(problem)
+        return record
+
+    def authorize_under(self, env: dict, needs: list) -> Auth:
+        grant_id = env.get("grant")
+        if grant_id is None:
+            if self.is_authority:
+                return Auth(self, None)
+            raise denied("grant_required")
+        record = self.usable_grant(env)
         # All rights first, then all resources (E-DENIAL-ORDER).
         if any(right not in record["rights"] for right, _ in needs):
             raise denied("right_missing")
@@ -952,14 +1035,16 @@ class Provider:
         # core.capabilities and core.effects selected in this session; one
         # item per missing feature. Its own missing required features, if
         # any, are listed too (G-NEG-EXEC-ITEMS).
-        p = requested.get("execution")
-        if p is not None and ("execution" in selected or "execution" in feature_refused):
+        for profile_name, required_core in REQUIRED_CORE_FEATURES.items():
+            p = requested.get(profile_name)
+            if p is None or not (profile_name in selected or profile_name in feature_refused):
+                continue
             core_features = selected.get("core", {"features": []})["features"]
-            absent = [f for f in EXECUTION_REQUIRED_CORE_FEATURES if f not in core_features]
+            absent = [f for f in required_core if f not in core_features]
             if absent:
-                selected.pop("execution", None)
+                selected.pop(profile_name, None)
                 sink = refusals if p["required"] else unselected
-                sink.extend({"profile": "execution", "feature": f, "reason": "dependency_not_selected"} for f in absent)
+                sink.extend({"profile": profile_name, "feature": f, "reason": "dependency_not_selected"} for f in absent)
         for name in selected:
             unselected.extend(optional_feature_misses.get(name, []))
         if refusals:
@@ -1020,6 +1105,23 @@ class Provider:
         receive limit (STREAM 1.5, CORE 4.2)."""
         frame = {"jsonrpc": "2.0", "id": self.session.request_id, "result": result}
         return len(V.canonical(frame)) <= self.session.send_limit
+
+    def fit_bytes(self, build, data: bytes) -> dict:
+        """The response for the longest prefix of ``data`` that fits the
+        caller's receive limit, keeping at least one byte whenever one fits
+        (EVIDENCE 4 "Chunk sizing", CONTEXT 6)."""
+        result = build(data)
+        if self.response_fits(result) or not data:
+            return result
+        lo, hi, best = 1, len(data) - 1, build(b"")
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            candidate = build(data[:mid])
+            if self.response_fits(candidate):
+                best, lo = candidate, mid + 1
+            else:
+                hi = mid - 1
+        return best
 
     def fit_items(self, build, limit: int):
         """CORE 16.4 "Size" and 16.5 "Delivery": the largest item count up to

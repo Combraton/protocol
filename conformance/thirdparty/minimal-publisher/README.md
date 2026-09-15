@@ -23,6 +23,8 @@ For each artifact, in order, the publisher:
 4. sends `evidence.seal` with a precondition on the current revision;
 5. fetches the sealed bytes with `evidence.fetch`, in as many calls as needed. It hashes exactly the bytes received and compares the result with the digest it computed. The provider's advertised digest is never taken as evidence.
 
+Descriptors use the interface's fixed test values: source `{ kind: "thirdparty.publisher", id: <artifact id> }`, scope `thirdparty`, retention class `standard`, capture `{ captured_at: now, anchors: [] }` and coverage `{ completeness: "complete", covered: ["content"], gaps: [] }`, with the session principal as producer.
+
 Command IDs are derived from the artifact ID, so a sequence retransmitted after a lost connection replays. On success it writes `{ format: "combraton-thirdparty-publisher-result/1", artifacts: [ { id, digest, size } ] }` as canonical JSON to `result_file`, when one is given.
 
 Credentials are read only from the configuration file. They are never put on the command line, in the environment or in a log line.
@@ -50,5 +52,5 @@ The shared client code is in `../common/combraton_client.py`.
 - **Not claimed.**
   - verification by a second implementation;
   - manifests, holds, purges and work-bound grants;
-  - recovery from a crash between commands: it keeps no durable command journal;
+  - recovery after a client restart: clients are not durable (interface "Not durable");
   - the Evidence and Verification providers, which are the reference.

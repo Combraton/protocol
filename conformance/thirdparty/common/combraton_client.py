@@ -757,11 +757,13 @@ def publish_artifact(session, grant, artifact_id, content, descriptor_fields,
 
 
 def fetch_exact(session, grant, reference_artifact_id, digest, max_bytes=262144,
-                max_total=64 * 1048576):
+                max_total=64 * 1048576, advertised=None):
     """Fetch every byte of a sealed artifact in as many calls as needed and
     return the bytes exactly as received. Raises on anything that is not a
     complete, consistent, available response. Does not check the digest:
-    the caller hashes the returned bytes itself."""
+    the caller hashes the returned bytes itself. When `advertised` is a list,
+    the digest each response advertised is appended to it (used only by a
+    deliberately broken mutant)."""
     subject = {"kind": "evidence.artifact", "id": reference_artifact_id}
     data = bytearray()
     offset = 0
@@ -770,6 +772,8 @@ def fetch_exact(session, grant, reference_artifact_id, digest, max_bytes=262144,
         result = session.query("evidence.fetch", {
             "artifact": subject, "digest": digest, "offset": offset, "max_bytes": max_bytes,
         }, grant=grant)
+        if advertised is not None:
+            advertised.append(result.get("digest"))
         availability = result.get("availability") or {}
         if availability.get("state") != "available":
             raise FetchError("artifact not available: %s" % availability.get("state"))
@@ -798,3 +802,17 @@ def fetch_exact(session, grant, reference_artifact_id, digest, max_bytes=262144,
 
 class FetchError(Exception):
     pass
+
+
+def test_descriptor(media_type, source_kind, source_id, principal, now):
+    """The descriptor values the harness interface fixes for artifacts a
+    third-party client publishes ('Descriptor values')."""
+    return {
+        "media_type": media_type,
+        "producer": {"principal": principal},
+        "source": {"kind": source_kind, "id": source_id},
+        "scope": "thirdparty",
+        "capture": {"captured_at": format_instant(now), "anchors": []},
+        "coverage": {"completeness": "complete", "covered": ["content"], "gaps": []},
+        "retention_class": "standard",
+    }

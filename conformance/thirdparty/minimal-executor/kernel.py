@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "common"))
 import combraton_client as cc  # noqa: E402
 
 CALLER = "thirdparty-minimal-executor"
-MUTANTS = {"ignores-required-boundary"}
+MUTANTS = {"ignores-required-boundary", "trusts-advertised-digest"}
 CONFIG_FORMAT = "combraton-thirdparty-kernel-config/1"
 CHECK_FORMAT = "combraton-thirdparty-kernel-check/1"
 DISPATCH_FORMAT = "combraton-thirdparty-kernel-dispatch/1"
@@ -148,20 +148,30 @@ class Kernel:
         packet_subject = packet.get("packet") if isinstance(packet.get("packet"), dict) else {}
         revision = packet.get("revision")
 
-        # 1. Not held: fetch exact bytes at the artifact's provider and hash them.
+        # Fetch the exact bytes at the artifact's provider and hash them.
+        #  1. Wrong bytes (own hash differs, or artifact_digest_mismatch): unsatisfied.
+        #  2. Bytes not fetched for any other reason: unknown.
         grant = self.cfg["packet_evidence"].get(provider_id) if isinstance(provider_id, str) else None
         if provider_id not in self.providers or not isinstance(grant, str):
-            return "unsatisfied", ["no connection or grant for packet evidence provider"]
+            return "unknown", ["packet bytes not fetched: no connection or grant for their provider"]
         if art_subject.get("kind") != "evidence.artifact" or not isinstance(art_subject.get("id"), str) \
                 or not isinstance(digest, str):
-            return "unsatisfied", ["packet reference names no artifact and digest"]
+            return "unknown", ["packet bytes not fetched: reference names no artifact and digest"]
+        advertised = []
         try:
-            data = cc.fetch_exact(self.packet_session(provider_id), grant, art_subject["id"], digest)
+            data = cc.fetch_exact(self.packet_session(provider_id), grant, art_subject["id"], digest,
+                                  advertised=advertised)
         except cc.ProtocolError as e:
-            return "unsatisfied", ["packet bytes not fetched: %s" % e.code]
+            if e.code == "artifact_digest_mismatch":
+                return "unsatisfied", ["packet bytes refused: artifact_digest_mismatch"]
+            return "unknown", ["packet bytes not fetched: %s" % e.code]
         except (cc.TransportError, cc.FetchError, cc.NegotiationError, ValueError) as e:
-            return "unsatisfied", ["packet bytes not fetched: %s" % e]
-        if not cc.digest_matches_bytes(digest, data):
+            return "unknown", ["packet bytes not fetched: %s" % e]
+        if self.mutant == "trusts-advertised-digest":
+            # Deliberately broken: bytes returned for the reference's digest count as held.
+            if any(d != digest for d in advertised):
+                return "unsatisfied", ["provider advertised another digest"]
+        elif not cc.digest_matches_bytes(digest, data):
             return "unsatisfied", ["fetched packet bytes do not match the reference digest"]
 
         # 2. Facts unreadable, or naming another artifact or digest.
@@ -224,15 +234,7 @@ class Kernel:
     # -- records ----------------------------------------------------------
 
     def descriptor(self, work_id, now, principal):
-        return {
-            "media_type": "application/json",
-            "producer": {"principal": principal},
-            "source": {"kind": "thirdparty.kernel", "id": work_id},
-            "scope": "thirdparty",
-            "capture": {"captured_at": cc.format_instant(now)},
-            "coverage": {"completeness": "complete"},
-            "retention_class": "standard",
-        }
+        return cc.test_descriptor("application/json", "thirdparty.kernel", work_id, principal, now)
 
     def publish_pending(self, item):
         """Publishes queued records in order. Returns True when none remain."""

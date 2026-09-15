@@ -19,7 +19,8 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - step 5: `execution.context_revalidation` and `execution.evidence_outputs` with CMP-8 compatibility, packet fetch, bound work and outputs (5 fixtures, 10 new mutants);
   - step 6: cross-profile scenarios SCN-1, 4, 5, 6, 8, 9 and 11 (5 new composition fixtures, 4 new mutants);
   - step 7: two spec-only independent passes; divergences resolved in [M4-DIVERGENCES](release-0.1/M4-DIVERGENCES.md); independent provider 225 pass, 0 fail;
-  - step 8: close-out and [acceptance evidence](release-0.1/M4.md#acceptance-criteria-evidence).
+  - step 8: close-out and [acceptance evidence](release-0.1/M4.md#acceptance-criteria-evidence);
+  - owner close-out pass and independent passes eight to ten, resolved in [M4-DIVERGENCES](release-0.1/M4-DIVERGENCES.md); independent provider 229 pass, 0 fail.
   - Local evidence is in the [handoff](release-0.1/HANDOFF.md#evidence); CI runs on [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
 - **Evidence at M3 merge:** CI at `19e0e16` on Ubuntu and macOS. The uploaded Ubuntu artifact shows:
   - reference over stdio: 200 pass, 12 skipped; Unix socket: 212 pass;

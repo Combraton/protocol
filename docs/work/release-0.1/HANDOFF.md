@@ -6,7 +6,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **Task:** Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
 - **Owner:** Protocol session (Claude Code, Opus 5).
-- **Checkpoint:** 2026-09-15. The owner reviewed M4 and asked for a bounded close-out pass (not yet accepted or authorized). The pass is done and M4 is presented again; it is not merged.
+- **Checkpoint:** 2026-09-15. The owner reviewed M4 and asked for a bounded close-out pass (not yet accepted or authorized). The pass is done, three further independent passes (eighth to tenth) are resolved, and M4 is presented again; it is not merged.
 - **Status:** M0–M3 merged. M4 in progress on `release-0.1/m4` ([M4 task](M4.md)). Protocol 0.1 is not released.
 
 ## Goal, decisions and constraints
@@ -29,7 +29,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 - **`main`** at `481cf7f`, the merge of PR #4. Its final head `19e0e16` passed all [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks).
 - **Branch** `release-0.1/m4` from `481cf7f`, in draft [PR #5](https://github.com/Combraton/protocol/pull/5).
-- **Worktrees:** none. Both M3 helper worktrees were removed after their sources were verified as merged.
+- **Worktrees:** `.worktrees/independent-m4` (branch `release-0.1/m4-independent`), merged into `release-0.1/m4` and kept until M4 merges. Both M3 helper worktrees were removed after their sources were verified as merged.
 - **Local-only branches:** `release-0.1/m2`, `release-0.1/m3` and `release-0.1/m3-independent` are merged; kept, not deleted.
 
 ## What exists
@@ -43,7 +43,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - step 1: `docs/spec/profiles/EVIDENCE.md` and `docs/spec/profiles/CONTEXT.md` drafts with owner decisions M4-Q1 to M4-Q7; refined MATRIX rows EVD-1 to EVD-8, CTX-1 to CTX-20, EXE-21, CMP-8 and the M4 scenarios;
   - step 2: `schemas/evidence/1`, the reference Evidence provider (`conformance/reference/src/evidence.rs`) with its scripted store control `evidence_store`, 13 fixtures in `conformance/fixtures/evidence` and 23 new mutants ([M4 status](M4.md#status));
   - step 4: runner steps `start_participant`, `stop_participant`, `kill_participant` and `connect` with `participant`; the reference protocol client `conformance/reference/src/peer.rs`; packets sealed at a separate evidence provider; 2 fixtures in `conformance/fixtures/composition` and 3 new mutants;
-  - step 3: `schemas/context/1`, the reference Context provider (`conformance/reference/src/context.rs`) with scripted preparation (`context`), packets sealed as Evidence artifacts in its own store, runner pattern `$sha256_base64`, 9 fixtures in `conformance/fixtures/context` and 19 new mutants.
+  - step 3: `schemas/context/1`, the reference Context provider (`conformance/reference/src/context.rs`) with scripted preparation (`context`), packets sealed as Evidence artifacts in its own store, runner pattern `$sha256_base64`, 9 fixtures in `conformance/fixtures/context` and 19 new mutants;
+  - steps 5–8 and the owner close-out pass: `execution.context_revalidation` and `execution.evidence_outputs`, the cross-profile scenarios, capacity release while blocked before dispatch, adversarial fetched bytes, `require_current`, typed work-binding constraints, and the independent passes six to ten ([M4 status](M4.md#status), [M4-DIVERGENCES](M4-DIVERGENCES.md)).
 
 ## Evidence
 
@@ -79,13 +80,22 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - reference: stdio 232 pass and 23 skipped; Unix socket 255 pass;
   - `check-mutants` passes on both bindings;
   - each new fixture, and the altered-bytes mutant run, ran as intended 10 of 10 times.
+- **Candidate head after the ninth and tenth passes (local, macOS; reference code as of `0e80475`):**
+  - `cargo fmt --check`, `clippy -D warnings`, `cargo test` and `check_docs.py` pass;
+  - `check-fixtures`: 256 fixtures ok;
+  - reference: stdio 233 pass and 23 skipped; Unix socket 256 pass;
+  - `check-mutants` passes on both bindings;
+  - independent after the tenth pass: 229 pass, 0 fail, 4 unsupported, 23 skipped;
+  - `execution.released-work-ending-emits-cause-first` ran as intended 10 of 10 times on the reference, with its mutant, and on the independent provider.
+  - CI at `0e80475` failed only in the independent step, on that fixture (step 14, evidence class). It ran the ninth-pass independent code, before the tenth pass fixed that behavior.
 - **CI:** Ubuntu and macOS were green at `39e9dc8`, where the uploaded artifacts show stdio 226 pass and 20 skipped, Unix socket 246 pass, independent 196 pass, 20 skipped and 30 unsupported, and all mutants killed (307 of 307 stdio pairs, 42 of 42 Unix pairs). The final head's results are on [PR #5 checks](https://github.com/Combraton/protocol/pull/5/checks).
 
 ## What remains uncertain
 
-- **To mention at the next owner checkpoint:** additions beyond the approved lists (`upload_offset_mismatch`, `upload_size_exceeded`, `evidence.upload.abandon`) and the step 2 clarifications recorded in [M4](M4.md#owner-decisions-2026-09-15), notably query `filtered` meaning a restricted view rather than a withheld match.
-- **Evidence and Context are reference-only** until step 7's independent pass.
-- **Step 3 clarifications to mention:** the concrete CONTEXT shapes (request, items and checks, packet facts, excerpt without digest, packet byte format) and the rules recorded in [M4 status](M4.md#status).
+- **M4 limits for acceptance:** [M4 points for the owner](M4.md#points-for-the-owner-at-acceptance) and [M4-DIVERGENCES §D](M4-DIVERGENCES.md#d-still-unchecked-by-fixtures-coverage-limits). The main ones:
+  - independent evidence covers a single stdio provider, so it does not prove mixed-implementation composition;
+  - compositions run only on the reference over the Unix socket;
+  - there is no fairness among released executions.
 - **Carried from M3:**
   - the independent provider has no Unix socket or backpressure support;
   - barrier- and signal-synchronized fixtures are coverage limits for other participants;

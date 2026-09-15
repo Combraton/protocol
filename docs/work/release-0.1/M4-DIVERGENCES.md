@@ -95,11 +95,20 @@ The helper realigned with C.2 (`36ca076`, merged): 228 pass, 0 fail, 4 unsupport
 | H9-TIMEOUT-SCHEDULING-ORDER | **spec:** EXECUTION §15.1 fixes one order for released work ending before dispatch, whatever the reason: each `execution.timeout.passed`, then `core.effect.obligation.overdue` when a deadline ended the wait, then `execution.delivery.observed`, and last `execution.scheduling.changed`. The evidence-class table gains a row: `delivery_timeout_before_dispatch` when the delivery timeout passed, otherwise `scheduling` on the delivery record and `never_dispatched` on the effect. This replaces the C.2 reading that the §8 evidence "may also be recorded". **reference defect:** it ended released work at the dispatch boundary before its timeouts were evaluated, so no `execution.timeout.passed` was ever emitted for the delivery timeout that caused the ending; now fixed. The independent executor put the scheduling change first on the cancellation path. **fixture:** `execution.released-work-ending-emits-cause-first`; mutant `released-ending-before-cause` fails at the exact event read. |
 | H9-OBSERVED-UNTESTED | No change: a coverage limit of the stdio binding; the strings are checked by the composition fixtures on the reference only |
 
+## C.4 Tenth pass (realignment, base `0e80475`)
+
+The helper realigned with C.3 (`941b60b`, `6ec6712`, merged): 229 pass, 0 fail, 4 unsupported and 23 skipped, on the first run after the changes; `execution.released-work-ending-emits-cause-first` passed before it was read. CI at `0e80475`, before this realignment, ran the new fixture against the ninth-pass independent code and failed it at step 14 (`expected "scheduling", found "never_dispatched"`), so the fixture separates the two readings.
+
+| Tag | Resolution |
+|---|---|
+| H10-DEADLINE-SEPARATE-UNITS | **spec:** the §15.1 order is among one execution's events; events of other subjects may fall between them |
+| H10-INACTIVITY-AT-ENDING | **spec:** only the delivery timeout and the execution deadline, in that order, precede the ending; inactivity does not end the wait and follows it. Unchecked by fixtures |
+
 ## D. Still unchecked by fixtures (coverage limits)
 
 From H.5, after this resolution:
 - **Evidence:** `evidence.availability.changed`; fetch and excerpt shrinking to small receive limits; a manifest child that is sealed but unavailable; `released_holds` filtering; the less common credential-locator forms.
 - **Context:** script steps `end` and `unmet`; `omit` naming an item; conditions of kind `dirty_snapshot` and `environment_digest`; a cancel that leaves no subscriber; job-event visibility; shared jobs with different fallbacks; corrections on advisory items.
 - **Revalidation:** advisory checks at dispatch. (Blocks clearing at dispatch and transition are now covered by `execution.blocked-dispatch-releases-capacity-and-resumes` and `execution.transition-block-clears-when-current`.)
-- **Capacity release:** fairness between admitting queued work and resuming released work (H8-CAPACITY-FAIRNESS); both deadline kinds passing at one evaluation of released work.
+- **Capacity release:** fairness between admitting queued work and resuming released work (H8-CAPACITY-FAIRNESS); both deadline kinds, or an inactivity timeout, passing at the same evaluation that ends released work (H10-INACTIVITY-AT-ENDING).
 - **Composition `observed` strings** for `packet.facts` and `packet.current` are checked on the reference only (H9-OBSERVED-UNTESTED).

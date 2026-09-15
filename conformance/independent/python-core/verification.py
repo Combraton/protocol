@@ -654,6 +654,17 @@ class Verification:
             # straight to completed, with observed_from equal to observed_until (HM5C-QUEUED-LOSS-EVENTS).
             return self._complete(jid, revision, rec, "indeterminate", "evaluator_unavailable")
         if rec["state"] == "queued":
+            # VERIFICATION 11: a job stays queued while its script waits at a
+            # leading wait_until; its first evaluation is the first other step
+            # (HM6-QUEUED-WAIT-STEPS). A script left with no other step makes
+            # the job running once the waits pass (HM6-WAIT-ONLY-SCRIPT).
+            script = self.script_for(jid)
+            if script is not None and rec["pos"] < len(script) and "wait_until" in script[rec["pos"]]:
+                if self.now() < script[rec["pos"]]["wait_until"]:
+                    return False
+                rec["pos"] += 1
+                self.store.put_json(JOB_KIND, jid, revision, rec)
+                return True
             rec["state"] = "running"
             rec["started_at"] = self.now()
             revision = self._job_event(jid, revision, "verification.job.changed",

@@ -44,8 +44,17 @@ class Log:
         for s in self._secrets:
             if s in text:
                 text = text.replace(s, "<redacted>")
+        # Collapse identical consecutive lines, such as a retry at every poll.
+        if text == getattr(self, "_last", None):
+            self._repeats = getattr(self, "_repeats", 0) + 1
+            return
+        lines = []
+        if getattr(self, "_repeats", 0):
+            lines.append("[%s] (previous line repeated %d times)\n" % (self.name, self._repeats))
+        self._last, self._repeats = text, 0
+        lines.append("[%s] %s\n" % (self.name, text))
         try:
-            sys.stderr.write("[%s] %s\n" % (self.name, text))
+            sys.stderr.write("".join(lines))
             sys.stderr.flush()
         except Exception:
             pass
@@ -314,7 +323,11 @@ class ProtocolError(Exception):
         self.code = self.data.get("code")
         self.retry = self.data.get("retry")
         self.details = self.data.get("details") if isinstance(self.data.get("details"), dict) else {}
-        Exception.__init__(self, "%s refused: %s" % (operation, self.code))
+        hint = ""
+        for key in ("path", "reason", "limit", "features", "computed", "received"):
+            if key in self.details:
+                hint += " %s=%s" % (key, json.dumps(self.details[key], sort_keys=True))
+        Exception.__init__(self, "%s refused: %s%s" % (operation, self.code, hint))
 
 
 class Connection:

@@ -90,7 +90,8 @@ def run(cfg, mutant):
     grant = cfg["evidence"]["grant"]
     entry = cfg["providers"][pid]
     session = cc.Session(log, "evidence@%s" % pid, entry["socket"], entry["credential"],
-                         {"evidence": {"major": 1}}, CALLER)
+                         {"core": {"major": 1, "features": ["core.grants"]},
+                          "evidence": {"major": 1}}, CALLER)
     results = []
     try:
         session.connect()

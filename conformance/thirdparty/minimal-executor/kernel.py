@@ -116,15 +116,21 @@ class Kernel:
             self.sessions[key] = s
         return s
 
+    # Every profile operation carries a grant, which needs core.grants (TP-1).
     def context_session(self):
         return self.session("context", self.cfg["context"]["provider"],
-                            {"context": {"major": 1, "features": CONTEXT_FEATURES}})
+                            {"core": {"major": 1, "features": ["core.grants"]},
+                             "context": {"major": 1, "features": CONTEXT_FEATURES}})
 
     def packet_session(self, provider_id):
-        return self.session("packet-evidence", provider_id, {"evidence": {"major": 1}})
+        return self.session("packet-evidence", provider_id,
+                            {"core": {"major": 1, "features": ["core.grants"]},
+                             "evidence": {"major": 1}})
 
     def records_session(self):
-        return self.session("records", self.cfg["records"]["provider"], {"evidence": {"major": 1}})
+        return self.session("records", self.cfg["records"]["provider"],
+                            {"core": {"major": 1, "features": ["core.grants"]},
+                             "evidence": {"major": 1}})
 
     def close(self):
         for s in self.sessions.values():

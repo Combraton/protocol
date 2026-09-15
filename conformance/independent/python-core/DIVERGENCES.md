@@ -1785,3 +1785,47 @@ None fails a fixture.
 - **HM5B-CONTRACT-MEMBERS** (above). VERIFICATION §3 does not say whether unknown contract members make the content `invalid_format`, and the required `format` and non-empty lists are unguarded (M5-DIVERGENCES §D lists rarer format violations). Basis: own judgment.
 - **Resolutions no fixture checks here** (from the probe): KNOWLEDGE §7 resolve order; VERIFICATION §3 `format` required and non-empty `properties`; §4 `scope` from `outcome` and the issued event order; CONTEXT §14 snapshot conflicts open only and `unverified_items` limited to `binding`/`evidence` items; CONTEXT §12 scripted-unmet precedence. Duplicate `condition_id` and `decision.record` without read on its claim were not probed, and are listed as unchecked in M5-DIVERGENCES §D.
 - **Coverage limits unchanged.** No Unix-socket binding, so `context.knowledge_provider` peers and `execution.claim_revalidation` are not implemented and `composition.claims-in-packets-block-only-the-required-boundary` is skipped (SCN-16 and the Execution side of CMP-9 are checked only on the reference). Claims are read only from this provider's own store.
+
+### H.M5c (base 808801b)
+
+> Thirteenth spec-only pass, a short realignment with the resolution of H.M5b (M5-DIVERGENCES §D, commit `6dccc56`, merged at `808801b`). Read first: `git diff 6cec5f6 808801b -- docs/spec schemas conformance/README.md conformance/schemas docs/work/release-0.1/M5-DIVERGENCES.md docs/work/release-0.1/M5.md` (CONTEXT §12, §14; KNOWLEDGE §3, §6, §7, §8; VERIFICATION §3, §4, §5, §7; M5-DIVERGENCES §A row HM5-CORE-PRECONDITION-ORDER, §D and §E; M5 step 5). Read rules unchanged: no `conformance/reference/**`, `conformance/runner/src/**`, `conformance/crosscheck/**`, their history or diffs, or reference `mutants` lists. The readings below were written before any fixture was opened.
+
+#### Change list, from the documents
+
+| # | Resolved text | Before (H.M5b) | Change |
+|---|---|---|---|
+| 1 | KNOWLEDGE §6 "Who decides": authority epoch, then Core preconditions, then checks 1–5 | Preconditions, then not found, binding, authority, epoch, digest, supersession | The epoch of the named revision's bound scope is compared first, when the revision exists here (claim ID and revision, any digest) and its scope is bound; then preconditions; then not found, no binding, not the authority, digest, supersession |
+| 2 | KNOWLEDGE §7 resolve: epoch of the revisions' scope when the record exists and the scope is bound; preconditions; not found or resolved; §6 checks 2 and 3; `selected` | Preconditions, not found or resolved, binding, authority, epoch, `selected` | As written |
+| 3 | VERIFICATION §4 "Order at step 7": evaluator capability, preconditions, ID collision, contract, roles | Preconditions, collision, capability, contract, roles | As written |
+| 4 | VERIFICATION §4 "Losing the pinned evaluator": lost before the first evaluation goes `queued` → `completed` without `running`; `observed_from` equals `observed_until` | HM5B-QUEUED-LOSS: passed through `running` | As written |
+| 5 | VERIFICATION §3: contracts are closed objects; every member required; wrong type or unlisted member `invalid_format` | Already closed with `format` required (H.M5b #12) | No change; see HM5C-CONTRACT-TYPES |
+
+**Already as resolved, unchanged:** `remote_dependency` before `self_reference` (HM5B-SELF-OR-REMOTE); historical claim sections give `invalid_for_target` for every reliance, and invalidation at the read for every reliance (HM5B-HISTORICAL-CLAIM-REASON); a scripted `unmet` never overrides a satisfied item and outranks every claim reason otherwise (HM5B-SCRIPTED-UNMET-SCOPE); collision `current` where readable; `receipt.record` order (preconditions, job collision, contract, roles, properties); several reasons with `contract_unavailable` first and top-level reasons in check order; Time without the contract; entries validated before duplicates; dependency read rights from the named revision.
+
+#### Readings of points the resolutions leave open
+
+- **HM5C-EPOCH-REMOTE** (KNOWLEDGE §6). A decision naming another provider's revision has no revision "at this provider", so no epoch is compared; the preconditions follow, then `not_found`. Basis: spec text.
+- **HM5C-EPOCH-RESOLVED-RECORD** (KNOWLEDGE §7). "When the record exists": an already resolved record still exists, so its scope's epoch is compared before the preconditions and before the `not_found` for a resolved record. The revisions of a record share one scope ID (the comparison refuses differing scopes), so the first revision's scope is used. Basis: own judgment.
+- **HM5C-EPOCH-BEFORE-AUTHORITY** (KNOWLEDGE §6, §7). Because the epoch precedes checks 2 and 3, a principal that is not the bound authority, but passed step 6, gets `stale_authority_epoch` or `unknown_authority_epoch` for a wrong epoch rather than `not_authority`. `current_epoch` is included only when it may read the binding subject. Basis: spec text (consequence of the order).
+- **HM5C-PERMITTED-FIRST** (CONTEXT §14 "Invalidated items"). "`permitted_use_lost` comes first when both apply" is read as precedence between reasons of the one `{ item_id, claim, reason }` entry, not as two entries. Unchanged from H.M5b. Basis: own judgment (the entry shape is singular).
+- **HM5C-QUEUED-LOSS-EVENTS** (VERIFICATION §4). The job appends one `verification.job.changed { state: "completed" }` after `verification.receipt.issued` and the artifact's events; there is no `running` event. `observed_from` and `observed_until` are the instant of that evaluation. Basis: spec text.
+- **HM5C-CONTRACT-TYPES** (VERIFICATION §3). "A member of the wrong type" is read as the shapes the table gives: `outcome`, `kind` and `statement` strings; `role` and `property_id` identifiers; `layer` one of the six; `required` boolean; `required_anchors` non-empty strings; `evaluators` null or an array of non-empty strings; `freshness` null or `{ max_age_seconds }` with a non-negative integer. An `evaluators` entry that is a string but not a valid evaluator ID is accepted (it can never match). Basis: own judgment.
+
+#### Implementation and runs
+
+Readings committed as `94871cf`; implementation as `a5e966a`, before any fixture was opened. 273 fixtures at `808801b`, runner built at this base.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Twelfth-pass code (the `808801b` tree, run from a scratch copy) | 243 | 2 | 0 | 0 | 4 | 24 |
+| First complete run after `a5e966a`, and one repeat | 245 | 0 | 0 | 0 | 4 | 24 |
+
+- Before the changes: `run: 273 fixtures (2 fail, 243 pass, 24 skipped, 4 unsupported), 2 not passing`, with `knowledge.only-the-bound-authority-decides` step 46 (`expected error stale_authority_epoch, received "precondition_failed"`) and `verification.evaluate-contract-returns-a-job-and-pins-its-evaluator` step 8 (`expected error capability_unavailable, received "precondition_failed"`), both change 1 and 3.
+- After: `run: 273 fixtures (245 pass, 24 skipped, 4 unsupported), 0 not passing`. `--filter knowledge.` `run: 10 fixtures (10 pass), 0 not passing`; `--filter verification.` `run: 5 fixtures (5 pass), 0 not passing`; `--filter context.claims` `run: 1 fixtures (1 pass), 0 not passing`.
+- `tests/check_vectors.py` (0 failures), `probe_provider.py` (19/19), `probe_m2.py` (43/43), `probe_f.py` (31/31) pass.
+
+**No fixture failed after the implementation, so none was read.** Every change has basis spec text; the readings above are spec text or own judgment as marked.
+
+**Sensitivity** (throwaway probe, not committed, `knowledge.`, `verification.` and `context.claims` filters): the resolve epoch checked after the preconditions, and a queued job passing through `running` before completing on evaluator loss, both pass every fixture. Both are listed as unchecked in M5-DIVERGENCES §E.
+
+**Still open.** None fails a fixture. HM5C-EPOCH-RESOLVED-RECORD and HM5C-CONTRACT-TYPES (an `evaluators` entry that is not a valid evaluator ID) are readings the documents do not state; HM5C-PERMITTED-FIRST keeps the singular-entry reading. Coverage limits are unchanged from H.M5b.

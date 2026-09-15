@@ -1019,6 +1019,28 @@ fn facts(
     }
     let current =
         revision as usize == packets.len() || mutants.on("old-revision-relabeled-current");
+    // Read-time facts about later changes; the published facts themselves never change.
+    if !current {
+        facts["superseded_by"] = json!({"revision": packets.len()});
+    }
+    let job = match record["job"].as_str() {
+        Some(job) => evidence::load(tx, JOB, job)?
+            .map(|(_, j)| j)
+            .unwrap_or(Value::Null),
+        None => Value::Null,
+    };
+    let invalidated: Vec<Value> = facts["authority"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let item = entry["item_id"].as_str().unwrap_or_default();
+            let corrected = job["corrections"][item].as_i64()?;
+            (corrected > entry["authority_revision"].as_i64().unwrap_or(0))
+                .then(|| json!({"item_id": item, "authority_revision": corrected}))
+        })
+        .collect();
+    facts["invalidated_items"] = json!(invalidated);
     Ok(Some((facts, current)))
 }
 
@@ -1065,6 +1087,10 @@ pub fn inspect_packet(
         result["supersedes"] = facts["supersedes"].clone();
     }
     result["current"] = json!(current);
+    result["invalidated_items"] = facts["invalidated_items"].clone();
+    if let Some(latest) = facts.get("superseded_by") {
+        result["superseded_by"] = latest.clone();
+    }
     result["excerpt"] = excerpt;
     Ok(Some(result))
 }

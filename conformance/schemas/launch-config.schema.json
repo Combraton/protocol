@@ -446,6 +446,48 @@
           },
           "additionalProperties": false,
           "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
+        },
+        "basis_changes": {
+          "type": "array",
+          "description": "Scheduled changes to what the executor observes, applied at the controlled clock (test control; EXECUTION 15).",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "observed_basis"
+            ],
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "observed_basis": {
+                "type": "object",
+                "properties": {
+                  "repositories": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "tree": {
+                          "type": "string"
+                        },
+                        "dirty_snapshot": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "environment_digest": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -520,6 +562,13 @@
         "deletion_delay_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "serve_altered_bytes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Adversarial control: fetch returns these artifacts' bytes altered while keeping the sealed digest and availability metadata."
         }
       },
       "additionalProperties": false
@@ -869,6 +918,31 @@
             "description": "Emit this many alternating runtime observations at once."
           },
           "observe_basis": {
+            "type": "object",
+            "properties": {
+              "repositories": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "tree": {
+                      "type": "string"
+                    },
+                    "dirty_snapshot": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "environment_digest": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
+          },
+          "observe_host_basis": {
             "type": "object",
             "properties": {
               "repositories": {

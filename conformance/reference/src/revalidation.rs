@@ -31,6 +31,84 @@ pub fn observed_basis(executor: &Value, record: &Value) -> Value {
     basis
 }
 
+/// The executor as a check sees it at `now`: its configured basis, the scheduled `basis_changes`
+/// that have taken effect, and host observations recorded by executions (EXECUTION 15 controls).
+pub fn host_view(
+    tx: &rusqlite::Transaction,
+    executor: &Value,
+    now: &str,
+) -> rusqlite::Result<Value> {
+    let mut view = executor.clone();
+    let mut updates: Vec<(String, Value)> = executor["basis_changes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| c["at"].as_str().is_some_and(|at| at <= now))
+        .map(|c| {
+            (
+                c["at"].as_str().unwrap_or_default().to_string(),
+                c["observed_basis"].clone(),
+            )
+        })
+        .collect();
+    if let Some((_, value)) =
+        crate::evidence::load(tx, HOST_OBSERVATIONS, crate::execution::host_id(executor))?
+    {
+        for entry in value["updates"].as_array().into_iter().flatten() {
+            updates.push((
+                entry["at"].as_str().unwrap_or_default().to_string(),
+                entry["observed_basis"].clone(),
+            ));
+        }
+    }
+    updates.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut basis = if executor["observed_basis"].is_object() {
+        executor["observed_basis"].clone()
+    } else {
+        json!({})
+    };
+    for (_, update) in updates {
+        merge_basis(&mut basis, &update);
+    }
+    view["observed_basis"] = basis;
+    Ok(view)
+}
+
+pub const HOST_OBSERVATIONS: &str = "execution.host_observation";
+
+fn merge_basis(basis: &mut Value, update: &Value) {
+    for (key, value) in update.as_object().into_iter().flatten() {
+        if key == "repositories" {
+            for (repository, state) in value.as_object().into_iter().flatten() {
+                basis["repositories"][repository] = state.clone();
+            }
+        } else {
+            basis[key] = value.clone();
+        }
+    }
+}
+
+/// Record a host-level observation an execution made (script step `observe_host_basis`).
+pub fn record_host_observation(
+    tx: &rusqlite::Transaction,
+    executor: &Value,
+    basis: &Value,
+    now: &str,
+) -> rusqlite::Result<()> {
+    let host = crate::execution::host_id(executor);
+    let (revision, mut value) =
+        crate::evidence::load(tx, HOST_OBSERVATIONS, host)?.unwrap_or((0, json!({"updates": []})));
+    if let Some(list) = value["updates"].as_array_mut() {
+        list.push(json!({"at": now, "observed_basis": basis}));
+    }
+    tx.execute(
+        "INSERT INTO subjects VALUES (?1, ?2, ?3, ?4, 1)
+         ON CONFLICT (kind, id) DO UPDATE SET revision=excluded.revision, value=excluded.value",
+        rusqlite::params![HOST_OBSERVATIONS, host, revision + 1, value.to_string()],
+    )?;
+    Ok(())
+}
+
 fn peer_for<'a>(executor: &'a Value, provider: &str) -> Option<&'a Value> {
     executor["peers"]
         .as_array()
@@ -62,7 +140,7 @@ fn read_facts(executor: &Value, binding: &Value) -> Result<Value, String> {
 }
 
 /// Fetch the bound artifact's bytes at its evidence provider and verify the digest.
-fn fetch_bytes(executor: &Value, binding: &Value) -> Result<(), String> {
+fn fetch_bytes(executor: &Value, binding: &Value, mutants: &Mutants) -> Result<(), String> {
     let artifact = &binding["packet"]["artifact"];
     let provider = artifact["provider"].as_str().unwrap_or_default();
     let evidence = &binding["fetch"]["evidence"];
@@ -96,8 +174,12 @@ fn fetch_bytes(executor: &Value, binding: &Value) -> Result<(), String> {
             break;
         }
     }
+    // The digest of the bytes actually assembled, against the immutable binding; the provider's
+    // advertised digest is not evidence of what was received.
     let digest = crate::json::sha256_digest(&bytes);
-    if digest != artifact["digest"].as_str().unwrap_or_default() {
+    if digest != artifact["digest"].as_str().unwrap_or_default()
+        && !mutants.on("fetched-digest-unchecked")
+    {
         return Err(format!(
             "fetched bytes have digest {digest}, not the bound digest"
         ));
@@ -106,13 +188,13 @@ fn fetch_bytes(executor: &Value, binding: &Value) -> Result<(), String> {
 }
 
 /// Whether the executor holds the bound packet's exact bytes.
-fn holds(executor: &Value, binding: &mut Value) -> (bool, Option<String>) {
+fn holds(executor: &Value, binding: &mut Value, mutants: &Mutants) -> (bool, Option<String>) {
     let digest = binding["packet"]["artifact"]["digest"].clone();
     if !digest.is_null() && binding["held_digest"] == digest {
         return (true, None);
     }
     if binding["fetch"].get("evidence").is_some() {
-        return match fetch_bytes(executor, binding) {
+        return match fetch_bytes(executor, binding, mutants) {
             Ok(()) => {
                 binding["held_digest"] = digest;
                 (true, None)
@@ -148,12 +230,22 @@ pub fn check(
     // With a context grant, every check re-reads the bound revision's facts: whether it is still
     // the request's current revision is observable there, and so are unmet required items.
     if binding["fetch"].get("context").is_some() {
+        let require_current =
+            binding["require_current"] == true && !mutants.on("current-requirement-ignored");
         match read_facts(executor, binding) {
             Err(reason) => {
-                let fail_open = mutants.on("context-outage-fails-open");
-                results.push(json!({"condition_id": "packet.current",
-                    "result": if fail_open { "match" } else { "unavailable" },
-                    "evidence": reason.chars().take(256).collect::<String>()}));
+                let result = if mutants.on("context-outage-fails-open") {
+                    "match"
+                } else {
+                    "unavailable"
+                };
+                let evidence = reason.chars().take(256).collect::<String>();
+                results.push(
+                    json!({"condition_id": "packet.facts", "result": result, "evidence": evidence}),
+                );
+                if require_current {
+                    results.push(json!({"condition_id": "packet.current", "result": result, "evidence": evidence}));
+                }
             }
             Ok(facts) => {
                 if facts["reference"] != binding["packet"]
@@ -163,13 +255,6 @@ pub fn check(
                         "the context provider's packet reference differs from the binding".into(),
                     );
                 }
-                let current = facts["current"] == true;
-                let mut entry = json!({"condition_id": "packet.current", "result": if current { "match" } else { "mismatch" },
-                    "evidence": "context provider result facts"});
-                if !current {
-                    entry["observed"] = json!("superseded");
-                }
-                results.push(entry);
                 let unmet: Vec<String> = facts["items"]
                     .as_array()
                     .into_iter()
@@ -183,10 +268,49 @@ pub fn check(
                         unmet.join(", ")
                     ));
                 }
+                // A correction after this revision was prepared invalidates its required items,
+                // whether or not the revision is pinned (CONTEXT section 8).
+                let required: Vec<&Value> = facts["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|i| i["obligation"] != "advisory")
+                    .map(|i| &i["item_id"])
+                    .collect();
+                let invalidated: Vec<String> = facts["invalidated_items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|i| required.contains(&&i["item_id"]))
+                    .filter_map(|i| i["item_id"].as_str().map(String::from))
+                    .collect();
+                let mut entry = json!({"condition_id": "packet.facts", "evidence": "context provider result facts"});
+                if invalidated.is_empty() || mutants.on("pinned-ignores-correction") {
+                    entry["result"] = json!("match");
+                } else {
+                    entry["result"] = json!("mismatch");
+                    entry["observed"] = json!(format!("corrected: {}", invalidated.join(", ")));
+                }
+                results.push(entry);
+                let current = facts["current"] == true;
+                if !current && mutants.on("newer-revision-substituted") {
+                    // Mutant: silently rebinds to the newest revision.
+                    binding["packet"]["revision"] = facts["superseded_by"]["revision"].clone();
+                } else if require_current || (!current && mutants.on("supersession-always-stale")) {
+                    let mut entry = json!({"condition_id": "packet.current", "result": if current { "match" } else { "mismatch" },
+                        "evidence": "context provider result facts"});
+                    if !current {
+                        entry["observed"] = json!(format!(
+                            "superseded by revision {}",
+                            facts["superseded_by"]["revision"]
+                        ));
+                    }
+                    results.push(entry);
+                }
             }
         }
     }
-    let (mut held, mut fetch_failure) = holds(executor, binding);
+    let (mut held, mut fetch_failure) = holds(executor, binding, mutants);
     if let Some(reason) = refusal {
         held = false;
         fetch_failure = Some(reason);

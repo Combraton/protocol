@@ -907,6 +907,9 @@
             }
           },
           "unevaluatedProperties": false
+        },
+        "require_current": {
+          "type": "boolean"
         }
       },
       "unevaluatedProperties": false,
@@ -1038,6 +1041,9 @@
             "stale",
             "unknown"
           ]
+        },
+        "require_current": {
+          "type": "boolean"
         }
       },
       "unevaluatedProperties": false,
@@ -1313,6 +1319,32 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "scheduling": {
+      "type": "object",
+      "required": [
+        "capacity"
+      ],
+      "properties": {
+        "capacity": {
+          "enum": [
+            "held",
+            "released"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "context_binding_stale",
+            "context_binding_unknown",
+            "context_binding_unsatisfied",
+            "capacity",
+            "cancelled",
+            "authorization_lost",
+            "deadline_passed"
+          ]
         }
       },
       "unevaluatedProperties": false

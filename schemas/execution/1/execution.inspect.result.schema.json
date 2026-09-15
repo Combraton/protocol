@@ -199,6 +199,9 @@
     },
     "origin": {
       "$ref": "common.schema.json#/$defs/origin"
+    },
+    "scheduling": {
+      "$ref": "common.schema.json#/$defs/scheduling"
     }
   },
   "unevaluatedProperties": false

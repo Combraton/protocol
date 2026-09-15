@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "evidence.seal-refuses-digest-mismatch-and-is-idempotent",
-  "version": 2,
+  "version": 3,
   "title": "A digest mismatch at seal is content_digest_mismatch and the artifact stays staged until abandoned; a sealed artifact reseals with already_sealed and no new revision or event",
   "requirements": [
     "EVD-2"
@@ -23,7 +23,8 @@
   "polarity": "negative",
   "kills": [
     "seal-unverified",
-    "seal-twice-appends-event"
+    "seal-twice-appends-event",
+    "abandon-sealed-accepted"
   ],
   "steps": [
     {
@@ -452,6 +453,48 @@
           "revision": 3
         }
       }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.abandon",
+      "command_id": "abandon-d-2-sealed",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "d-2"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "d-2"
+          },
+          "revision": 3
+        }
+      ],
+      "payload": {},
+      "expect": {
+        "error": "not_found"
+      }
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "d-2"
+        },
+        "digest": "sha256:17c28b9181e04bc25b28dfce94263b8a1c4bd8911004ced32a0db4ca9a0e60eb"
+      },
+      "expect": {
+        "ok": {
+          "availability": {
+            "state": "available"
+          },
+          "data_base64": "dGhlIGRlY2xhcmVkIGNvbnRlbnQsIDMyIGJ5dGVzISE="
+        }
+      },
+      "note": "abandon never discards a sealed artifact"
     },
     {
       "step": "query",

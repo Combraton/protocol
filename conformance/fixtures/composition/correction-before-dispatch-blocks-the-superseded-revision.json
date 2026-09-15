@@ -1,8 +1,8 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.correction-before-dispatch-blocks-the-superseded-revision",
-  "version": 2,
-  "title": "A revision current at admission is superseded before dispatch: the dispatch check sees it is no longer current and blocks the start; an update delivered after its dependent transition is recorded late",
+  "version": 3,
+  "title": "An authority correction after publication invalidates a required item of the pinned revision before dispatch: the dispatch check reports the invalidated item, blocks the start and releases the slot; an update delivered after its dependent transition is recorded late",
   "requirements": [
     "SCN-5",
     "CTX-15",
@@ -46,7 +46,8 @@
   "polarity": "negative",
   "kills": [
     "admission-check-only",
-    "no-late-state"
+    "no-late-state",
+    "pinned-ignores-correction"
   ],
   "steps": [
     {
@@ -180,7 +181,8 @@
                     "repository": "repo-a",
                     "path": "src/i-1",
                     "tree": "tree-1"
-                  }
+                  },
+                  "authority_revision": 1
                 }
               },
               {
@@ -200,6 +202,12 @@
                 "wait_until": "2030-01-01T00:00:30Z"
               },
               {
+                "correction": {
+                  "item_id": "i-1",
+                  "authority_revision": 2
+                }
+              },
+              {
                 "section": {
                   "section_id": "s-new",
                   "item_id": "i-1",
@@ -209,7 +217,8 @@
                     "repository": "repo-a",
                     "path": "src/i-1",
                     "tree": "tree-1"
-                  }
+                  },
+                  "authority_revision": 2
                 }
               },
               {
@@ -589,9 +598,7 @@
             "reliance": "binding",
             "selected_by": "owner",
             "check": {
-              "kind": "source_included",
-              "repository": "repo-a",
-              "path": "src/i-1"
+              "kind": "authority_content_included"
             }
           }
         ],
@@ -605,7 +612,21 @@
             "units": "bytes",
             "amount": 4096
           }
-        }
+        },
+        "authority_content": [
+          {
+            "item_id": "i-1",
+            "evidence": {
+              "provider": "evidence-1",
+              "artifact": {
+                "kind": "evidence.artifact",
+                "id": "rule-1"
+              },
+              "digest": "sha256:7369949b47ef2c6ba26fbbee659cedc76123a75c17d321a52d8d1ef35e948042"
+            },
+            "authority_revision": 1
+          }
+        ]
       },
       "expect": {
         "ok": {
@@ -846,6 +867,29 @@
       }
     },
     {
+      "step": "query",
+      "session": "ctx-owner",
+      "operation": "context.packet.inspect",
+      "payload": {
+        "packet": "r-1",
+        "revision": 1
+      },
+      "expect": {
+        "ok": {
+          "current": false,
+          "superseded_by": {
+            "revision": 2
+          },
+          "invalidated_items": [
+            {
+              "item_id": "i-1",
+              "authority_revision": 2
+            }
+          ]
+        }
+      }
+    },
+    {
       "step": "set_clock",
       "instant": "2030-01-01T00:01:00Z",
       "note": "the correction is published before e-1 reaches its dispatch boundary"
@@ -860,12 +904,23 @@
       "expect": {
         "ok": {
           "delivery": "pending",
+          "scheduling": {
+            "capacity": "released",
+            "reason": "context_binding_stale"
+          },
           "context": {
             "blocked": {
               "boundary": "dispatch",
               "binding_id": "b-1",
               "reason": "context_binding_stale"
             },
+            "bindings": [
+              {
+                "packet": {
+                  "revision": 1
+                }
+              }
+            ],
             "checks": [
               {
                 "boundary": "admission",
@@ -876,8 +931,9 @@
                 "state": "stale",
                 "results": {
                   "$contains": {
-                    "condition_id": "packet.current",
-                    "result": "mismatch"
+                    "condition_id": "packet.facts",
+                    "result": "mismatch",
+                    "observed": "corrected: i-1"
                   }
                 }
               }

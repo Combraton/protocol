@@ -262,7 +262,8 @@ pub fn check(
             }
         }
         "evidence.upload.abandon" => {
-            if found("staged") {
+            // Abandon ends a staged upload only; it never discards sealed or held content.
+            if found("staged") || (found("sealed") && mutants.on("abandon-sealed-accepted")) {
                 Ok(())
             } else {
                 Err(("not_found", json!({})))
@@ -942,8 +943,21 @@ pub fn fetch(
         return Ok(Err("artifact_digest_mismatch"));
     }
     let size = record["descriptor"]["size"].as_i64().unwrap_or(0);
-    let availability = observed(&tx, id, &record, config, mutants)?;
+    let mut availability = observed(&tx, id, &record, config, mutants)?;
     let mut data = stored(&tx, id, config)?;
+    // Adversarial store control: well-formed responses with altered bytes and the expected digest
+    // metadata, so readers must verify what they assemble (EVIDENCE section 14).
+    if config["serve_altered_bytes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|a| a == id)
+    {
+        if let Some(first) = data.first_mut() {
+            *first ^= 0x20;
+        }
+        availability = json!({"state": "available"});
+    }
     if mutants.on("locator-as-identity")
         && let Some(locator) = record["descriptor"]["locator"].as_str()
     {
@@ -1003,6 +1017,7 @@ pub fn query(
     let mut items = Vec::new();
     let mut last = String::new();
     let mut more = false;
+    let mut hidden_match = false;
     for id in ids(&tx, ARTIFACT)? {
         if id.as_str() <= after {
             continue;
@@ -1025,6 +1040,7 @@ pub fn query(
             continue;
         }
         if !can_read(&subject(ARTIFACT, &id)) && !mutants.on("query-returns-unreadable") {
+            hidden_match = true;
             continue;
         }
         if items.len() == limit {
@@ -1034,7 +1050,12 @@ pub fn query(
         last = id.clone();
         items.push(json!({"artifact": subject(ARTIFACT, &id), "digest": d["digest"], "state": record["state"], "availability": observed(&tx, &id, &record, config, mutants)?}));
     }
-    let mut result = json!({"items": items, "filtered": restricted});
+    let filtered = if mutants.on("filtered-reveals-matches") {
+        hidden_match
+    } else {
+        restricted
+    };
+    let mut result = json!({"items": items, "filtered": filtered});
     if more {
         result["next_cursor"] = json!(format!("evq1:{last}"));
     }

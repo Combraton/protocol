@@ -164,11 +164,23 @@ pub fn within_parent(parent: &Value, child: &Value) -> bool {
     };
     let parent_depth = parent["delegation"]["max_depth"].as_i64().unwrap_or(0);
     let depth_ok = child["delegation"]["max_depth"].as_i64().unwrap_or(0) < parent_depth;
+    // A delegated grant keeps every constraint of its parent (CORE section 15.3).
+    let constraints_ok = parent["constraints"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(|c| {
+            child["constraints"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|d| d == c)
+        });
     let binding_ok = match parent.get("authority_binding") {
         None => true,
         Some(binding) => child.get("authority_binding") == Some(binding),
     };
-    rights_ok && resources_ok && expiry_ok && depth_ok && binding_ok
+    rights_ok && resources_ok && expiry_ok && depth_ok && binding_ok && constraints_ok
 }
 
 /// Current system instant as `YYYY-MM-DDTHH:MM:SSZ` (used by `clock::Clock::System`).

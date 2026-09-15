@@ -414,6 +414,12 @@ A grant is a provider-owned subject of kind `core.grant`. Its record contains:
 
 **Revoking:** a grant may be revoked by its issuer or by an authority principal. Anyone else gets `permission_denied` with reason `not_authority`, whether or not the grant exists. Revoking a grant that is already revoked is `permission_denied` with reason `revoked`, decided after that check. The outcome's `revoked` lists the named grant first, then its descendants that were still active, in a provider-chosen order; each gets a new revision and one `core.grant.revoked` event. Already revoked descendants are neither listed nor changed. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
 
+- **Constraints.** A grant may carry `constraints`: a list of typed restrictions, each `{ kind, ... }`, whose kinds are defined by profile features (for example `evidence.work_binding`, EVIDENCE §10).
+  - A constraint only narrows what the grant's rights and resources allow; it never widens them.
+  - Issuing a grant with a constraint kind this provider does not implement is `invalid_envelope` at `/payload/constraints/<i>/kind`. A kind whose feature the issuing session did not negotiate is `unsupported_required_feature` with `features`.
+  - A delegated grant carries every constraint of its parent, unchanged, otherwise `delegation_exceeded`.
+  - Resource kinds never imply a constraint.
+
 ### 15.4 Grants and authority epochs
 
 A grant with `authority_binding` stops authorizing once that scope's epoch changes. Nothing is rewritten; the record stays `active`, but step 6 refuses it with reason `authority_epoch_stale`. This lets a takeover invalidate everything the previous controller delegated without enumerating it.

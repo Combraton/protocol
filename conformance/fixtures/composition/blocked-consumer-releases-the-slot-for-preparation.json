@@ -1,15 +1,16 @@
 {
   "format": "combraton-conformance-fixture/1",
-  "id": "composition.context-provider-outage-advisory-proceeds-required-waits",
-  "version": 3,
-  "title": "With the context provider down, the bound revision's currency is unavailable: required work waits at admission as unknown and advisory work proceeds with a visible gap; after the provider returns, the required work is admitted",
+  "id": "composition.blocked-consumer-releases-the-slot-for-preparation",
+  "version": 1,
+  "title": "On a single-slot executor, a consumer that acquired the slot is blocked before dispatch when its required context becomes invalid; it releases the slot, the context job's investigation uses it and restores the environment, and the consumer then resumes and dispatches exactly once",
   "requirements": [
-    "SCN-8",
+    "SCN-6",
+    "CTX-18",
     "CTX-15"
   ],
   "spec_refs": [
     "docs/spec/profiles/EXECUTION.md#131-context-revalidation-executioncontext_revalidation-proposed-m4",
-    "docs/spec/profiles/CONTEXT.md#9-provider-unavailability"
+    "docs/spec/profiles/CONTEXT.md#4-jobs-subscribers-and-cancellation"
   ],
   "role": "provider",
   "binding": "unix",
@@ -33,7 +34,8 @@
     "core.capabilities",
     "core.effects",
     "execution.context",
-    "execution.context_revalidation"
+    "execution.context_revalidation",
+    "context.required_before_start"
   ],
   "requires_controls": [
     "context.script",
@@ -42,7 +44,7 @@
   ],
   "polarity": "negative",
   "kills": [
-    "context-outage-fails-open"
+    "blocked-dispatch-holds-capacity"
   ],
   "steps": [
     {
@@ -79,7 +81,8 @@
               "repo-a": {
                 "tree": "tree-1"
               }
-            }
+            },
+            "environment_digest": "env-A"
           },
           "peers": [
             {
@@ -102,18 +105,59 @@
             }
           ],
           "scripts": {
-            "e-req": [
+            "e-consumer": [
+              {
+                "wait_until": "2030-01-01T00:00:15Z"
+              },
               {
                 "deliver": "provider_ack_id"
               },
               {
-                "stall": true
+                "complete": {
+                  "completion_id": "c-1",
+                  "content": "done"
+                }
+              },
+              {
+                "exit": {
+                  "code": 0
+                }
+              }
+            ],
+            "inv-1": [
+              {
+                "deliver": "provider_ack_id"
+              },
+              {
+                "observe_host_basis": {
+                  "environment_digest": "env-A"
+                }
+              },
+              {
+                "complete": {
+                  "completion_id": "c-inv",
+                  "content": "environment rebuilt"
+                }
+              },
+              {
+                "exit": {
+                  "code": 0
+                }
               }
             ]
           },
           "default_script": [
             {
               "stall": true
+            }
+          ],
+          "capacity": 1,
+          "basis_changes": [
+            {
+              "at": "2030-01-01T00:00:10Z",
+              "observed_basis": {
+                "environment_digest": "env-B"
+              }
             }
           ]
         }
@@ -135,7 +179,7 @@
         },
         "context": {
           "scripts": {
-            "r-1": [
+            "r-env": [
               {
                 "section": {
                   "section_id": "s-1",
@@ -152,15 +196,27 @@
               {
                 "conditions": [
                   {
-                    "condition_id": "k-1",
-                    "kind": "repository_tree",
-                    "repository": "repo-a",
-                    "expected": "tree-1"
+                    "condition_id": "k-env",
+                    "kind": "environment_digest",
+                    "expected": "env-A"
                   }
                 ]
               },
               {
                 "publish": {}
+              },
+              {
+                "wait_until": "2030-01-01T00:00:20Z"
+              },
+              {
+                "execute": {
+                  "execution": "inv-1",
+                  "depth": 1,
+                  "call_budget": 1
+                }
+              },
+              {
+                "stall": true
               }
             ]
           },
@@ -494,16 +550,16 @@
       "step": "command",
       "session": "ctx-owner",
       "operation": "context.request.submit",
-      "command_id": "submit-r-1",
+      "command_id": "submit-r-env",
       "subject": {
         "kind": "context.request",
-        "id": "r-1"
+        "id": "r-env"
       },
       "preconditions": [
         {
           "subject": {
             "kind": "context.request",
-            "id": "r-1"
+            "id": "r-env"
           },
           "revision": 0
         }
@@ -567,7 +623,7 @@
       "session": "ctx-owner",
       "operation": "context.request.inspect",
       "payload": {
-        "request": "r-1"
+        "request": "r-env"
       },
       "expect": {
         "ok": {
@@ -575,27 +631,23 @@
         }
       },
       "capture": {
-        "d1": "/result/packets/0/reference/artifact/digest"
+        "d-env": "/result/packets/0/reference/artifact/digest"
       }
-    },
-    {
-      "step": "kill_participant",
-      "name": "ctx"
     },
     {
       "step": "command",
       "session": "caller",
       "operation": "execution.submit",
-      "command_id": "submit-e-req",
+      "command_id": "submit-e-consumer",
       "subject": {
         "kind": "execution.execution",
-        "id": "e-req"
+        "id": "e-consumer"
       },
       "preconditions": [
         {
           "subject": {
             "kind": "execution.execution",
-            "id": "e-req"
+            "id": "e-consumer"
           },
           "revision": 0
         }
@@ -607,25 +659,25 @@
         },
         "context_bindings": [
           {
-            "binding_id": "b-req",
+            "binding_id": "b-env",
             "request": {
               "kind": "context.request",
-              "id": "r-1"
+              "id": "r-env"
             },
             "packet": {
               "packet": {
                 "kind": "context.packet",
-                "id": "r-1"
+                "id": "r-env"
               },
               "revision": 1,
               "artifact": {
                 "provider": "evidence-1",
                 "artifact": {
                   "kind": "evidence.artifact",
-                  "id": "packet.r-1.1"
+                  "id": "packet.r-env.1"
                 },
                 "digest": {
-                  "$var": "d1"
+                  "$var": "d-env"
                 }
               }
             },
@@ -633,116 +685,9 @@
             "selected_by": "owner",
             "conditions": [
               {
-                "condition_id": "k-1",
-                "kind": "repository_tree",
-                "repository": "repo-a",
-                "expected": "tree-1"
-              }
-            ],
-            "fetch": {
-              "context": {
-                "provider": "context-1",
-                "grant": "g-packets"
-              },
-              "evidence": {
-                "provider": "evidence-1",
-                "grant": "g-artifacts"
-              }
-            }
-          }
-        ]
-      },
-      "expect": {
-        "ok": {
-          "outcome": {
-            "admission": "queued",
-            "queue_reason": "context_binding_unknown"
-          }
-        }
-      }
-    },
-    {
-      "step": "query",
-      "session": "caller",
-      "operation": "execution.inspect",
-      "payload": {
-        "execution": "e-req"
-      },
-      "expect": {
-        "ok": {
-          "context": {
-            "checks": [
-              {
-                "boundary": "admission",
-                "held": true,
-                "state": "unknown",
-                "results": {
-                  "$contains": {
-                    "condition_id": "packet.facts",
-                    "result": "unavailable"
-                  }
-                }
-              }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "step": "command",
-      "session": "caller",
-      "operation": "execution.submit",
-      "command_id": "submit-e-adv",
-      "subject": {
-        "kind": "execution.execution",
-        "id": "e-adv"
-      },
-      "preconditions": [
-        {
-          "subject": {
-            "kind": "execution.execution",
-            "id": "e-adv"
-          },
-          "revision": 0
-        }
-      ],
-      "payload": {
-        "brief": {
-          "digest": "sha256:abababababababababababababababababababababababababababababababab",
-          "media_type": "text/plain"
-        },
-        "context_bindings": [
-          {
-            "binding_id": "b-adv",
-            "request": {
-              "kind": "context.request",
-              "id": "r-1"
-            },
-            "packet": {
-              "packet": {
-                "kind": "context.packet",
-                "id": "r-1"
-              },
-              "revision": 1,
-              "artifact": {
-                "provider": "evidence-1",
-                "artifact": {
-                  "kind": "evidence.artifact",
-                  "id": "packet.r-1.1"
-                },
-                "digest": {
-                  "$var": "d1"
-                }
-              }
-            },
-            "obligation": "advisory",
-            "selected_by": "owner",
-            "conditions": [
-              {
-                "condition_id": "k-1",
-                "kind": "repository_tree",
-                "repository": "repo-a",
-                "expected": "tree-1"
+                "condition_id": "k-env",
+                "kind": "environment_digest",
+                "expected": "env-A"
               }
             ],
             "fetch": {
@@ -767,124 +712,139 @@
       }
     },
     {
+      "step": "set_clock",
+      "instant": "2030-01-01T00:00:15Z",
+      "note": "the environment changed at T10; e-consumer holds the only slot"
+    },
+    {
       "step": "query",
       "session": "caller",
       "operation": "execution.inspect",
       "payload": {
-        "execution": "e-adv"
+        "execution": "e-consumer"
       },
       "expect": {
         "ok": {
+          "delivery": "pending",
+          "scheduling": {
+            "capacity": "released",
+            "reason": "context_binding_stale"
+          },
           "context": {
-            "bindings": [
-              {
-                "state": "gap",
-                "revalidation": "unknown"
-              }
-            ]
+            "blocked": {
+              "boundary": "dispatch"
+            }
           }
         }
       }
     },
     {
-      "step": "start_participant",
-      "name": "ctx",
-      "config": {
-        "provider_id": "context-1",
-        "authority_principals": [
-          "owner"
-        ],
-        "clock": {
-          "controlled": "2030-01-01T00:00:00Z"
-        },
-        "context": {
-          "scripts": {
-            "r-1": [
-              {
-                "section": {
-                  "section_id": "s-1",
-                  "item_id": "i-1",
-                  "label": "source_inspected",
-                  "content": "fn main() {}",
-                  "source": {
-                    "repository": "repo-a",
-                    "path": "src/i-1",
-                    "tree": "tree-1"
-                  }
-                }
-              },
-              {
-                "conditions": [
-                  {
-                    "condition_id": "k-1",
-                    "kind": "repository_tree",
-                    "repository": "repo-a",
-                    "expected": "tree-1"
-                  }
-                ]
-              },
-              {
-                "publish": {}
-              }
-            ]
-          },
-          "evidence_provider": {
-            "provider_id": "evidence-1",
-            "socket": {
-              "$var": "socket.evd"
-            },
-            "credential": {
-              "$var": "credential.ctx-service"
-            },
-            "grant": "g-ctx-publish"
-          },
-          "executor": {
-            "provider_id": "executor-1",
-            "socket": {
-              "$var": "socket.exe"
-            },
-            "credential": {
-              "$var": "credential.ctx-service"
-            },
-            "grant": "g-ctx-execute"
-          }
-        }
-      },
-      "credential_principals": [
-        "exec-1"
-      ]
+      "step": "set_clock",
+      "instant": "2030-01-01T00:00:20Z",
+      "note": "the context job starts its investigation, which needs the executor's only slot"
     },
     {
       "step": "query",
-      "session": "caller",
-      "operation": "execution.inspect",
+      "session": "ctx-owner",
+      "operation": "context.request.inspect",
       "payload": {
-        "execution": "e-req"
+        "request": "r-env"
       },
       "expect": {
         "ok": {
-          "admission": "admitted"
+          "state": "ready"
         }
-      },
-      "note": "revalidated after the context provider returned"
+      }
     },
     {
       "step": "query",
       "session": "caller",
       "operation": "execution.inspect",
       "payload": {
-        "execution": "e-req"
+        "execution": "inv-1"
+      },
+      "expect": {
+        "ok": {
+          "result": "returned",
+          "origin": {
+            "initiator": {
+              "kind": "context.job",
+              "id": "r-env"
+            }
+          }
+        }
+      },
+      "eventually_ms": 15000
+    },
+    {
+      "step": "query",
+      "session": "caller",
+      "operation": "execution.inspect",
+      "payload": {
+        "execution": "e-consumer"
       },
       "expect": {
         "ok": {
           "delivery": "acknowledged",
+          "result": "returned",
+          "scheduling": {
+            "capacity": "held"
+          },
+          "deliveries": {
+            "$len": 1
+          },
           "context": {
-            "bindings": [
-              {
-                "revalidation": "current",
-                "state": "satisfied"
+            "blocked": {
+              "$absent": true
+            }
+          }
+        }
+      },
+      "eventually_ms": 15000,
+      "note": "resumed after the investigation restored the environment; never dispatched twice"
+    },
+    {
+      "step": "query",
+      "session": "caller",
+      "operation": "core.effects.get",
+      "payload": {
+        "effect": "e-consumer.delivery-1"
+      },
+      "expect": {
+        "ok": {
+          "attempts": {
+            "$len": 1
+          }
+        }
+      }
+    },
+    {
+      "step": "query",
+      "session": "caller",
+      "operation": "core.events.read",
+      "payload": {
+        "from": "start",
+        "limit": 500,
+        "kinds": [
+          "execution.execution"
+        ]
+      },
+      "expect": {
+        "ok": {
+          "items": {
+            "$contains": {
+              "event": {
+                "type": "execution.scheduling.changed",
+                "subject": {
+                  "kind": "execution.execution",
+                  "id": "e-consumer"
+                },
+                "payload": {
+                  "capacity": "held",
+                  "reason": "resumed"
+                }
               }
-            ]
+            }
           }
         }
       }

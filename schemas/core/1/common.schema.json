@@ -337,6 +337,39 @@
         },
         "parent": {
           "$ref": "#/$defs/identifier"
+        },
+        "constraints": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "description": "Typed grant constraints (CORE section 15.6). Each kind is defined by a profile feature; a provider refuses kinds it does not implement.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "$ref": "#/$defs/dotted_name"
+              },
+              "work": {
+                "$ref": "#/$defs/subject"
+              }
+            },
+            "unevaluatedProperties": false,
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "evidence.work_binding"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "work"
+              ]
+            }
+          }
         }
       }
     },

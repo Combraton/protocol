@@ -55,6 +55,17 @@ Bytes travel **in-band**, in bounded base64 chunks over the negotiated binding. 
 | `evidence.seal` | command | Precondition on the current revision. Verifies size and digest, then makes the artifact `sealed`. Outcome `{ state: "sealed", digest, size, already_sealed }`. |
 | `evidence.upload.abandon` | command | Precondition on the current revision. Ends a staged upload: state `abandoned` with reason `abandoned_by_producer`, staged bytes discarded, descriptor kept as a tombstone. |
 
+**Upload operations in detail** (owner approval, 2026-09-15):
+
+| | `evidence.upload.append` | `evidence.upload.abandon` |
+|---|---|---|
+| Authorization (step 6) | `evidence.publish` covering the artifact | `evidence.publish` covering the artifact |
+| Preconditions | the artifact's current revision | the artifact's current revision |
+| Errors (step 7) | `not_found` without a staged upload; `upload_offset_mismatch` (`after_reconcile`: inspect `received`, then append from it with a new command); `upload_size_exceeded` (`no`: the declared size cannot grow) | `not_found` unless the artifact is staged. A sealed, held, purge-pending, purged or already abandoned artifact is never abandoned, so abandon is never a way to discard sealed or held content; that needs `evidence.purge` (§9). |
+| State and revision | `received` grows; revision + 1 | state `abandoned`, staged bytes discarded; revision + 1 |
+| Event | `evidence.artifact.appended { received }` | `evidence.artifact.abandoned { reason: "abandoned_by_producer" }` |
+| Idempotency | The same command replays its outcome (CORE §6). A rejection binds nothing. | The same command replays its outcome. A new abandon command on the abandoned artifact is `not_found`. |
+
 Append and abandon need a staged upload, and seal needs a staged or sealed artifact. On an artifact without one (sealed for append and abandon, abandoned for all three) they are `not_found`: the upload they act on does not exist. `evidence.inspect` still reports the artifact and its state.
 
 **Chunk sizing.**
@@ -89,7 +100,7 @@ Append and abandon need a staged upload, and seal needs a staged or sealed artif
 | `evidence.query` | query | Filters on producer, source, work, media type, digest and scope; readable artifacts in artifact ID order, staged, abandoned and purged ones included; bounded page with `next_cursor` only when more remain; a cursor this provider did not issue is `invalid_cursor`; `filtered` as below |
 | `evidence.fetch` | query | `{ artifact, digest, offset?, max_bytes? }` → `{ artifact, digest, offset, data_base64, next_offset, size }` for a sealed, available artifact |
 
-- **Query filtering.** `filtered` is `true` whenever the reader's authorization does not cover every artifact, whether or not an unreadable artifact matched. It never reveals that an unreadable artifact matches the filters, which a digest filter would otherwise turn into an existence test.
+- **Query filtering** (owner approval, 2026-09-15). `filtered` is `true` whenever the reader's authorization does not cover every artifact, whether or not an unreadable artifact matched; adding or removing an unreadable matching artifact changes nothing in the reader's result. It never reveals that an unreadable artifact matches the filters, which a digest filter would otherwise turn into an existence test.
 - **Not sealed.** Fetch of a staged or abandoned artifact is `not_found` to an authorized reader: no sealed content exists. `evidence.inspect` reports its state.
 - **Exact bytes.** Fetched bytes are the sealed bytes; a provider MUST NOT regenerate, re-encode or normalize them.
 - **Reference mismatch.** A fetch whose `digest` differs from the artifact's sealed digest is refused with `artifact_digest_mismatch` and no bytes. Sealed content is immutable, so this never means "fetch the latest content": the reference names other bytes, or a different artifact, than the one requested.
@@ -162,7 +173,11 @@ Resources name kind `evidence.artifact` or `evidence.hold`, with optional `id` o
 
 - A grant issued for a unit of work names the destination through its resources (for example an `id_prefix` for that work's artifacts) and the producer through its holder. The artifact's `work` names the bound work.
 - A prepare outside the grant's resources is `permission_denied` with `out_of_scope`.
-- **Bound work.** A grant whose resources include subjects of a kind other than `evidence.artifact`, for example `{ kind: "execution.execution", id }`, is bound to that work. A prepare under it must name one of those subjects as `work`; otherwise it is `permission_denied` with reason `binding_violation` (*candidate*), decided at step 6 after rights and scope.
+- **Bound work** (feature `evidence.work_binding`). A grant is bound to a unit of work only through an explicit, typed constraint: `constraints: [ { kind: "evidence.work_binding", work: { kind, id } } ]` (CORE §15.3). Destination and work are independent, and both must match:
+  - the artifact must be covered by the grant's resources (otherwise `out_of_scope`);
+  - the descriptor's `work` must equal the constraint's `work`, and a missing `work` does not match (otherwise `permission_denied` with `binding_violation`, after rights and scope, at step 6);
+  - neither widens the other, and resources of other kinds in the same grant, for example read access to an execution, never imply a work binding;
+  - issuing such a constraint needs `evidence.work_binding` negotiated in the issuing session; a delegated grant keeps it.
 - An executor that publishes its output as evidence is an ordinary producer under such a grant.
 
 ## 11. Execution outcome references (EXE-21)
@@ -198,4 +213,4 @@ A sealed artifact establishes that these exact bytes were received from this aut
 ## 14. Conformance and test controls
 
 - **Reference participants only.** Fixtures use a reference evidence provider with a scripted store; no fixture depends on CBR's storage.
-- **Store controls** in launch configuration (decision 007), `evidence_store`: `corrupt` (stored bytes that fail integrity), `unavailable` (artifacts the store cannot serve), `staging_timeout_seconds`, and `deletion_delay_seconds` (physical deletion is confirmed that long after the purge request, on the controlled clock). Participants declare `claims.test_controls: ["evidence.store"]`. Holds and purges run through the protocol operations; no operation is reserved for testing.
+- **Store controls** in launch configuration (decision 007), `evidence_store`: `corrupt` (stored bytes that fail integrity), `unavailable` (artifacts the store cannot serve), `staging_timeout_seconds`, `deletion_delay_seconds` (physical deletion is confirmed that long after the purge request, on the controlled clock), and the adversarial `serve_altered_bytes`: fetch returns those artifacts' bytes altered, while keeping the sealed digest and `available` metadata, so readers are tested on verifying what they assemble. Participants declare `claims.test_controls: ["evidence.store"]`. Holds and purges run through the protocol operations; no operation is reserved for testing.

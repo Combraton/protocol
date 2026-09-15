@@ -330,6 +330,7 @@ fn running(tx: &Transaction) -> rusqlite::Result<i64> {
         if let Some((_, record)) = load(tx, &id)?
             && record["admission"] == "admitted"
             && record["runtime"] != "exited"
+            && record["scheduling"]["capacity"] != "released"
             && !matches!(
                 record["delivery"].as_str(),
                 Some("failed_before_delivery" | "not_delivered")
@@ -549,8 +550,9 @@ pub fn submit(
             {
                 map.remove("request");
             }
+            let view = crate::revalidation::host_view(tx, ctx.executor, &ctx.now)?;
             let check = crate::revalidation::check(
-                ctx.executor,
+                &view,
                 &record,
                 &mut entry,
                 "admission",
@@ -717,6 +719,55 @@ pub fn submit(
     Ok((1, outcome, events, effect_refs))
 }
 
+/// End a released execution that was never dispatched, as restart recovery does (EXECUTION 7.1):
+/// its delivery fails before delivery, and a deadline ending the wait leaves obligations overdue.
+#[allow(clippy::too_many_arguments)]
+fn end_undispatched(
+    record: &mut Value,
+    effect: &mut Value,
+    delivery_id: &str,
+    reason: &str,
+    now: &str,
+    revision: i64,
+    id: &str,
+    drafts: &mut Vec<Draft>,
+) {
+    let evidence =
+        json!({"class": "scheduling", "source": format!("released before dispatch: {reason}")});
+    determine(
+        record,
+        "failed_before_delivery",
+        evidence.clone(),
+        None,
+        now,
+        true,
+    );
+    if effect.is_object() {
+        observe_effect(effect, "failed", "never_dispatched", reason, now);
+        if reason == "deadline_passed" {
+            for obligation in effect["obligations"].as_array().into_iter().flatten() {
+                if obligation["state"] == "open" {
+                    drafts.push((
+                        "core.effect.obligation.overdue",
+                        subject(id),
+                        revision,
+                        json!({"effect": delivery_id, "obligation": obligation["id"]}),
+                    ));
+                }
+            }
+            set_obligation(effect, "overdue");
+        } else {
+            set_obligation(effect, "satisfied");
+        }
+    }
+    drafts.push((
+        "execution.delivery.observed",
+        subject(id),
+        revision,
+        json!({"delivery_id": delivery_id, "delivery": "failed_before_delivery", "evidence": evidence}),
+    ));
+}
+
 /// Whether a binding blocks the given boundary when it is not current (EXECUTION 13.1).
 fn blocks(binding: &Value, boundary: &str, mutants: &Mutants) -> bool {
     match binding["obligation"].as_str() {
@@ -872,16 +923,18 @@ pub(crate) fn execution_ids(tx: &Transaction) -> rusqlite::Result<Vec<String>> {
 fn still_authorized(
     tx: &Transaction,
     record: &Value,
-    recovery: &Recovery,
+    now: &str,
+    authorities: &[String],
+    mutants: &Mutants,
 ) -> rusqlite::Result<bool> {
-    if recovery.mutants.on("recovery-ignores-revocation") {
+    if mutants.on("recovery-ignores-revocation") {
         return Ok(true);
     }
     let principal = record["authorization"]["principal"]
         .as_str()
         .unwrap_or_default();
     let Some(grant_id) = record["authorization"]["grant"].as_str() else {
-        return Ok(recovery.authorities.iter().any(|a| a == principal));
+        return Ok(authorities.iter().any(|a| a == principal));
     };
     let grant: Option<String> = tx
         .query_row("SELECT record FROM grants WHERE id=?1", [grant_id], |r| {
@@ -895,7 +948,7 @@ fn still_authorized(
         return Ok(false);
     }
     if let Some(expiry) = grant["expires_at"].as_str()
-        && recovery.now.as_str() >= expiry
+        && now >= expiry
     {
         return Ok(false);
     }
@@ -1034,7 +1087,7 @@ pub fn recover(store: &mut Store, recovery: &Recovery) -> rusqlite::Result<()> {
             && !mutants.on("recovery-ignores-cancellation")
         {
             ("failed_before_delivery", "cancelled")
-        } else if !still_authorized(&tx, &record, recovery)? {
+        } else if !still_authorized(&tx, &record, now, recovery.authorities, mutants)? {
             ("failed_before_delivery", "authorization_lost")
         } else if deadline_passed(&record, now) && !mutants.on("recovery-ignores-deadline") {
             ("failed_before_delivery", "deadline_passed")
@@ -1149,6 +1202,7 @@ pub fn tick(
     store: &mut Store,
     now: &str,
     executor: &Value,
+    authorities: &[String],
     mutants: &Mutants,
 ) -> rusqlite::Result<()> {
     let stream = store.stream_id()?;
@@ -1165,7 +1219,17 @@ pub fn tick(
                 let Some((revision, record)) = load(&tx, &id)? else {
                     break;
                 };
-                let progressed = step(&tx, &stream, now, executor, mutants, &id, revision, record)?;
+                let progressed = step(
+                    &tx,
+                    &stream,
+                    now,
+                    executor,
+                    authorities,
+                    mutants,
+                    &id,
+                    revision,
+                    record,
+                )?;
                 tx.commit()?;
                 if !progressed {
                     break;
@@ -1206,9 +1270,10 @@ fn admit_from_queue(
         if context_queue && record["context"]["revalidation"] == true {
             // Revalidate at the admission boundary after queueing (EXECUTION 13.1).
             let mut drafts = Vec::new();
+            let view = crate::revalidation::host_view(&tx, executor, now)?;
             let blocked = revalidate(
                 &mut record,
-                executor,
+                &view,
                 "admission",
                 None,
                 now,
@@ -1330,6 +1395,7 @@ fn step(
     stream: &str,
     now: &str,
     executor: &Value,
+    authorities: &[String],
     mutants: &Mutants,
     id: &str,
     revision: i64,
@@ -1362,10 +1428,54 @@ fn step(
         && !mutants.on("admission-check-only")
         && let Some((boundary, transition)) = boundary
     {
+        let view = crate::revalidation::host_view(tx, executor, now)?;
+        let released = record["scheduling"]["capacity"] == "released";
+        // Released work was never dispatched and holds nothing; it ends rather than waits when
+        // it could not be dispatched anyway (EXECUTION 13.1, as 7.1 revalidates on recovery).
+        if boundary == "dispatch" && released {
+            let ended = if record.get("cancellation").is_some()
+                && !mutants.on("resume-ignores-cancellation")
+            {
+                Some("cancelled")
+            } else if !still_authorized(tx, &record, now, authorities, mutants)? {
+                Some("authorization_lost")
+            } else if deadline_passed(&record, now) {
+                Some("deadline_passed")
+            } else {
+                None
+            };
+            if let Some(reason) = ended {
+                end_undispatched(
+                    &mut record,
+                    &mut effect,
+                    &delivery_id,
+                    reason,
+                    now,
+                    revision,
+                    id,
+                    &mut drafts,
+                );
+                record["scheduling"] = json!({"capacity": "released", "reason": reason});
+                drafts.push((
+                    "execution.scheduling.changed",
+                    subject(id),
+                    revision,
+                    record["scheduling"].clone(),
+                ));
+                record["script_position"] = json!(record["script"].as_array().map_or(0, Vec::len));
+                save_effect(tx, &delivery_id, id, &effect)?;
+                save(tx, id, revision, &record)?;
+                for draft in drafts {
+                    provider_event(tx, stream, now, draft)?;
+                }
+                return Ok(true);
+            }
+        }
         let before = record["context"]["blocked"].clone();
+        let before_scheduling = record["scheduling"].clone();
         match revalidate(
             &mut record,
-            executor,
+            &view,
             boundary,
             transition.as_deref(),
             now,
@@ -1375,7 +1485,8 @@ fn step(
             &mut drafts,
         ) {
             Some(check) => {
-                let mut blocked = json!({"boundary": boundary, "binding_id": check["binding_id"], "reason": crate::revalidation::block_reason(&check)});
+                let reason = crate::revalidation::block_reason(&check);
+                let mut blocked = json!({"boundary": boundary, "binding_id": check["binding_id"], "reason": reason});
                 if let Some(transition) = &transition {
                     blocked["transition"] = json!(transition);
                 }
@@ -1390,6 +1501,20 @@ fn step(
                     }
                     record["context"]["blocked"] = blocked;
                 }
+                // Blocked before dispatch: release the scheduling slot, keeping the execution's
+                // identity, delivery effect, budget reservation and workspace lease.
+                if boundary == "dispatch" && !mutants.on("blocked-dispatch-holds-capacity") {
+                    let scheduling = json!({"capacity": "released", "reason": reason});
+                    if scheduling != before_scheduling {
+                        record["scheduling"] = scheduling.clone();
+                        drafts.push((
+                            "execution.scheduling.changed",
+                            subject(id),
+                            revision,
+                            scheduling,
+                        ));
+                    }
+                }
                 if drafts.is_empty() {
                     return Ok(false);
                 }
@@ -1402,6 +1527,41 @@ fn step(
             None => {
                 if let Some(map) = record["context"].as_object_mut() {
                     map.remove("blocked");
+                }
+                if boundary == "dispatch" && released {
+                    // Reacquire capacity before resuming.
+                    let full = executor["capacity"]
+                        .as_i64()
+                        .is_some_and(|capacity| occupied(tx, mutants).is_ok_and(|n| n >= capacity));
+                    if full && !mutants.on("resume-without-capacity") {
+                        let scheduling = json!({"capacity": "released", "reason": "capacity"});
+                        if scheduling != before_scheduling
+                            || !drafts.is_empty()
+                            || before.is_object()
+                        {
+                            record["scheduling"] = scheduling.clone();
+                            if scheduling != before_scheduling {
+                                drafts.push((
+                                    "execution.scheduling.changed",
+                                    subject(id),
+                                    revision,
+                                    scheduling,
+                                ));
+                            }
+                            save(tx, id, revision, &record)?;
+                            for draft in drafts {
+                                provider_event(tx, stream, now, draft)?;
+                            }
+                        }
+                        return Ok(false);
+                    }
+                    record["scheduling"] = json!({"capacity": "held"});
+                    drafts.push((
+                        "execution.scheduling.changed",
+                        subject(id),
+                        revision,
+                        json!({"capacity": "held", "reason": "resumed"}),
+                    ));
                 }
             }
         }
@@ -1870,6 +2030,8 @@ fn step(
             revision,
             json!({"host": record["host"]}),
         ));
+    } else if let Some(basis) = step.get("observe_host_basis") {
+        crate::revalidation::record_host_observation(tx, executor, basis, now)?;
     } else if let Some(basis) = step.get("observe_basis") {
         // The executor's observation of its own basis changed (EXECUTION 15 test control).
         let mut observed = record["observed_basis"].clone();
@@ -2542,6 +2704,7 @@ pub fn inspect(
         "continuation",
         "context",
         "origin",
+        "scheduling",
     ] {
         if let Some(value) = record.get(key) {
             result[key] = value.clone();
@@ -2670,6 +2833,9 @@ pub fn effect(store: &mut Store, id: &str, mutants: &Mutants) -> rusqlite::Resul
 /// Present context bindings to a session: revalidation members only when it negotiated
 /// `execution.context_revalidation`; otherwise the M3 shape and states (CMP-8).
 fn present_context(result: &mut Value, revalidation: bool) {
+    if !revalidation && let Some(map) = result.as_object_mut() {
+        map.remove("scheduling");
+    }
     let Some(context) = result.get_mut("context").and_then(Value::as_object_mut) else {
         return;
     };

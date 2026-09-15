@@ -129,6 +129,50 @@ pub const ALL: &[(&str, &str)] = &[
         "accepts a publish whose work differs from the work the grant is bound to",
     ),
     (
+        "blocked-dispatch-holds-capacity",
+        "keeps the capacity slot while blocked before dispatch",
+    ),
+    (
+        "resume-without-capacity",
+        "resumes a released execution without reacquiring capacity",
+    ),
+    (
+        "resume-ignores-cancellation",
+        "resumes a released execution whose cancellation was requested",
+    ),
+    (
+        "fetched-digest-unchecked",
+        "holds fetched packet bytes without computing their digest",
+    ),
+    (
+        "current-requirement-ignored",
+        "accepts a superseded revision for a binding that requires the current one",
+    ),
+    (
+        "supersession-always-stale",
+        "treats every superseded revision as stale, even when pinned",
+    ),
+    (
+        "pinned-ignores-correction",
+        "lets a pinned revision stay current after a correction invalidates a required item",
+    ),
+    (
+        "newer-revision-substituted",
+        "silently rebinds a superseded binding to the newest revision",
+    ),
+    (
+        "filtered-reveals-matches",
+        "sets query filtered only when an unreadable artifact matched",
+    ),
+    (
+        "work-constraint-inferred",
+        "treats unrelated grant resources as a work binding",
+    ),
+    (
+        "abandon-sealed-accepted",
+        "lets abandon discard a sealed artifact",
+    ),
+    (
         "purge-events-holds-first",
         "appends released holds' events before the purged artifact's own events",
     ),

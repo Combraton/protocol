@@ -52,7 +52,8 @@
       "context.updates",
       "context.expand",
       "execution.context_revalidation",
-      "execution.evidence_outputs"
+      "execution.evidence_outputs",
+      "evidence.work_binding"
     ],
     "test_controls": [
       "clock.file",
@@ -350,7 +351,13 @@
       "purge-events-holds-first",
       "hold-expiry-ignored",
       "check-ignored",
-      "shared-job-across-principals"
+      "shared-job-across-principals",
+      "blocked-dispatch-holds-capacity",
+      "resume-without-capacity",
+      "resume-ignores-cancellation",
+      "filtered-reveals-matches",
+      "work-constraint-inferred",
+      "abandon-sealed-accepted"
     ]
   }
 }

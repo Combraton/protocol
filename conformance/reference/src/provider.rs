@@ -286,7 +286,11 @@ const SUPPORTED: &[SupportedProfile] = &[
     SupportedProfile {
         name: "evidence",
         majors: &[1],
-        features: &["evidence.manifests", "evidence.retention_control"],
+        features: &[
+            "evidence.manifests",
+            "evidence.retention_control",
+            "evidence.work_binding",
+        ],
         depends_on: &["core"],
         requires_core_features: &["core.events"],
     },
@@ -558,8 +562,14 @@ impl Provider {
     fn tick(&mut self) {
         let now = self.identity.clock.now();
         let executor = self.identity.executor.clone();
-        if let Err(error) = crate::execution::tick(&mut self.store, &now, &executor, &self.mutants)
-        {
+        let authorities = self.identity.authorities.clone();
+        if let Err(error) = crate::execution::tick(
+            &mut self.store,
+            &now,
+            &executor,
+            &authorities,
+            &self.mutants,
+        ) {
             eprintln!("executor tick: {error}");
         }
         let evidence_store = self.identity.evidence_store.clone();
@@ -1398,6 +1408,31 @@ impl Provider {
         if self.mutants.on("issue-binding-before-expiry") {
             binding_check()?;
         }
+        // Typed grant constraints (CORE section 15): only kinds this provider implements, and
+        // only when their feature was negotiated.
+        for (index, constraint) in payload["constraints"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            match constraint["kind"].as_str() {
+                Some("evidence.work_binding") => {
+                    if !self.feature_negotiated("evidence.work_binding") {
+                        return Err(reject(
+                            "unsupported_required_feature",
+                            json!({"features": ["evidence.work_binding"]}),
+                        ));
+                    }
+                }
+                _ => {
+                    return invalid(
+                        &format!("/payload/constraints/{index}/kind"),
+                        "not a grant constraint this provider implements",
+                    );
+                }
+            }
+        }
         if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
             let now = self.identity.clock.now();
             let too_early = if self.mutants.on("issue-at-now-accepted") {
@@ -1565,23 +1600,37 @@ impl Provider {
                         if let Some(reason) = first {
                             return denied(reason);
                         }
-                        // A publish grant naming work subjects binds the artifact's work to one
-                        // of them (EVIDENCE section 10).
+                        // Only an explicit `evidence.work_binding` constraint binds the artifact's
+                        // work; resource kinds never imply one (EVIDENCE section 10).
                         if operation == "evidence.upload.prepare"
                             && !self.mutants.on("work-binding-ignored")
                         {
-                            let work: Vec<&Value> = grant["resources"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter(|r| r["kind"] != crate::evidence::ARTIFACT)
-                                .collect();
                             let bound = &params["payload"]["work"];
-                            if !work.is_empty()
-                                && !work
-                                    .iter()
-                                    .any(|r| grants::resource_covers_subject(r, bound))
-                            {
+                            let constrained: Vec<&Value> =
+                                if self.mutants.on("work-constraint-inferred") {
+                                    grant["resources"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter(|r| r["kind"] != crate::evidence::ARTIFACT)
+                                        .collect()
+                                } else {
+                                    grant["constraints"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter(|c| c["kind"] == "evidence.work_binding")
+                                        .map(|c| &c["work"])
+                                        .collect()
+                                };
+                            let matches = |w: &&Value| {
+                                if w.get("kind").is_some() && w.get("id").is_some() {
+                                    *w == bound
+                                } else {
+                                    grants::resource_covers_subject(w, bound)
+                                }
+                            };
+                            if !constrained.is_empty() && !constrained.iter().all(matches) {
                                 return denied("binding_violation");
                             }
                         }
@@ -1773,7 +1822,7 @@ impl Provider {
                 .flatten()
                 .enumerate()
             {
-                for member in ["conditions", "fetch", "request"] {
+                for member in ["conditions", "fetch", "request", "require_current"] {
                     if binding.get(member).is_some() {
                         return invalid(
                             &format!("/payload/context_bindings/{index}/{member}"),

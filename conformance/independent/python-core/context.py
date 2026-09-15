@@ -37,7 +37,7 @@ JOB_KIND = "context.job"
 PACKET_KIND = "context.packet"
 PACKET_MEDIA_TYPE = "application/vnd.combraton.context-packet+json"
 PACKET_FORMAT = "combraton-context-packet/1"
-COMPILER = "combraton-reference-context"  # CONTEXT 12 conformance conventions (H.7 #2)
+COMPILER = "combraton-independent-python-core"  # CONTEXT 12: names the implementation (H8-STEP8-COMPILER)
 DEFAULT_EXCERPT_BYTES = 4096  # CONTEXT 6
 OBLIGATION_FEATURES = {"advisory": "context.advisory", "required_before_start": "context.required_before_start",
                        "required_before_transition": "context.required_before_transition"}
@@ -575,6 +575,15 @@ class Context:
         rec, pk = self._packet(payload["packet"], payload["revision"])
         facts = dict(pk["facts"])
         facts["current"] = pk["revision"] == len(rec["packets"])
+        if pk["revision"] < len(rec["packets"]):
+            facts["superseded_by"] = {"revision": pk["revision"] + 1}  # CONTEXT 8 (H8-INVALIDATED-ITEMS)
+        # CONTEXT 8 "Corrections after publication": reported at the read; the
+        # stored facts never change.
+        job = self.load_job(rec["job"])[1]
+        current_authority = self._current_authority(rec, job)
+        facts["invalidated_items"] = [
+            {"item_id": a["item_id"], "authority_revision": current_authority[a["item_id"]]}
+            for a in facts["authority"] if current_authority.get(a["item_id"], -1) > a["authority_revision"]]
         aid = pk["reference"]["artifact"]["artifact"]["id"]
         data = self.store.blob(aid) or b""
         size = self.evidence.load(aid)[1]["descriptor"]["size"]

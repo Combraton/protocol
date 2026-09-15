@@ -40,7 +40,8 @@ MANIFEST_FORMAT = "combraton-evidence-manifest/1"
 CHUNK_OVERHEAD_BYTES = 2048  # H-CHUNK-LIMIT
 DEFAULT_FETCH_BYTES = 65536  # H-FETCH
 DEFAULT_QUERY_LIMIT = 100  # H-QUERY
-DIGEST_ALGORITHMS = ("sha256", "sha512")  # H-CONTENT-DIGEST-ALG
+# EVIDENCE 3: sha256, and sha512 because core.describe lists core.digest-sha512 (H8-STEP8-DIGEST).
+DIGEST_ALGORITHMS = ("sha256", "sha512")
 # H-LOSS-RECORD, H3-LOSS-KINDS (fixture-informed): the dependency kinds tracked.
 HOLD_DEPENDENCY = "evidence.hold"
 MANIFEST_DEPENDENCY = "evidence.manifest_child"
@@ -56,10 +57,11 @@ class EvidenceConfigError(Exception):
 def parse_store_config(raw) -> dict:
     if not isinstance(raw, dict):
         raise EvidenceConfigError("evidence_store must be an object")
-    unknown = set(raw) - {"corrupt", "unavailable", "staging_timeout_seconds", "deletion_delay_seconds"}
+    unknown = set(raw) - {"corrupt", "unavailable", "staging_timeout_seconds", "deletion_delay_seconds",
+                          "serve_altered_bytes"}
     if unknown:
         raise EvidenceConfigError(f"evidence_store: unknown members {sorted(unknown)}")
-    for member in ("corrupt", "unavailable"):
+    for member in ("corrupt", "unavailable", "serve_altered_bytes"):
         value = raw.get(member, [])
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise EvidenceConfigError(f"evidence_store.{member} must be an array of artifact IDs")
@@ -190,6 +192,7 @@ class Evidence:
         self.p = provider
         self.corrupt = set(cfg.get("corrupt", []))
         self.unavailable = set(cfg.get("unavailable", []))
+        self.altered = set(cfg.get("serve_altered_bytes", []))  # adversarial fetch (H8-ALTERED-BYTES)
         self.staging_timeout = cfg.get("staging_timeout_seconds")
         self.deletion_delay = cfg.get("deletion_delay_seconds", 0)
 
@@ -233,6 +236,11 @@ class Evidence:
         E.closed(d, "/payload", ("digest", "size", "media_type", "producer", "source", "scope", "capture", "coverage",
                                  "retention_class"), ("work", "locator"))
         E.digest_string(d["digest"], "/payload/digest")
+        algorithm = d["digest"].split(":", 1)[0]
+        if algorithm not in DIGEST_ALGORITHMS:
+            # EVIDENCE 3: decided at step 2 with the descriptor (H8-STEP8-DIGEST).
+            raise ProtocolError("unsupported_digest_algorithm", {"algorithm": algorithm,
+                                                                 "supported": list(DIGEST_ALGORITHMS)})
         E.integer(d["size"], "/payload/size", 0)
         E.string(d["media_type"], "/payload/media_type", 1, 128)
         producer = E.closed(d["producer"], "/payload/producer", (), ("principal", "producer_id"))
@@ -395,16 +403,15 @@ class Evidence:
 
     @staticmethod
     def _check_bound_work(auth, payload: dict) -> None:
-        """EVIDENCE 10 "Bound work" (H-BOUND-WORK)."""
+        """EVIDENCE 10 "Bound work": only a typed evidence.work_binding
+        constraint binds a grant to work; resource kinds imply nothing
+        (H8-WORK-BINDING, replacing H-BOUND-WORK)."""
         grant = auth.grant
         if grant is None:
             return
-        work = [r for r in grant["resources"] if r["kind"] not in (ARTIFACT_KIND, HOLD_KIND)]
-        if not work:
-            return
-        subject = payload.get("work")
-        if subject is None or not any(G.covers(r, subject) for r in work):
-            raise denied("binding_violation")
+        for constraint in grant.get("constraints", []):
+            if constraint["kind"] == "evidence.work_binding" and payload.get("work") != constraint["work"]:
+                raise denied("binding_violation")
 
     # ------------------------------------------------------ visibility
     def hold_visible(self, auth, hid: str, hold: dict) -> bool:
@@ -453,10 +460,6 @@ class Evidence:
     def op_prepare(self, env, auth):
         self.check_preconditions(env, auth)
         d = env["payload"]
-        algorithm = d["digest"].split(":", 1)[0]
-        if algorithm not in DIGEST_ALGORITHMS:
-            raise ProtocolError("unsupported_digest_algorithm", {"algorithm": algorithm,
-                                                                 "supported": list(DIGEST_ALGORITHMS)})
         aid = env["subject"]["id"]
         descriptor = self._descriptor(d)
         rec = {"descriptor": descriptor, "state": "staged", "received": 0, "staged_at": self.now(), "holds": []}
@@ -805,6 +808,9 @@ class Evidence:
         if availability["state"] != "available" or offset >= d["size"]:
             return dict(base, data_base64="", next_offset=offset)
         data = (self.blob(aid) or b"")[offset: offset + payload.get("max_bytes", DEFAULT_FETCH_BYTES)]
+        if aid in self.altered:
+            # Scripted adversarial store (EVIDENCE 14): altered bytes under the sealed digest.
+            data = bytes(b ^ 0x01 for b in data)
         return self.p.fit_bytes(lambda piece: dict(base, data_base64=base64.b64encode(piece).decode("ascii"),
                                                    next_offset=offset + len(piece)), data)
 

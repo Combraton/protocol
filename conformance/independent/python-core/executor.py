@@ -207,7 +207,7 @@ def validate_step(step, what: str) -> None:
             _int(val["bytes"], w)
     elif key == "runtime_burst":
         _int(val, w, 1)
-    elif key == "observe_basis":
+    elif key in ("observe_basis", "observe_host_basis"):
         _observed_basis(val, w)
     else:
         _fail(f"{what}: unknown script step {key!r}")
@@ -235,7 +235,7 @@ def parse_executor_config(raw) -> dict:
                 _fail(f"executor.{member} needs the socket binding; not supported (H-REVAL-SCOPE)")
     cfg = _obj(raw, "executor", (), ("adapter", "scripts", "default_script", "recovery_policy", "host_id", "capacity",
                                      "budget_pools", "context_packets", "installations", "output_spool_bytes",
-                                     "observed_basis"))
+                                     "observed_basis", "basis_changes"))
     adapter = _obj(cfg.get("adapter", {}), "executor.adapter", (),
                    ("enforcement", "echo_proves_delivery", "predicates", "steering", "enforced_bounds", "context_boundaries"))
     if "enforcement" in adapter:
@@ -286,6 +286,15 @@ def parse_executor_config(raw) -> dict:
             _str(packet["digest"], "packet digest", 1)
     if "observed_basis" in cfg:
         _observed_basis(cfg["observed_basis"], "executor.observed_basis")
+    changes = cfg.get("basis_changes", [])
+    if not isinstance(changes, list):
+        _fail("executor.basis_changes must be an array")
+    for idx, change in enumerate(changes):
+        w = f"executor.basis_changes[{idx}]"
+        _obj(change, w, ("at", "observed_basis"))
+        if not C.valid_instant(change["at"]):
+            _fail(f"{w}.at must be an instant")
+        _observed_basis(change["observed_basis"], f"{w}.observed_basis")
     for idx, inst in enumerate(cfg.get("installations", [])):
         w = f"executor.installations[{idx}]"
         _obj(inst, w, ("installation_id", "harness", "detected"),
@@ -328,6 +337,7 @@ class Executor:
         # EXECUTION 13.1: packets the host was given by packet reference.
         self.packet_references = [pk["reference"] for pk in cfg.get("context_packets", []) if "reference" in pk]
         self.observed_basis = cfg.get("observed_basis", {})
+        self.basis_changes = cfg.get("basis_changes", [])
         self.installations = cfg.get("installations", [])
         self.spool_bytes = cfg.get("output_spool_bytes", DEFAULT_SPOOL)
 
@@ -570,9 +580,14 @@ class Executor:
         repos = basis.get("repositories", {})
         results = []
         if "context" in binding.get("fetch", {}):
-            # The context provider cannot be read from here (no peers).
-            results.append({"condition_id": "packet.current", "result": "unavailable",
+            # EXECUTION 13.1 "Packet facts at each check": the context provider
+            # cannot be read from here (no peers), so packet.facts, and
+            # packet.current under require_current, are unavailable (H8-PINNING).
+            results.append({"condition_id": "packet.facts", "result": "unavailable",
                             "evidence": "context_provider_unreachable"})
+            if binding.get("require_current"):
+                results.append({"condition_id": "packet.current", "result": "unavailable",
+                                "evidence": "context_provider_unreachable"})
         for cond in binding.get("conditions", []):
             kind = cond["kind"]
             observed = None
@@ -707,10 +722,13 @@ class Executor:
                 or x.get("cancellation", {}).get("outcome") == "cancelled")
 
     def _running(self) -> int:
+        """Executions holding a capacity slot. Work that released its slot
+        while blocked before dispatch does not count (EXECUTION 13.1)."""
         count = 0
         for xid in self.store.ids_of(EXECUTION_KIND):
             _, x = self.load(xid)
-            if x["admission"] == "admitted" and not self._finished(x):
+            if (x["admission"] == "admitted" and not self._finished(x)
+                    and x.get("scheduling", {}).get("capacity") != "released"):
                 count += 1
         return count
 
@@ -1068,6 +1086,8 @@ class Executor:
                     entry.update(selected_by=b["selected_by"], state=self.binding_state(x, b))
                 bindings.append(entry)
             view["context"] = {"bindings": bindings, "deliveries": x["context_deliveries"]}
+            if revalidating and "scheduling" in x:
+                view["scheduling"] = x["scheduling"]
             if revalidating:
                 view["context"]["checks"] = x.get("checks", [])
                 if x.get("blocked") is not None:
@@ -1540,23 +1560,70 @@ class Executor:
             elif pending and not x["dispatched"]:
                 self._dispatch_attempt(st)  # a dispatcher that is not fenced dispatches (15.1)
         else:
-            if key not in ("transport_errors", "on_cancel", "stall", "probe_status", "reconcile_finds", "observe_basis"):
+            if key not in ("transport_errors", "on_cancel", "stall", "probe_status", "reconcile_finds", "observe_basis",
+                           "observe_host_basis"):
                 self._observed(st)
             getattr(self, f"_step_{key}")(st, x, val, now)
         x["script_pos"] = pos + 1
         return True
 
+    def _set_scheduling(self, st, capacity: str, reason: str | None) -> bool:
+        """EXECUTION 13.1 "Capacity while blocked before dispatch": record a
+        scheduling change with its event (H8-CAPACITY-RELEASE)."""
+        x = st["x"]
+        value = {"capacity": capacity}
+        if reason is not None:
+            value["reason"] = reason
+        if x.get("scheduling") == value:
+            return False
+        x["scheduling"] = value
+        # EXECUTION 9: the event always carries a reason; reacquiring capacity
+        # is "resumed", which the inspect member omits (H8-RESUMED-REASON,
+        # fixture-informed: the scheduling schema's reasons do not include it).
+        payload = dict(value) if reason is not None else {"capacity": capacity, "reason": "resumed"}
+        self._xevent(st, "execution.scheduling.changed", payload)
+        return True
+
+    def _end_reason(self, x: dict):
+        """The EXECUTION 7.1 revalidation applied to released work."""
+        if x["counters"]["cancels"] > 0:
+            return "cancelled"
+        if not self._submitter_authorized(x):
+            return "authorization_lost"
+        if self._deadline_passed(x):
+            return "deadline_passed"
+        return None
+
+    def _end_released(self, st, reason: str) -> None:
+        """Released work ends instead of resuming: never dispatched."""
+        x = st["x"]
+        self._set_scheduling(st, "released", reason)
+        x.pop("blocked", None)
+        deadline = reason == "deadline_passed"
+        if deadline:
+            self._overdue(st, x["delivery_id"])  # a deadline leaves obligations overdue (7.1)
+        evidence = {"class": "never_dispatched", "source": reason}
+        self._determine(st, "failed_before_delivery", evidence, close=not deadline)
+
     def _dispatch_gate(self, st):
         """EXECUTION 13.1: a required-before-start binding that is not current
-        holds dispatch of the initial brief (H-REVAL-BLOCKS). Returns None when
-        dispatch may proceed, else whether anything was recorded."""
+        holds dispatch of the initial brief (H-REVAL-BLOCKS) and releases the
+        capacity slot; released work ends or revalidates, reacquires capacity
+        and dispatches once (H8-CAPACITY-RELEASE). Returns None when dispatch
+        may proceed, else whether anything was recorded."""
         x = st["x"]
-        bindings = self._start_bindings(x)
-        if not bindings:
-            return None
         before = st["rev"]
+        released = x.get("scheduling", {}).get("capacity") == "released"
+        if released:
+            reason = self._end_reason(x)
+            if reason is not None:
+                self._end_released(st, reason)
+                return True
+        bindings = self._start_bindings(x)
+        if not bindings and not released:
+            return None
         new_boundary = not x.get("dispatch_checked")
-        checked = self._record_checks(st, "dispatch", bindings, always=new_boundary)
+        checked = self._record_checks(st, "dispatch", bindings, always=new_boundary) if bindings else []
         x["dispatch_checked"] = True
         blocking = [(b, c) for b, c in checked
                     if b["obligation"] == "required_before_start" and c["state"] != "current"]
@@ -1564,12 +1631,18 @@ class Executor:
         if not blocking:
             if previous is not None and previous["boundary"] == "dispatch":
                 x.pop("blocked")
+            if released:
+                if self.capacity is not None and self._running() >= self.capacity:
+                    self._set_scheduling(st, "released", "capacity")
+                    return st["rev"] != before or previous is not None
+                self._set_scheduling(st, "held", None)
             x["dispatch_checked"] = False  # the next dispatch boundary is a new one
             return None
         b, c = blocking[0]
         block = {"boundary": "dispatch", "binding_id": b["binding_id"], "reason": self.block_reason(c)}
         changed = previous != block
         x["blocked"] = block
+        self._set_scheduling(st, "released", block["reason"])
         return changed or new_boundary or st["rev"] != before
 
     def _transition_gate(self, st, name: str):
@@ -1600,12 +1673,43 @@ class Executor:
             self._xevent(st, "execution.transition.blocked", dict(block))
         return changed or new_boundary or st["rev"] != before
 
-    def observed_basis_of(self, x: dict) -> dict:
-        """What revalidation can observe for an execution: this start's
-        launch ``observed_basis`` with the execution's own ``observe_basis``
-        observations merged over it (H-REVAL-OBSERVE; the launch part is
-        re-read at every start, H3-OBSERVED-BASIS-RESTART)."""
+    @staticmethod
+    def _merge_basis(basis: dict, overlay: dict) -> None:
+        for rid, repo in overlay.get("repositories", {}).items():
+            basis.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
+        if "environment_digest" in overlay:
+            basis["environment_digest"] = overlay["environment_digest"]
+
+    def host_basis(self) -> dict:
+        """The host's observed basis (H8-BASIS-CHANGES): launch
+        ``observed_basis``, then, in time order, due ``basis_changes``
+        (replacing) and recorded ``observe_host_basis`` steps (merging)."""
+        now = self.now()
+        timeline = [(c["at"], 0, i, "replace", c["observed_basis"])
+                    for i, c in enumerate(self.basis_changes) if c["at"] <= now]
+        text = self.store.get_kv("host_observations")
+        for i, obs in enumerate(V.loads(text) if text else []):
+            timeline.append((obs["recorded_at"], 1, i, "merge", obs["basis"]))
         basis = V.loads(V.canonical_text(self.observed_basis))
+        for _, _, _, how, value in sorted(timeline, key=lambda t: t[:3]):
+            if how == "replace":
+                basis = V.loads(V.canonical_text(value))
+            else:
+                self._merge_basis(basis, value)
+        return basis
+
+    def _step_observe_host_basis(self, st, x, val, now):
+        text = self.store.get_kv("host_observations")
+        observations = V.loads(text) if text else []
+        observations.append({"recorded_at": now, "basis": val})
+        self.store.set_kv("host_observations", V.canonical_text(observations))
+
+    def observed_basis_of(self, x: dict) -> dict:
+        """What revalidation can observe for an execution: the host basis
+        with the execution's own ``observe_basis`` observations merged over
+        it (H-REVAL-OBSERVE, H8-BASIS-CHANGES; the launch part is re-read at
+        every start, H3-OBSERVED-BASIS-RESTART)."""
+        basis = self.host_basis()
         overlay = x.get("observations", {})
         for rid, repo in overlay.get("repositories", {}).items():
             basis.setdefault("repositories", {}).setdefault(rid, {}).update(repo)

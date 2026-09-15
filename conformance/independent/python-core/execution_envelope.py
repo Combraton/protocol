@@ -164,7 +164,7 @@ def context_binding_request(v, path: str, revalidation: bool = False) -> None:
     # EXECUTION 13.1: `request`, `conditions`, `fetch` and a packet reference
     # only under execution.context_revalidation; otherwise invalid_envelope at
     # that member.
-    extra = ("request", "conditions", "fetch") if revalidation else ()
+    extra = ("request", "conditions", "fetch", "require_current") if revalidation else ()
     E.closed(v, path, ("binding_id", "packet", "obligation", "selected_by"), ("transition",) + extra)
     E.identifier(v["binding_id"], ptr(path, "binding_id"))
     packet = v["packet"]
@@ -179,6 +179,8 @@ def context_binding_request(v, path: str, revalidation: bool = False) -> None:
         E.digest_string(packet["digest"], ptr(ptr(path, "packet"), "digest"))
     if "request" in v:
         E.subject(v["request"], ptr(path, "request"), "context.request")
+    if "require_current" in v and not isinstance(v["require_current"], bool):
+        raise Invalid(ptr(path, "require_current"), "must be a boolean")
     if "conditions" in v:
         import context as CTX
         E.array(v["conditions"], ptr(path, "conditions"), max_items=64)

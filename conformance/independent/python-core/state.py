@@ -292,6 +292,13 @@ class Store:
             "ON CONFLICT (execution) DO UPDATE SET start = excluded.start, data = excluded.data, lost = excluded.lost",
             (execution, start, data, V.canonical_text(lost)))
 
+    # -- small durable values (executor host observations)
+    def get_kv(self, key: str):
+        return self._kv(key)
+
+    def set_kv(self, key: str, value: str) -> None:
+        self._set_kv(key, value)
+
     # -- evidence bytes (EVIDENCE 4)
     def blob(self, artifact: str):
         row = self.db.execute("SELECT data FROM blobs WHERE artifact = ?", (artifact,)).fetchone()

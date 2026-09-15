@@ -47,7 +47,7 @@ CORE_FEATURES = ["core.digest-sha512", "core.grants", "core.events", "core.capab
 EXECUTION_FEATURES = ["execution.steering", "execution.actions", "execution.controller", "execution.workspaces",
                       "execution.usage", "execution.context", "execution.discovery", "execution.continuation",
                       "execution.output", "execution.context_revalidation"]
-EVIDENCE_FEATURES = ["evidence.manifests", "evidence.retention_control"]
+EVIDENCE_FEATURES = ["evidence.manifests", "evidence.retention_control", "evidence.work_binding"]
 CONTEXT_FEATURES = ["context.advisory", "context.required_before_start", "context.required_before_transition",
                     "context.shared_jobs", "context.updates", "context.expand"]
 # EXECUTION 1: the Core features execution/1 requires. Published only in that
@@ -610,6 +610,12 @@ class Provider:
         ]
         if feature is not None and not s.feature_selected(feature) and feature not in unsatisfied:
             unsatisfied.append(feature)
+        if method == "core.grant.issue":
+            # CORE 15.3: a constraint kind whose feature was not negotiated.
+            for c in params["payload"].get("constraints", []):
+                need = E.CONSTRAINT_FEATURES[c["kind"]]
+                if not s.feature_selected(need) and need not in unsatisfied:
+                    unsatisfied.append(need)
         if method == "context.request.submit":
             # CONTEXT 3: an item obligation whose feature was not negotiated.
             unsatisfied.extend(f for f in self.context.submit_features(params) if f not in unsatisfied)

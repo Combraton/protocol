@@ -71,6 +71,47 @@ SUPPORTED_PROFILES = {
     "knowledge": {"majors": [1], "features": [], "depends_on": ["core"]},
     "verification": {"majors": [1], "features": VERIFICATION_FEATURES, "depends_on": ["core"]},
 }
+# CORE 4.2 and 4.3 (M6-Q1): the in-session dependencies negotiation enforces,
+# and core.feature_dependencies reports. Profile-triggered: every supported
+# profile other than core names core/1 with the Core features it requires, in
+# describe feature order (HM6-REQUIRES-ORDER).
+PROFILE_DEPENDENCIES = {
+    name: [("core", 1, [f for f in CORE_FEATURES if f in REQUIRED_CORE_FEATURES.get(name, [])])]
+    for name in SUPPORTED_PROFILES if name != "core"
+}
+# Feature-triggered (EXECUTION 13.3). Applied, and reported, only for a feature
+# this provider supports: execution.claim_revalidation is not implemented, so
+# this entry is inert here (HM6-UNSUPPORTED-TRIGGER).
+FEATURE_DEPENDENCIES = {
+    ("execution", "execution.claim_revalidation"): [("execution", 1, ["execution.context_revalidation"])],
+}
+
+
+def feature_dependencies(profile: str, feature: str) -> list:
+    if feature not in SUPPORTED_PROFILES.get(profile, {}).get("features", []):
+        return []
+    return FEATURE_DEPENDENCIES.get((profile, feature), [])
+
+
+def dependency_manifest() -> list[dict]:
+    """CORE 4.3: profiles in describe order; within one, the profile entry,
+    then feature entries in describe feature order."""
+    def requires(deps):
+        return [{"profile": p, "major": m, "features": list(fs)} for p, m, fs in deps]
+    entries = []
+    for name, support in SUPPORTED_PROFILES.items():
+        if name == "core":
+            continue
+        for major in support["majors"]:
+            entries.append({"profile": name, "major": major, "trigger": {"kind": "profile"},
+                            "requires": requires(PROFILE_DEPENDENCIES[name])})
+            for f in support["features"]:
+                deps = feature_dependencies(name, f)
+                if deps:
+                    entries.append({"profile": name, "major": major, "trigger": {"kind": "feature", "feature": f},
+                                    "requires": requires(deps)})
+    return entries
+
 IDLE_RECHECK_SECONDS = 0.1  # real time, never the virtual clock (decision 007)
 DECLARED_UNSUPPORTED = [
     {"name": "coordination", "reason": "not_in_release"},
@@ -426,6 +467,9 @@ class Provider:
         self.ops = {
             # operation: (profile, feature, kind, validator, handler)
             "core.describe": ("core", None, "query", cv(E.describe_params), self.op_describe),
+            # CORE 4.3: base core/1, not a feature; the payload is {} (HM6-QUERY-ENVELOPE).
+            "core.feature_dependencies": ("core", None, "query", cv(E.describe_params),
+                                          self.op_feature_dependencies),
             "core.negotiate": ("core", None, "query", cv(E.negotiate_params), self.op_negotiate),
             "core.authenticate": ("core", None, "query", cv(E.authenticate_params), self.op_authenticate),
             "core.grant.issue": ("core", "core.grants", "command", cv(E.grant_issue_params), self.op_grant_issue),
@@ -631,9 +675,9 @@ class Provider:
         if op is None:
             raise ProtocolError("method_not_found", {"operation": method})
         profile, feature, kind, validator, handler = op
-        # CORE 3.1: before negotiation only describe, negotiate and authenticate
-        # are answered (F-AUTH-STEP1).
-        if method not in ("core.describe", "core.negotiate", "core.authenticate"):
+        # CORE 3.1: before negotiation only describe, feature_dependencies,
+        # negotiate and authenticate are answered (F-AUTH-STEP1, CORE 4.3).
+        if method not in ("core.describe", "core.feature_dependencies", "core.negotiate", "core.authenticate"):
             if not s.negotiated:
                 raise ProtocolError("negotiation_required")
             if profile not in s.selected:
@@ -846,7 +890,8 @@ class Provider:
             return self.authorize_revoke(env)
         # CORE 15.5 "Which operations are protected": core.describe,
         # core.negotiate, core.authenticate, core.capabilities and
-        # core.events.unsubscribe are not; core.grant.get has its own
+        # core.events.unsubscribe are not, nor (HM6-QUERY-PROTECTION)
+        # core.feature_dependencies; core.grant.get has its own
         # visibility rule. A grant field there is validated, not evaluated.
         return Auth(self, None)
 
@@ -1029,6 +1074,11 @@ class Provider:
             "unknown_extensions": "drop",
         }
 
+    def op_feature_dependencies(self, env: dict, auth: Auth) -> dict:
+        # CORE 4.3: read-only and manifest-only; no record, event or session
+        # change (HM6-BOUNDED).
+        return {"dependencies": dependency_manifest()}
+
     def op_negotiate(self, env: dict, auth: Auth) -> dict:
         s = self.session
         if s.negotiated:
@@ -1042,10 +1092,12 @@ class Provider:
         selected: dict[str, dict] = {}
         optional_feature_misses: dict[str, list[dict]] = {}
         feature_refused: set[str] = set()
+        candidates: dict[str, dict] = {}  # the selection before dependencies (HM6-DEPENDENCY-STATE)
         for name in order:
             p = requested.get(name)
             if p is None:  # Core is included implicitly (CORE 4.2)
                 selected["core"] = {"major": 1, "features": []}
+                candidates["core"] = {"major": 1, "features": [], "required": set()}
                 continue
             # A caller cannot deselect Core, so a Core entry is always treated
             # as required (DIVERGENCES.md D-NEG-CORE).
@@ -1072,8 +1124,11 @@ class Provider:
                 else:
                     misses.append({"profile": name, "feature": f, "reason": "unknown_feature"})
             selected[name] = {"major": max(common), "features": features}
+            candidates[name] = {"major": max(common), "features": list(features),
+                                "required": set(p["required_features"])}  # HM6-REQUIRED-TWICE
             optional_feature_misses[name] = misses
-        # Dependencies (REL-2, CORE 4.2 reason dependency_not_selected).
+        # Dependencies (REL-2, CORE 4.2 reason dependency_not_selected), applied
+        # after selection: profile-triggered first, then feature-triggered.
         changed = True
         while changed:
             changed = False
@@ -1085,30 +1140,87 @@ class Provider:
                     sink = refusals if (p is None or p["required"] or name == "core") else unselected
                     sink.append({"profile": name, "reason": "dependency_not_selected"})
                     changed = True
-        # EXECUTION 1: execution/1 needs Core features core.events,
-        # core.capabilities and core.effects selected in this session; one
-        # item per missing feature. Its own missing required features, if
-        # any, are listed too (G-NEG-EXEC-ITEMS).
-        for profile_name, required_core in REQUIRED_CORE_FEATURES.items():
+        # Profile-triggered (CORE 4.2, EXECUTION 1 and the other profiles' 1):
+        # the Core features a profile requires selected in this session; one
+        # item per missing feature, in describe order of profiles. Its own
+        # missing required features, if any, are listed too (G-NEG-EXEC-ITEMS).
+        for profile_name, deps in PROFILE_DEPENDENCIES.items():
             p = requested.get(profile_name)
             if p is None or not (profile_name in selected or profile_name in feature_refused):
                 continue
-            core_features = selected.get("core", {"features": []})["features"]
-            absent = [f for f in required_core if f not in core_features]
-            if absent:
+            items = []
+            for dep_profile, dep_major, dep_features in deps:
+                have = selected.get(dep_profile, {"major": dep_major, "features": []})
+                if have["major"] != dep_major:
+                    items.append({"profile": profile_name, "reason": "dependency_not_selected"})
+                    continue
+                items.extend({"profile": profile_name, "feature": f, "reason": "dependency_not_selected"}
+                             for f in dep_features if f not in have["features"])
+            if items:
                 selected.pop(profile_name, None)
                 sink = refusals if p["required"] else unselected
-                sink.extend({"profile": profile_name, "feature": f, "reason": "dependency_not_selected"} for f in absent)
+                sink.extend(items)
+        # Feature-triggered (CORE 4.2, M6-Q1): a requested feature whose
+        # dependency is not selected is itself not selected. Evaluated against
+        # the selection before dependencies, to a fixed point
+        # (HM6-DEPENDENCY-STATE).
+        feats = {n: list(c["features"]) for n, c in candidates.items()}
+        alive = set(candidates)
+        triggered: dict[str, set] = {}
+        changed = True
+        while changed:
+            changed = False
+            for name in order:
+                if name not in alive:
+                    continue
+                for f in list(feats[name]):
+                    deps = feature_dependencies(name, f)
+                    if all(dp in alive and candidates[dp]["major"] == dm and all(x in feats[dp] for x in dfs)
+                           for dp, dm, dfs in deps):
+                        continue
+                    feats[name].remove(f)
+                    triggered.setdefault(name, set()).add(f)
+                    changed = True
+                    if f in candidates[name]["required"]:
+                        alive.discard(name)  # the profile cannot be selected
+                        break
+        feature_items: list[dict] = []
+        for name in order:
+            fs = triggered.get(name)
+            if not fs:
+                continue
+            p = requested.get(name)
+            profile_required = p is None or p["required"] or name == "core"
+            listed = [f for f in candidates[name]["features"] if f in fs]
+            required_failed = [f for f in listed if f in candidates[name]["required"]]
+            if required_failed:
+                # Listed even when a profile-triggered item already dropped the
+                # profile, as unknown_feature items are (G-NEG-EXEC-ITEMS).
+                items = [{"profile": name, "feature": f, "reason": "dependency_not_selected"} for f in required_failed]
+                feature_items.extend(items)
+                if profile_required:
+                    refusals.extend(items)
+                else:
+                    # HM6-UNSELECTED-PROFILE-ITEMS: the profile is not selected.
+                    selected.pop(name, None)
+                    unselected.extend(items)
+            elif name in selected:  # optional items only while the profile stays selected
+                selected[name]["features"] = [f for f in selected[name]["features"] if f not in fs]
+                unselected.extend({"profile": name, "feature": f, "reason": "dependency_not_selected"} for f in listed)
         for name in selected:
             unselected.extend(optional_feature_misses.get(name, []))
         if refusals:
-            reasons = {r["reason"] for r in refusals}
-            if reasons & {"unknown_profile", "declared_unsupported", "dependency_not_selected"}:
-                code = "unsupported_profile"
-            elif "no_common_major" in reasons:
-                code = "unsupported_version"
-            else:
-                code = "unsupported_required_feature"
+            # CORE 4.2 code order over each item's code (HM6-REFUSAL-CODE):
+            # a feature-triggered dependency_not_selected is a missing feature.
+            def rank(item):
+                reason = item["reason"]
+                if reason in ("unknown_profile", "declared_unsupported"):
+                    return 0
+                if reason == "dependency_not_selected":
+                    return 2 if any(item is x for x in feature_items) else 0
+                return 1 if reason == "no_common_major" else 2
+            code = ("unsupported_profile", "unsupported_version", "unsupported_required_feature")[
+                min(rank(r) for r in refusals)]
             raise ProtocolError(code, {"unsatisfied": refusals})
         s.negotiated = True
         s.selected = selected

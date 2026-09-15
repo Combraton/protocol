@@ -299,6 +299,14 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `idempotency_conflict` | `no` | Command identity bound to a different intent | `command_id` |
 | `dedupe_history_unavailable` | `after_reconcile` | Command identity may have been used but its record was discarded | `oldest_retained` |
 | `effect_history_unavailable` | `after_reconcile` | The effect may have been recorded but its record is no longer retained (§19.2) | — |
+| `upload_offset_mismatch` | `after_reconcile` | Evidence: an append's offset is not the bytes received so far (EVIDENCE §4) | `received` |
+| `upload_size_exceeded` | `no` | Evidence: an append would exceed the declared size | `received`, `size` |
+| `upload_incomplete` | `after_reconcile` | Evidence: seal before all declared bytes were received; a new seal needs the revision after the missing appends | `received`, `size` |
+| `content_digest_mismatch` | `no` | Evidence: received bytes do not match the declared digest | `computed` |
+| `artifact_digest_mismatch` | `no` | Evidence: a reference's digest differs from the artifact's sealed digest; sealed content is immutable | — |
+| `hold_active` | `after_reconcile` | Evidence: purge while an active hold is not released by this command | `holds`, `filtered` |
+
+Profile error codes are raised only after authorization (§15.5), so an unauthorized principal never receives them or their details.
 | `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |

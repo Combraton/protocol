@@ -315,6 +315,28 @@ The Context profile is M4. M3 defines only the binding and the delivery observat
   - `late` when a `required_before_transition` binding's packet arrives after that transition was observed (`execution.transition.observed`).
   - Otherwise the harness's report: `acknowledged`, `delivered`, `queued`, or `unknown` when the handoff's outcome is unknown.
 
+### 13.1 Context revalidation (`execution.context_revalidation`, proposed M4)
+
+Owner decision M4-Q4 (2026-09-15). A **negotiated, versioned extension** of the M3 binding: without this feature, bindings, states and inspect results are exactly as above. Its compatibility fixtures show an M3-level caller is unaffected.
+
+- **Binding members.**
+  - `packet` is a packet reference `{ packet, revision, artifact: { provider, artifact, digest } }` (CONTEXT §2).
+  - `conditions` lists typed conditions copied from the packet's applicability: `{ condition_id, kind, ... expected }` with kinds `repository_tree`, `dirty_snapshot`, `environment_digest`, `authority_revision` (*candidate*).
+  - `fetch` names the per-audience read grants the executor uses (CONTEXT §7). Submitting any of these members without the feature is `invalid_envelope`.
+- **What the executor checks.** Only conditions it can actually observe, against the basis it holds, for example its workspace tree. Each check result is `match`, `mismatch` or `unavailable`, with the observed value where there is one, and evidence. An unobservable condition is `unavailable`: never treated as fresh, and not necessarily stale. The executor decides nothing about semantic truth, does not accept project direction, and is not an applicability engine.
+- **Binding revalidation state:** `current` (every condition matches and the exact packet bytes are held), `stale` (some condition mismatches), or `unknown` (none mismatches, some unavailable). These add to the M3 states `satisfied`, `gap` and `unsatisfied`, only under this feature.
+- **Effect by obligation:**
+  - `advisory`: follow the declared fallback and show the gap; a stale or unknown advisory binding never blocks.
+  - `required_before_start`: block the start boundary until the binding is `current`. The execution is `queued` with `queue_reason` `context_binding_stale` or `context_binding_unknown` (*candidate*).
+  - `required_before_transition`: block **only** the named transition until the binding is `current`. Work before it continues, and the executor records `execution.transition.blocked` with the binding.
+- **Boundaries.** Revalidate at each relevant boundary: admission, dispatch of the initial brief (including after queueing or after restart recovery), and each named transition. An earlier check never guarantees a later boundary is current.
+- **Records.** Each check appends `{ binding_id, boundary, checked_at, observed_basis, results: [ { condition_id, result, observed?, evidence } ], state }` to `context.checks` in `execution.inspect`, with event `execution.context.checked`. Checks never rewrite the packet or earlier checks.
+- **Fetch.** When the executor fetches the packet itself, it verifies the fetched digest against the binding. Bytes with another digest leave the binding `unsatisfied` and are never delivered.
+
+### 13.2 Evidence outputs (`execution.evidence_outputs`, proposed M4)
+
+EXE-21, with EVIDENCE §11. A completion record may carry `outputs: [ { role, evidence: { provider, artifact, digest } } ]`. They name artifacts the executor sealed under its work binding; `execution.inspect` lists them. A reference authorizes nothing.
+
 ## 14. Output telemetry and backpressure
 
 - **Separate channel.** Output chunks travel in a telemetry channel separate from semantic events, read with `execution.output.read` (*candidate*) using byte-offset cursors.

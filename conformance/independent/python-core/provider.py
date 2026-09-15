@@ -889,9 +889,9 @@ class Provider:
         if method == "core.grant.revoke":
             return self.authorize_revoke(env)
         # CORE 15.5 "Which operations are protected": core.describe,
-        # core.negotiate, core.authenticate, core.capabilities and
-        # core.events.unsubscribe are not, nor (HM6-QUERY-PROTECTION)
-        # core.feature_dependencies; core.grant.get has its own
+        # core.feature_dependencies, core.negotiate, core.authenticate,
+        # core.capabilities and core.events.unsubscribe are not
+        # (HM6-QUERY-PROTECTION, resolved); core.grant.get has its own
         # visibility rule. A grant field there is validated, not evaluated.
         return Auth(self, None)
 

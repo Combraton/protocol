@@ -1926,3 +1926,17 @@ None fails a fixture.
 #### Implementation and runs
 
 Code and probe changed in one commit (below), before any fixture was opened. `tests/probe_m6.py` now also runs a second scratch change with a synthetic chained dependency (`execution.actions` requiring `execution.claim_revalidation`, declared by no document) to exercise rounds and HM6B-ONE-ITEM; the committed provider declares only the documented dependency.
+
+Realignment committed as `307b4d7`; the §15.5 comment and README follow. 280 fixtures at `68e430d`, runner rebuilt at this base.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| First complete run after `307b4d7`, and one repeat | 247 | 0 | 0 | 0 | 5 | 28 |
+| Accepted M5 fixture set (the `target/pinned-m5` export from H.M6), unmodified | 245 | 0 | 0 | 0 | 4 | 24 |
+
+- Full suite: `run: 280 fixtures (247 pass, 28 skipped, 5 unsupported), 0 not passing`. Unsupported: the four backpressure fixtures and `execution.feature-triggered-dependencies-match-negotiation` (`participant does not claim feature execution.claim_revalidation`). Skipped: 13 `socket.*`, 14 `composition.*`, 1 `compat.*`.
+- `--filter dependencies-match`: `run: 2 fixtures (1 pass, 1 unsupported), 0 not passing`; `core.feature-dependencies-match-negotiation` passes, so the query's exact result is now fixture-checked here (it was unguarded in H.M6's sensitivity run).
+- M5 fixture set: `run: 273 fixtures (245 pass, 24 skipped, 4 unsupported), 0 not passing`.
+- `tests/check_vectors.py` (0 failures), `probe_provider.py` (19/19), `probe_m2.py` (43/43), `probe_f.py` (31/31), `probe_m6.py` (23/23).
+
+**No fixture failed, so none was read.** Every change has basis spec text; HM6B-DEPENDENCY-ORDER's round granularity, HM6B-ONE-ITEM's withdrawal, HM6B-SIMULTANEOUS and HM6B-REQUIRED-PROFILE-ROUNDS are own judgment where marked, all unreachable on this participant and in 0.1's single declared feature dependency (checked only by the probe's synthetic chain).

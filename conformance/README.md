@@ -13,6 +13,7 @@ This directory holds the normative, language-neutral conformance material for Pr
 | `runner/` | The black-box runner (Rust crate `combraton-conformance`) |
 | `reference/` | The reference provider and its 147 mutants (Rust crate `combraton-reference-provider`; does not depend on the runner; not a product). Its `tests/` hold implementation-specific checks, such as constructed cursors, that portable fixtures must not rely on. |
 | `scripts/repeat_fixture.py` | Runs one fixture repeatedly; every run must pass on the provider, or fail at the expected step and reason on the mutant (deterministic race evidence) |
+| `scripts/build_pinned.py` | Exports and builds an accepted older release (`m5` = `6ed4727`) under `target/pinned-<name>/` for compatibility checks: `participants/pinned/` launches that build (fixtures with `requires_pinned` run only there), and `run --fixtures target/pinned-m5/src/conformance/fixtures` runs the older fixture set, unmodified, against current providers |
 | `scripts/peer_user_check.py` | Different-OS-user check for the Unix-socket binding, run as root through passwordless `sudo` (CI) |
 | `independent/python-core/` | Independent Core provider in Python written from the documents only, with its divergence log (M2) |
 | `crosscheck/` | Independent non-Rust checks of the encoding vectors (Python `rfc8785`, Node `canonicalize`) |

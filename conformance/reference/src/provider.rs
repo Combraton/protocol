@@ -51,6 +51,11 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "core.feature_dependencies",
+        profile: "core",
+        command: false,
+    },
+    Operation {
         name: "core.negotiate",
         profile: "core",
         command: false,
@@ -446,6 +451,16 @@ const CONTROLLED_COMMANDS: [&str; 5] = [
 
 const DECLARED_UNSUPPORTED: &[&str] = &["coordination", "remote-trust"];
 
+/// Feature-triggered dependencies enforced at negotiation (CORE sections 4.2 and 4.3):
+/// (profile, feature, dependency profile, dependency major, dependency features).
+const FEATURE_DEPENDENCIES: &[(&str, &str, &str, i64, &[&str])] = &[(
+    "execution",
+    "execution.claim_revalidation",
+    "execution",
+    1,
+    &["execution.context_revalidation"],
+)];
+
 pub struct Reject {
     pub code: &'static str,
     pub details: Value,
@@ -733,7 +748,7 @@ impl Provider {
         }
         let pre_negotiation = matches!(
             operation.name,
-            "core.describe" | "core.negotiate" | "core.authenticate"
+            "core.describe" | "core.feature_dependencies" | "core.negotiate" | "core.authenticate"
         );
         if !pre_negotiation {
             match &self.selected {
@@ -2594,6 +2609,7 @@ impl Provider {
     fn query(&mut self, operation: &str, params: &Value) -> Result<Value, Reject> {
         match operation {
             "core.describe" => self.describe(),
+            "core.feature_dependencies" => Ok(self.feature_dependencies()),
             "core.negotiate" => self.negotiate(&params["payload"]),
             "core.authenticate" => self.authenticate(&params["payload"]),
             "core.events.read" => self.events_read(params),
@@ -2965,6 +2981,43 @@ impl Provider {
         }))
     }
 
+    /// `core.feature_dependencies` (CORE section 4.3): the in-session dependencies negotiation
+    /// enforces, from the same tables negotiation uses.
+    fn feature_dependencies(&self) -> Value {
+        let mut entries = Vec::new();
+        for profile in SUPPORTED.iter().filter(|p| p.name != "core") {
+            for major in profile.majors {
+                let requires: Vec<Value> = profile
+                    .depends_on
+                    .iter()
+                    .map(|dependency| {
+                        let features: &[&str] = if *dependency == "core" {
+                            profile.requires_core_features
+                        } else {
+                            &[]
+                        };
+                        json!({"profile": dependency, "major": 1, "features": features})
+                    })
+                    .collect();
+                entries.push(json!({"profile": profile.name, "major": major, "trigger": {"kind": "profile"}, "requires": requires}));
+                if self.mutants.on("feature-dependencies-omit-feature-trigger") {
+                    continue;
+                }
+                for feature in profile.features {
+                    for (owner, trigger, dependency, dependency_major, features) in
+                        FEATURE_DEPENDENCIES
+                    {
+                        if *owner == profile.name && trigger == feature {
+                            entries.push(json!({"profile": profile.name, "major": major, "trigger": {"kind": "feature", "feature": feature},
+                                "requires": [{"profile": dependency, "major": dependency_major, "features": features}]}));
+                        }
+                    }
+                }
+            }
+        }
+        json!({"dependencies": entries})
+    }
+
     fn negotiate(&mut self, payload: &Value) -> Result<Value, Reject> {
         if (self.selected.is_some() || self.negotiation_refused)
             && !self.mutants.on("allow-renegotiation")
@@ -3129,8 +3182,49 @@ impl Provider {
                 }
             }
         }
-        if !unsatisfied.is_empty() {
-            let reasons: Vec<&str> = unsatisfied
+        // Feature-triggered dependencies: the requested feature is not selected (CORE section 4.2).
+        let mut feature_unsatisfied = Vec::new();
+        if !self.mutants.on("feature-dependency-unenforced") {
+            for (owner, trigger, dependency, dependency_major, features) in FEATURE_DEPENDENCIES {
+                let Some((_, chosen, profile_required)) = selected.get(*owner).cloned() else {
+                    continue;
+                };
+                if !chosen.iter().any(|f| f == trigger) {
+                    continue;
+                }
+                let satisfied = selected.get(*dependency).is_some_and(|(major, chosen, _)| {
+                    major == dependency_major
+                        && features.iter().all(|d| chosen.iter().any(|f| f == d))
+                });
+                if satisfied {
+                    continue;
+                }
+                let item = json!({"profile": owner, "feature": trigger, "reason": "dependency_not_selected"});
+                let feature_required = requests.iter().any(|r| {
+                    r["name"] == *owner
+                        && r["required_features"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|f| f == trigger)
+                });
+                if feature_required && profile_required {
+                    feature_unsatisfied.push(item);
+                } else if feature_required {
+                    selected.remove(*owner);
+                    unselected.push(item);
+                } else {
+                    if let Some((_, chosen, _)) = selected.get_mut(*owner) {
+                        chosen.retain(|f| f != trigger);
+                    }
+                    unselected.push(item);
+                }
+            }
+        }
+        if !unsatisfied.is_empty() || !feature_unsatisfied.is_empty() {
+            unsatisfied.extend(feature_unsatisfied.iter().cloned());
+            let profile_items = unsatisfied.len() - feature_unsatisfied.len();
+            let reasons: Vec<&str> = unsatisfied[..profile_items]
                 .iter()
                 .filter_map(|item| item["reason"].as_str())
                 .collect();
@@ -3147,6 +3241,7 @@ impl Provider {
             } else if reasons.contains(&"no_common_major") {
                 "unsupported_version"
             } else {
+                // A feature-triggered dependency counts as a missing required feature.
                 "unsupported_required_feature"
             };
             return Err(reject(code, json!({"unsatisfied": unsatisfied})));

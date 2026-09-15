@@ -101,6 +101,14 @@ pub const ALL: &[(&str, &str)] = &[
         "treats a receipt exactly at observed_until plus max_age_seconds as stale",
     ),
     (
+        "feature-dependencies-omit-feature-trigger",
+        "omits feature-triggered entries from core.feature_dependencies",
+    ),
+    (
+        "feature-dependency-unenforced",
+        "selects a feature whose feature-triggered dependency is not selected",
+    ),
+    (
         "dependency-digest-ignored",
         "resolves a dependency by claim and revision whatever its digest",
     ),

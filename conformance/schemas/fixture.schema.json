@@ -1373,6 +1373,11 @@
       ],
       "description": "Restrict the fixture to one binding; absent means any."
     },
+    "requires_pinned": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]{0,63}$",
+      "description": "Run only against a participant descriptor whose `pinned` names this older release build (compatibility fixtures); every other participant skips it."
+    },
     "requires_controls": {
       "type": "array",
       "uniqueItems": true,

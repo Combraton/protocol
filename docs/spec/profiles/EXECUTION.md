@@ -15,7 +15,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
   - **Required request.** If a required `execution/1` request lacks one of those Core features, negotiation is refused with `unsupported_profile`. `details.unsatisfied` lists one actionable item per missing feature: `{ "profile": "execution", "feature", "reason": "dependency_not_selected" }`.
   - **Optional request.** An optional `execution/1` request without them is not selected. The same items appear in `unselected`, and execution operations are then `profile_not_negotiated`.
   - **Manifest unchanged.** `core.describe` keeps its accepted shape: `depends_on` names only `core`.
-  - **Deferred.** Machine-readable advertising of feature dependencies is an explicit M6 compatibility decision (matrix CMP-5). No incompatible manifest field is added before then.
+  - **Machine-readable dependencies.** `core.feature_dependencies` (CORE §4.3, M6-Q1) reports these Core features as a `profile` entry for `execution/1`, and `execution.claim_revalidation`'s dependency on `execution.context_revalidation` (§13.3) as a `feature` entry.
   - **Older participants.** A caller that does not request `execution/1` gets unchanged results. A provider without `execution/1` reports an optional request as `unknown_profile` in `unselected`, and refuses a required one as `unsupported_profile` (CMP-7).
 - A provider advertises `execution/1` and the optional features it implements (§12). A caller lists the features it requires; an unsupported required feature is refused at negotiation (CORE §4).
 - Every execution operation follows the Core command path (CORE §10): deduplication before authorization, authorization before capabilities, authority epoch and preconditions, then one owner transaction that commits the state change, its events and its effect records.
@@ -360,7 +360,7 @@ EXE-21, with EVIDENCE §11. A completion record may carry `outputs: [ { role, ev
 
 ### 13.3 Claim revalidation (`execution.claim_revalidation`, proposed M5)
 
-Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carry claims (CONTEXT §14). It requires `execution.context_revalidation`. Without it, bindings behave exactly as §13.1, and claim changes are not enforced by the executor: a caller that needs enforcement negotiates this feature as required.
+Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carry claims (CONTEXT §14). It requires `execution.context_revalidation`, and negotiation enforces that as a feature-triggered dependency (CORE §4.2): requested without it, `execution.claim_revalidation` is not selected (`dependency_not_selected`). Without the feature, bindings behave exactly as §13.1, and claim changes are not enforced by the executor: a caller that needs enforcement negotiates this feature as required.
 
 - **Reading.** For a binding with `fetch.context` submitted under the feature, the executor reads packet facts in a session that negotiated `context.claims` at the context provider.
 - **`packet.facts` gains two outcomes**, beside authority corrections:

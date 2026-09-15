@@ -446,7 +446,9 @@
       "decision-claim-read-unchecked",
       "queued-loss-passes-through-running",
       "queued-loss-observed-from-submission",
-      "freshness-boundary-inclusive"
+      "freshness-boundary-inclusive",
+      "feature-dependencies-omit-feature-trigger",
+      "feature-dependency-unenforced"
     ]
   }
 }

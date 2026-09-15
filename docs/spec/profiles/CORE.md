@@ -41,7 +41,7 @@ A retransmitted command keeps its `command_id` and content and gets a new `messa
 
 A session is one authenticated connection under the transport binding.
 
-1. **Before negotiation**, a provider MUST answer only `core.describe` and `core.negotiate` (and `core.authenticate`, §18). A socket session must also authenticate before `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
+1. **Before negotiation**, a provider MUST answer only `core.describe`, `core.feature_dependencies` (§4.3) and `core.negotiate` (and `core.authenticate`, §18). A socket session must also authenticate before `core.negotiate`. Any other known operation gets `negotiation_required`; an unknown one gets `method_not_found` (§10).
 2. **`core.negotiate` succeeds at most once per session.** A second call gets `already_negotiated`. To change the negotiated set, open a new session.
 3. **After negotiation**, an operation of a profile that was not selected gets `profile_not_negotiated`. This applies even when the provider supports that profile.
 4. **Session state is not durable.** Closing a session neither cancels nor confirms anything in flight. Callers reconcile by command identity after reconnecting ([STREAM](../bindings/STREAM.md)).
@@ -78,6 +78,10 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 - Optional profiles and features that cannot be selected are reported in `unselected` with a reason. They are not errors.
 - Include `core` implicitly; a caller cannot deselect it. A `core` entry is always treated as required, whatever its `required` flag.
 - An optional profile whose required feature is missing is not selected. Each missing feature is reported in `unselected` as `unknown_feature`; this is not a refusal.
+- **Dependencies (§4.3)** are applied after selection:
+  - **Profile-triggered.** A profile whose dependency is not selected is not selected. For each missing dependency the item is `{ profile, reason: "dependency_not_selected" }`, or `{ profile, feature: <missing dependency feature>, reason: "dependency_not_selected" }` for a missing feature. A required profile's items refuse the negotiation with `unsupported_profile`.
+  - **Feature-triggered** (M6-Q1). A requested feature whose dependency is not selected is itself not selected, and the item is `{ profile, feature: <the requested feature>, reason: "dependency_not_selected" }`. When the feature was required in a required profile, the negotiation is refused with `unsupported_required_feature`. When it was required in an optional profile, the profile is not selected. When it was optional, the item is reported in `unselected`.
+  - A dependency is applied only when its dependent profile or feature was requested. A caller that requests neither sees no dependency items.
 - A feature named under a profile it does not belong to is `unknown_feature` for the profile it was listed under.
 - The same profile listed twice is `invalid_envelope`.
 - `unsatisfied` lists only the items that caused the refusal.
@@ -87,6 +91,29 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 **Result:** the selected profiles with major version and features, `unselected` items, effective limits, and the current deduplication window.
 
 Unknown feature names in `optional_features` are ignored and reported as unselected. Unknown names in `required_features` are refused (CORE-3).
+
+### 4.3 `core.feature_dependencies` (query, M6-Q1)
+
+This reports, machine-readably, the in-session dependencies that negotiation enforces (matrix CMP-5). `core.describe` keeps its accepted shape.
+
+- **Payload** `{}`. **Result:** `{ dependencies: [ entry ] }`, where each entry is:
+
+  | Member | Meaning |
+  |---|---|
+  | `profile`, `major` | A dependent profile major the provider supports, as `core.describe` lists it |
+  | `trigger` | `{ kind: "profile" }`: the dependency applies whenever that profile major is selected. `{ kind: "feature", feature }`: it applies only when that feature of the profile is selected. |
+  | `requires` | A non-empty list of `{ profile, major, features }`. That profile major must be selected in the same session, together with every listed feature. An empty `features` list means the profile major alone is required. |
+
+- **What is listed.** Exactly the dependencies negotiation enforces within one session (§4.2), and nothing else.
+  - Every supported profile major other than `core` has one `profile` entry. It names `core/1` and the Core features that profile requires, possibly none.
+  - A `feature` entry follows for each feature with an enforced dependency.
+  - A protocol dependency on a separate provider is not a session dependency and is not listed. For example, Context cites Evidence artifacts, but the reader negotiates `evidence/1` wherever the reference points.
+- **Order.** Profiles in `core.describe` order. Within a profile, the `profile` entry first, then `feature` entries in `core.describe` feature order.
+- **When it may be called.** Before or after negotiation, beside `core.describe` (§3, §10 step 1). It belongs to base `core/1` and is not a feature. Authentication rules are unchanged: on a shared transport, it needs `core.authenticate` first (§18.2).
+- **Read-only.** It creates no command record, appends no event, and neither negotiates nor changes session state.
+- **Bounded.** The result depends only on the provider's manifest and fits the default 1 MiB frame.
+- **Advisory.** Negotiation stays authoritative. A consumer still requests every dependency it relies on, and the provider enforces them whether or not the query was called.
+- **Older providers** answer `method_not_found` (§10 step 1). The consumer then uses the dependencies stated in the profile documents it pinned and still requests them at negotiation. A fallback never drops or assumes a required feature.
 
 ## 5. Envelopes
 
@@ -232,7 +259,7 @@ A provider MUST apply these steps in order. The first failing step determines th
 
 | Step | Check | Error on failure |
 |---|---|---|
-| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe`, `core.negotiate` or `core.authenticate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
+| 1 | In this order, using the JSON-RPC `method`: operation known; session negotiated (unless the operation is `core.describe`, `core.feature_dependencies`, `core.negotiate` or `core.authenticate`); operation's profile selected | `method_not_found`, `negotiation_required`, `profile_not_negotiated` |
 | 2 | In this order: limits (§9: depth, array items, string bytes, payload bytes); method equals `operation`; closed objects and types; envelope semantics (`requires` entries unique and extension keys present, precondition rules, known-algorithm digest length) | `limit_exceeded`, `invalid_envelope` |
 | 3 | Every `requires` entry negotiated and understood, for queries as well as commands; if the operation belongs to a feature (such as `core.grants` or `core.events`), that feature is selected | `unsupported_required_feature` |
 | 4 | Digest algorithm supported (`sha512` only when `core.digest-sha512` was negotiated); `command_digest` matches the recomputed digest. `details.expected` is the provider's recomputed digest under the caller's algorithm. | `unsupported_digest_algorithm`, `digest_mismatch` |

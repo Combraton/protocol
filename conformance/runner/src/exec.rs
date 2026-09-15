@@ -136,6 +136,24 @@ fn base64_url_nopad(bytes: &[u8]) -> String {
 
 /// Whether a fixture applies to a participant (binding, profiles, features, test controls), and if not, why.
 pub fn applicable(fixture: &Value, descriptor: &Descriptor) -> Result<(), (Outcome, String)> {
+    // A pinned older participant runs only the fixtures written for it, and they run only there.
+    let pinned = descriptor.raw["pinned"].as_str();
+    match (fixture["requires_pinned"].as_str(), pinned) {
+        (Some(wanted), Some(have)) if wanted == have => {}
+        (Some(wanted), _) => {
+            return Err((
+                Outcome::Skipped,
+                format!("fixture targets the pinned participant {wanted}"),
+            ));
+        }
+        (None, Some(have)) => {
+            return Err((
+                Outcome::Skipped,
+                format!("pinned participant {have} runs only fixtures that target it"),
+            ));
+        }
+        (None, None) => {}
+    }
     if let Some(binding) = fixture["binding"].as_str()
         && binding != descriptor.binding
     {

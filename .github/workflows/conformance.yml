@@ -49,6 +49,25 @@ jobs:
       - name: Run suite against the independent Python implementation (built from documents only)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --out conformance/results/independent-python-core
+      - name: Build the accepted M5 release (6ed4727) for compatibility checks
+        id: pinned
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 conformance/scripts/build_pinned.py m5
+      - name: Older clients — the accepted M5 fixture set, unmodified, against the current reference provider (stdio)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-reference
+      - name: Older clients — the accepted M5 fixture set, unmodified, against the current reference provider (Unix socket)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/reference-provider-unix.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-reference-unix
+      - name: Older clients — the accepted M5 fixture set, unmodified, against the independent Python implementation
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/independent-python-core.json --fixtures target/pinned-m5/src/conformance/fixtures --out conformance/results/compat/m5-fixtures-independent
+      - name: Older provider — compatibility fixtures against the pinned M5 reference provider (stdio)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/pinned/m5-reference-provider.json --filter compat. --out conformance/results/compat/pinned-m5-provider
+      - name: Older provider — compatibility fixtures against the pinned M5 reference provider (Unix socket)
+        if: ${{ !cancelled() && steps.pinned.outcome == 'success' }}
+        run: ./target/debug/combraton-conformance run --participant conformance/participants/pinned/m5-reference-provider-unix.json --filter compat. --out conformance/results/compat/pinned-m5-provider-unix
       - name: Different OS user is refused on the Unix socket (root client through sudo)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 conformance/scripts/peer_user_check.py --require --out conformance/results/peer-user

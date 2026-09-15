@@ -22,7 +22,7 @@ use exec::{Context, Outcome, run_fixture};
 use participant::Descriptor;
 use schemas::Schemas;
 
-const USAGE: &str = "usage: combraton-conformance <self-test|check-fixtures|run|check-mutants> [--repo DIR] [--participant FILE] [--out DIR] [--filter SUBSTRING] [--mutant NAME]";
+const USAGE: &str = "usage: combraton-conformance <self-test|check-fixtures|run|check-mutants> [--repo DIR] [--participant FILE] [--out DIR] [--filter SUBSTRING] [--mutant NAME] [--fixtures DIR]";
 
 struct Options {
     command: String,
@@ -31,6 +31,8 @@ struct Options {
     out: Option<PathBuf>,
     filter: Option<String>,
     mutant: Option<String>,
+    /// Another fixture tree, for example one pinned at an accepted release, to run unmodified.
+    fixtures: Option<PathBuf>,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -43,6 +45,7 @@ fn parse_options() -> Result<Options, String> {
         out: None,
         filter: None,
         mutant: None,
+        fixtures: None,
     };
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -52,6 +55,7 @@ fn parse_options() -> Result<Options, String> {
             "--out" => options.out = Some(PathBuf::from(value()?)),
             "--filter" => options.filter = Some(value()?),
             "--mutant" => options.mutant = Some(value()?),
+            "--fixtures" => options.fixtures = Some(PathBuf::from(value()?)),
             other => return Err(format!("unexpected argument {other}\n{USAGE}")),
         }
     }
@@ -70,9 +74,9 @@ impl Fixture {
     }
 }
 
-fn load_fixtures(repo: &Path, filter: Option<&str>) -> Result<Vec<Fixture>, String> {
+fn load_fixtures(root: &Path, filter: Option<&str>) -> Result<Vec<Fixture>, String> {
     let mut paths = Vec::new();
-    let mut stack = vec![repo.join("conformance/fixtures")];
+    let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
             let path = entry.map_err(|e| e.to_string())?.path();
@@ -136,7 +140,7 @@ fn mixed_directive(pattern: &Value, path: String) -> Option<String> {
 }
 
 fn check_fixtures(options: &Options, schemas: &Schemas) -> Result<bool, String> {
-    let fixtures = load_fixtures(&options.repo, None)?;
+    let fixtures = load_fixtures(&options.repo.join("conformance/fixtures"), None)?;
     let known = matrix_ids(&options.repo)?;
     let mut known_mutants = BTreeSet::new();
     let mut known_barriers = BTreeSet::new();
@@ -407,7 +411,11 @@ fn real_main() -> Result<bool, String> {
         .as_ref()
         .ok_or("--participant is required")?;
     let descriptor = Descriptor::load(participant)?;
-    let fixtures = load_fixtures(&options.repo, options.filter.as_deref())?;
+    let fixture_root = options
+        .fixtures
+        .clone()
+        .unwrap_or_else(|| options.repo.join("conformance/fixtures"));
+    let fixtures = load_fixtures(&fixture_root, options.filter.as_deref())?;
     let out = options.out.clone().unwrap_or_else(|| {
         options
             .repo

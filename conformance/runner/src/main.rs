@@ -300,6 +300,7 @@ fn git_head(repo: &Path) -> Value {
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_suite(
     options: &Options,
     schemas: &Schemas,

@@ -379,6 +379,17 @@ class Store:
         self._set_meta("ev_seq", seq)
         return record
 
+    def event_position(self, etype: str, kind: str, sid: str, revision: int):
+        """``{epoch, sequence}`` of the retained event of this type that
+        recorded ``kind``/``sid`` at ``revision``, or None when it is no longer
+        retained (KNOWLEDGE 9)."""
+        for epoch, seq, body in self.db.execute("SELECT epoch, sequence, body FROM events ORDER BY epoch, sequence"):
+            event = V.loads(body)
+            if (event["type"] == etype and event["subject"]["kind"] == kind and event["subject"]["id"] == sid
+                    and event["revision"] == revision):
+                return {"epoch": epoch, "sequence": seq}
+        return None
+
     def event_at(self, epoch: int, seq: int):
         row = self.db.execute("SELECT body FROM events WHERE epoch = ? AND sequence = ?", (epoch, seq)).fetchone()
         return V.loads(row[0]) if row else None

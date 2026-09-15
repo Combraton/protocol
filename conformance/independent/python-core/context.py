@@ -28,6 +28,7 @@ import clock as C
 import envelope as E
 import evidence as EVD
 import grants as G
+import knowledge as K
 import valuedomain as V
 from envelope import Invalid, ptr
 from errors import ProtocolError, denied
@@ -37,6 +38,8 @@ JOB_KIND = "context.job"
 PACKET_KIND = "context.packet"
 PACKET_MEDIA_TYPE = "application/vnd.combraton.context-packet+json"
 PACKET_FORMAT = "combraton-context-packet/1"
+CLAIMS_PACKET_FORMAT = "combraton-context-packet/2"  # CONTEXT 14
+RELIANCE_RANK = {"reference": 0, "hypothesis": 1, "evidence": 2, "binding": 3}
 COMPILER = "combraton-independent-python-core"  # CONTEXT 12: names the implementation (H8-STEP8-COMPILER)
 DEFAULT_EXCERPT_BYTES = 4096  # CONTEXT 6
 OBLIGATION_FEATURES = {"advisory": "context.advisory", "required_before_start": "context.required_before_start",
@@ -109,7 +112,7 @@ def _validate_step(step, what: str) -> None:
     elif key == "section":
         def check():
             E.closed(val, w, ("section_id", "label", "content"),
-                     ("item_id", "citations", "authority_revision", "source"))
+                     ("item_id", "citations", "authority_revision", "source", "claim"))
             E.identifier(val["section_id"], ptr(w, "section_id"))
             if val["label"] not in LABELS:
                 raise Invalid(ptr(w, "label"), "unknown label")
@@ -125,6 +128,8 @@ def _validate_step(step, what: str) -> None:
                     EVD.reference(c["evidence"], ptr(cp, "evidence"))
             if "authority_revision" in val:
                 E.integer(val["authority_revision"], ptr(w, "authority_revision"))
+            if "claim" in val:
+                K.claim_reference(val["claim"], ptr(w, "claim"))
             if "source" in val:
                 s = E.closed(val["source"], ptr(w, "source"), ("repository", "path"), ("tree",))
                 E.string(s["repository"], ptr(ptr(w, "source"), "repository"), 1, 128)
@@ -182,7 +187,7 @@ def _validate_step(step, what: str) -> None:
 def parse_context_config(raw) -> dict:
     if not isinstance(raw, dict):
         _fail("context must be an object")
-    for member in ("executor", "evidence_provider"):
+    for member in ("executor", "evidence_provider", "knowledge_provider"):
         if member in raw:
             _fail(f"context.{member} needs the socket binding; this provider is stdio only")
     unknown = set(raw) - {"scripts", "default_script"}
@@ -367,6 +372,9 @@ class Context:
             EVD.reference(check["evidence"], ptr(cp, "evidence"))
         elif kind == "authority_content_included":
             E.closed(check, cp, ("kind",))
+        elif kind == "claim_included":
+            E.closed(check, cp, ("kind", "claim"))
+            K.claim_reference(check["claim"], ptr(cp, "claim"))
         else:
             raise Invalid(ptr(cp, "kind"), "unknown check kind")
 
@@ -379,6 +387,10 @@ class Context:
             feature = OBLIGATION_FEATURES[item["obligation"]]
             if feature not in selected and feature not in missing:
                 missing.append(feature)
+            # CONTEXT 14: claim_included needs context.claims (HM5-CLAIMS-FEATURE-ORDER).
+            if (item["check"]["kind"] == "claim_included" and "context.claims" not in selected
+                    and "context.claims" not in missing):
+                missing.append("context.claims")
         return missing
 
     def v_cancel(self, env, method, features) -> None:
@@ -473,6 +485,7 @@ class Context:
         rec = {"consumer": payload["consumer"], "basis": payload["basis"], "items": payload["items"],
                "limits": payload["limits"], "authority_content": payload.get("authority_content", []),
                "principal": self.p.principal, "updates": "context.updates" in features,
+               "claims": "context.claims" in features,
                "submitted_at": self.now(), "packets": []}
         if "fallback" in payload or advisory:
             rec["fallback"] = payload.get("fallback", "proceed_with_gap")  # H-CTX-SUBMIT-VALIDATION
@@ -584,6 +597,14 @@ class Context:
         facts["invalidated_items"] = [
             {"item_id": a["item_id"], "authority_revision": current_authority[a["item_id"]]}
             for a in facts["authority"] if current_authority.get(a["item_id"], -1) > a["authority_revision"]]
+        if "context.claims" in self.p.session.features():
+            changes, invalidated, unverified = self.claim_reads(rec, facts)
+            facts["invalidated_items"] += invalidated
+            facts["claim_changes"] = changes
+            facts["unverified_items"] = unverified
+        else:
+            # CONTEXT 14: sessions without context.claims see no claim members.
+            facts["sections"] = [{k: v for k, v in sec.items() if k != "claim"} for sec in facts["sections"]]
         aid = pk["reference"]["artifact"]["artifact"]["id"]
         data = self.store.blob(aid) or b""
         size = self.evidence.load(aid)[1]["descriptor"]["size"]
@@ -664,24 +685,47 @@ class Context:
         required = {iid for iid, ob in obligation.items() if ob != "advisory"}
         current_authority = self._current_authority(rec, job)
         omitted_sections = {o["section_id"] for o in job["omissions"] if "section_id" in o}
-        candidates = []
+        claims = rec.get("claims", False)
+        candidates, claim_omissions, claim_failures = [], [], []
         for s in job["sections"]:
             if s["section_id"] in omitted_sections:
                 continue
             iid = s.get("item_id")
             historical = (iid in job["corrections"] and "authority_revision" in s
                           and s["authority_revision"] < current_authority[iid])  # H-CTX-CORRECTION
-            candidates.append((s, historical))
+            snap = None
+            label = s["label"]
+            if claims and "claim" in s:
+                # CONTEXT 14: a claim is read, and its digest recomputed, when the packet is prepared.
+                snap, failure = self.claim_view(rec, s["claim"])
+                if snap is None:
+                    omission = {"section_id": s["section_id"], "reason": "unavailable"}
+                    if iid is not None:
+                        omission["item_id"] = iid
+                    claim_omissions.append(omission)
+                    claim_failures.append((s, failure))
+                    continue
+                if snap["applicability"]["result"] == "invalid_for_target":
+                    historical = True  # only invalid_for_target makes a claim section stale
+                rel = snap["reliance"]
+                if label == "binding" and not (rel["state"] == "accepted_for_use"
+                                               and rel.get("permitted_use") == "binding"):
+                    label = "hypothesis"  # labels cannot promote a claim (HM5-LABEL-DEMOTION)
+            if historical:
+                label = "stale"
+            candidates.append((s, historical, label, snap))
         remaining = rec["limits"]["output_capacity"]["amount"] - sum(
-            _utf8_len(s["content"]) for s, _ in candidates if s.get("item_id") in required)
-        included, omissions, capacity_items = [], [dict(o) for o in job["omissions"]], set()
-        for s, historical in candidates:
+            _utf8_len(c[0]["content"]) for c in candidates if c[0].get("item_id") in required)
+        included, capacity_items = [], set()
+        omissions = [dict(o) for o in job["omissions"]] + claim_omissions
+        for candidate in candidates:
+            s = candidate[0]
             size = _utf8_len(s["content"])
             if s.get("item_id") in required:
-                included.append((s, historical))
+                included.append(candidate)
             elif size <= remaining:
                 remaining -= size
-                included.append((s, historical))
+                included.append(candidate)
             else:
                 omission = {"section_id": s["section_id"], "reason": "output_capacity"}
                 if "item_id" in s:
@@ -691,8 +735,21 @@ class Context:
         results = []
         for item in items:
             iid = item["item_id"]
-            if any(s.get("item_id") == iid and not h and self._satisfies(item, s, current_authority)
-                   for s, h in included):
+            if claims and item["check"]["kind"] == "claim_included":
+                ref = item["check"]["claim"]
+                carried = next((c for c in included if c[0].get("item_id") == iid and c[3] is not None
+                                and K.Knowledge.same_revision(c[0]["claim"], ref)), None)
+                if carried is not None:
+                    outcome = self.claim_item_outcome(item, carried[3])
+                    results.append(self._result(item, outcome is None, outcome))
+                    continue
+                failure = next((f for sec, f in claim_failures if sec.get("item_id") == iid
+                                and K.Knowledge.same_revision(sec["claim"], ref)), None)
+                if failure is not None:
+                    results.append(self._result(item, False, failure))
+                    continue
+            elif any(c[0].get("item_id") == iid and not c[1] and self._satisfies(item, c[0], current_authority)
+                     for c in included):
                 results.append(self._result(item, True, None))
                 continue
             omission_reason = next((o["reason"] for o in job["omissions"] if o.get("item_id") == iid), None)
@@ -714,6 +771,102 @@ class Context:
         else:
             state = "ready"
         return {"included": included, "omissions": omissions, "items": results, "state": state}
+
+    # ------------------------------------------------ CONTEXT 14 claims
+    @staticmethod
+    def claim_target(basis: dict) -> dict:
+        """The Knowledge target equal to a packet's basis (HM5-PACKET-BASIS-TARGET):
+        each repository's ID, tree and non-null dirty snapshot, environment,
+        build and completeness. ``workspace`` and ``configuration`` have no
+        Knowledge counterpart."""
+        repos = []
+        for r in basis["repositories"]:
+            entry = {"id": r["id"], "tree": r["tree"]}
+            if r.get("dirty") is not None:
+                entry["dirty"] = r["dirty"]
+            repos.append(entry)
+        target = {"repositories": repos}
+        for member in ("environment", "build"):
+            if member in basis:
+                target[member] = basis[member]
+        target["completeness"] = basis["completeness"]
+        return target
+
+    def claim_view(self, rec: dict, ref: dict, keep_current: bool = False):
+        """The claim snapshot read now from this provider's own knowledge
+        store, or ``(None, reason)``."""
+        snap, reason = self.p.knowledge.snapshot(ref, self.claim_target(rec["basis"]))
+        if snap is not None and not keep_current:
+            snap = {k: v for k, v in snap.items() if k != "current_revision"}
+        return snap, reason
+
+    @staticmethod
+    def claim_item_outcome(item: dict, snap: dict):
+        """CONTEXT 14 "What a claim section can satisfy": None when satisfied,
+        otherwise the unmet reason."""
+        rel = snap["reliance"]
+        if item["reliance"] in ("binding", "evidence"):
+            if (rel["state"] != "accepted_for_use"
+                    or RELIANCE_RANK[rel.get("permitted_use", "reference")] < RELIANCE_RANK[item["reliance"]]):
+                return "not_accepted"
+            result = snap["applicability"]["result"]
+            if result == "invalid_for_target":
+                return "invalid_for_target"
+            if result != "applicable":
+                return "applicability_not_established"
+            return None
+        return "not_accepted" if rel["state"] == "rejected" else None
+
+    def claim_reads(self, rec: dict, facts: dict):
+        """CONTEXT 14 "At the read": claim_changes, claim invalidations and
+        unverified items for one published revision."""
+        views, changes = {}, []
+        for sec in facts["sections"]:
+            if "claim" not in sec:
+                continue
+            old = sec["claim"]
+            ref = old["reference"]
+            snap, reason = self.claim_view(rec, ref, keep_current=True)
+            views[sec["section_id"]] = (snap, reason)
+            if snap is None:
+                changes.append({"section_id": sec["section_id"], "claim": ref, "change": "unavailable"})
+                continue
+            kinds = []
+            if V.canonical(old["reliance"]) != V.canonical(snap["reliance"]):
+                kinds.append("reliance_changed")
+            if V.canonical(old["applicability"]) != V.canonical(snap["applicability"]):
+                kinds.append("applicability_changed")
+            known = {c["conflict"] for c in old["conflicts"]}
+            if any(c["conflict"] not in known for c in snap["conflicts"]):
+                kinds.append("conflict_opened")
+            if snap["current_revision"] > ref["revision"]:
+                kinds.append("lineage_revised")
+            changes.extend({"section_id": sec["section_id"], "claim": ref, "change": k} for k in kinds)
+        invalidated, unverified = [], []
+        published = {i["item_id"]: i["result"] for i in facts["items"]}
+        for item in rec["items"]:
+            if item["obligation"] == "advisory" or item["check"]["kind"] != "claim_included":
+                continue
+            if published.get(item["item_id"]) != "satisfied":
+                continue
+            ref = item["check"]["claim"]
+            sec = next((x for x in facts["sections"] if x.get("item_id") == item["item_id"] and "claim" in x
+                        and K.Knowledge.same_revision(x["claim"]["reference"], ref)), None)
+            if sec is None:
+                continue
+            snap, reason = views[sec["section_id"]]
+            entry = {"item_id": item["item_id"], "claim": ref}
+            if snap is None:
+                unverified.append(dict(entry, reason=reason))
+                continue
+            outcome = self.claim_item_outcome(item, snap)
+            if outcome == "not_accepted":
+                invalidated.append(dict(entry, reason="permitted_use_lost"))
+            elif outcome == "invalid_for_target":
+                invalidated.append(dict(entry, reason="invalid_for_target"))
+            elif outcome == "applicability_not_established":
+                unverified.append(dict(entry, reason="applicability_not_established"))
+        return changes, invalidated, unverified
 
     def _advisory_waits(self, rec: dict, job: dict) -> bool:
         """CONTEXT 12: a publish whose advisory items are unsatisfied under
@@ -737,8 +890,7 @@ class Context:
                 if c["citation_id"] not in seen_citations:
                     seen_citations.add(c["citation_id"])
                     citations.append({"citation_id": c["citation_id"], "evidence": c["evidence"]})
-        for s, historical in ev["included"]:
-            label = "stale" if historical else s["label"]
+        for s, historical, label, snap in ev["included"]:
             cites = [c["citation_id"] for c in s.get("citations", [])]
             body = {"section_id": s["section_id"]}
             fact = {"section_id": s["section_id"]}
@@ -747,6 +899,9 @@ class Context:
                 fact["item_id"] = s["item_id"]
             body.update(label=label, historical=historical, content=s["content"], citations=cites)
             fact.update(label=label, length=_utf8_len(s["content"]), citations=cites, historical=historical)
+            if snap is not None:
+                body["claim"] = snap
+                fact["claim"] = snap
             sections_bytes.append(body)
             sections_facts.append(fact)
             inclusions.append(s["section_id"])
@@ -765,7 +920,8 @@ class Context:
         authority = [{"item_id": e["item_id"], "authority_revision": current_authority[e["item_id"]],
                       "evidence": e["evidence"], "coverage": list(job["coverage"])} for e in rec["authority_content"]]
         applicability = {"basis": rec["basis"], "conditions": list(job["conditions"])}
-        content = {"format": PACKET_FORMAT, "request": subject, "revision": n}
+        content = {"format": CLAIMS_PACKET_FORMAT if rec.get("claims") else PACKET_FORMAT, "request": subject,
+                   "revision": n}
         if n > 1:
             content["supersedes"] = {"revision": n - 1}
         content.update(sections=sections_bytes, items=ev["items"], coverage=list(job["coverage"]),

@@ -35,7 +35,9 @@ import envelope as E  # noqa: E402
 import events as EV  # noqa: E402
 import execution_envelope as XE  # noqa: E402
 import grants as G  # noqa: E402
+import knowledge as K  # noqa: E402
 import valuedomain as V  # noqa: E402
+import verification as VRF  # noqa: E402
 from errors import ProtocolError, denied  # noqa: E402
 from executor import Executor, ExecutorConfigError, parse_executor_config  # noqa: E402
 from state import Store  # noqa: E402
@@ -49,20 +51,25 @@ EXECUTION_FEATURES = ["execution.steering", "execution.actions", "execution.cont
                       "execution.output", "execution.context_revalidation"]
 EVIDENCE_FEATURES = ["evidence.manifests", "evidence.retention_control", "evidence.work_binding"]
 CONTEXT_FEATURES = ["context.advisory", "context.required_before_start", "context.required_before_transition",
-                    "context.shared_jobs", "context.updates", "context.expand"]
+                    "context.shared_jobs", "context.updates", "context.expand", "context.claims"]
+VERIFICATION_FEATURES = ["verification.jobs", "verification.record"]
 # EXECUTION 1: the Core features execution/1 requires. Published only in that
 # document; core.describe keeps depends_on: ["core"].
 EXECUTION_REQUIRED_CORE_FEATURES = ["core.events", "core.capabilities", "core.effects"]
 # EVIDENCE 1 and CONTEXT 1: the Core features those profiles require
 # (H-EVD-NEG, H-CTX-NEG).
 REQUIRED_CORE_FEATURES = {"execution": EXECUTION_REQUIRED_CORE_FEATURES, "evidence": ["core.events"],
-                          "context": ["core.events"]}
+                          "context": ["core.events"],
+                          # KNOWLEDGE 1 and VERIFICATION 1 (M5).
+                          "knowledge": ["core.events"], "verification": ["core.events", "core.capabilities"]}
 SUPPORTED_PROFILES = {
     "core": {"majors": [1], "features": CORE_FEATURES, "depends_on": []},
     "core-test": {"majors": [1], "features": [], "depends_on": ["core"]},
     "execution": {"majors": [1], "features": EXECUTION_FEATURES, "depends_on": ["core"]},
     "evidence": {"majors": [1], "features": EVIDENCE_FEATURES, "depends_on": ["core"]},
     "context": {"majors": [1], "features": CONTEXT_FEATURES, "depends_on": ["core"]},
+    "knowledge": {"majors": [1], "features": [], "depends_on": ["core"]},
+    "verification": {"majors": [1], "features": VERIFICATION_FEATURES, "depends_on": ["core"]},
 }
 IDLE_RECHECK_SECONDS = 0.1  # real time, never the virtual clock (decision 007)
 DECLARED_UNSUPPORTED = [
@@ -96,7 +103,10 @@ AUTHORITY_SCOPE = "core-test"
 PROFILE_READ_RIGHTS = {"core-test.subject": "core-test.read", "core-test.authority": "core-test.read",
                        XE.EXECUTION_KIND: "execution.read", XE.CONTROLLER_KIND: "execution.read",
                        EVD.ARTIFACT_KIND: "evidence.read", CTX.REQUEST_KIND: "context.read",
-                       CTX.PACKET_KIND: "context.packet.read"}
+                       CTX.PACKET_KIND: "context.packet.read",
+                       # KNOWLEDGE 10 and VERIFICATION 8: events of covered subjects.
+                       **{kind: "knowledge.read" for kind in K.KINDS},
+                       VRF.JOB_KIND: "verification.read", VRF.RECEIPT_KIND: "verification.read"}
 ALL_EXECUTIONS = {"kind": XE.EXECUTION_KIND, "id": None}  # coverage needs a kind-wide resource
 CAPABILITIES_KIND = "core.capabilities"
 NOTIFY_CHUNK = 100
@@ -118,6 +128,8 @@ RETRY = {
     # CORE 12, EVIDENCE 6 (M4).
     "upload_offset_mismatch": "after_reconcile", "upload_size_exceeded": "no", "upload_incomplete": "after_reconcile",
     "content_digest_mismatch": "no", "artifact_digest_mismatch": "no", "hold_active": "after_reconcile",
+    # CORE 12 (proposed M5).
+    "claims_not_comparable": "no", "contract_unavailable": "after_reconcile",
 }
 RPC_CODE = {
     "parse_error": -32700, "invalid_utf8": -32700, "frame_too_large": -32010,
@@ -148,7 +160,8 @@ class ConfigError(Exception):
 
 
 CONFIG_KEYS = {"format", "principal", "authority_principals", "provider_id", "limits", "dedupe",
-               "events", "capabilities", "clock", "executor", "faults", "test_barriers", "evidence_store", "context"}
+               "events", "capabilities", "clock", "executor", "faults", "test_barriers", "evidence_store", "context",
+               "knowledge", "verifier"}
 
 
 def _short_string(value, what: str) -> str:
@@ -248,7 +261,9 @@ def load_config(path: str) -> dict:
     try:
         evidence_store = EVD.parse_store_config(cfg.get("evidence_store", {}))
         context = CTX.parse_context_config(cfg.get("context", {}))
-    except (EVD.EvidenceConfigError, CTX.ContextConfigError) as exc:
+        knowledge = K.parse_knowledge_config(cfg.get("knowledge", {}))
+        verifier = VRF.parse_verifier_config(cfg.get("verifier", {}))
+    except (EVD.EvidenceConfigError, CTX.ContextConfigError, K.KnowledgeConfigError, VRF.VerifierConfigError) as exc:
         raise ConfigError(str(exc)) from None
     except (TypeError, AttributeError, ValueError) as exc:
         raise ConfigError(f"evidence or context configuration is malformed: {exc!r}") from None
@@ -292,6 +307,8 @@ def load_config(path: str) -> dict:
         "executor": executor,
         "evidence_store": evidence_store,
         "context": context,
+        "knowledge": knowledge,
+        "verifier": verifier,
         "faults": parsed_faults,
     }
 
@@ -395,12 +412,16 @@ class Provider:
         self.executor = Executor(self, config["executor"])
         self.evidence = EVD.Evidence(self, config["evidence_store"])
         self.context = CTX.Context(self, config["context"])
+        self.knowledge = K.Knowledge(self, config["knowledge"])
+        self.verification = VRF.Verification(self, config["verifier"])
         self.faults = {kind: dict(entries) for kind, entries in config["faults"].items()}
         # One lock serializes request processing and the idle re-check.
         self.lock = threading.RLock()
         x = self.executor
         ev = self.evidence
         cx = self.context
+        kn = self.knowledge
+        vf = self.verification
         cv = _core_validator
         self.ops = {
             # operation: (profile, feature, kind, validator, handler)
@@ -454,6 +475,28 @@ class Provider:
             "context.request.inspect": ("context", None, "query", cx.v_request_inspect, cx.op_request_inspect),
             "context.packet.inspect": ("context", None, "query", cx.v_packet_inspect, cx.op_packet_inspect),
             "context.expand": ("context", "context.expand", "query", cx.v_expand, cx.op_expand),
+            # KNOWLEDGE 3-9
+            "knowledge.claim.propose": ("knowledge", None, "command", kn.v_propose, kn.op_propose),
+            "knowledge.claim.revise": ("knowledge", None, "command", kn.v_revise, kn.op_revise),
+            "knowledge.claim.inspect": ("knowledge", None, "query", kn.v_claim_query, kn.op_inspect),
+            "knowledge.claim.history": ("knowledge", None, "query", kn.v_claim_query, kn.op_history),
+            "knowledge.authority.bind": ("knowledge", None, "command", kn.v_bind, kn.op_bind),
+            "knowledge.authority.transfer": ("knowledge", None, "command", kn.v_bind, kn.op_bind),
+            "knowledge.authority.get": ("knowledge", None, "query", kn.v_authority_get, kn.op_authority_get),
+            "knowledge.decision.record": ("knowledge", None, "command", kn.v_decision, kn.op_decision),
+            "knowledge.conflict.open": ("knowledge", None, "command", kn.v_open, kn.op_open),
+            "knowledge.conflict.resolve": ("knowledge", None, "command", kn.v_resolve, kn.op_resolve),
+            "knowledge.applicability.evaluate": ("knowledge", None, "command", kn.v_evaluate, kn.op_evaluate),
+            # VERIFICATION 4, 5, 7
+            "verification.evaluate_contract": ("verification", "verification.jobs", "command", vf.v_evaluate,
+                                               vf.op_evaluate),
+            "verification.job.inspect": ("verification", "verification.jobs", "query", vf.v_id_query("job"),
+                                         vf.op_job_inspect),
+            "verification.receipt.record": ("verification", "verification.record", "command", vf.v_record,
+                                            vf.op_record),
+            "verification.receipt.inspect": ("verification", None, "query", vf.v_id_query("receipt"),
+                                             vf.op_receipt_inspect),
+            "verification.receipt.assess": ("verification", None, "query", vf.v_assess, vf.op_assess),
         }
 
     # ------------------------------------------------------------- clock
@@ -502,6 +545,7 @@ class Provider:
             progressed = self.executor.tick(allow_crash=allow_crash)
             progressed = self.evidence.tick() or progressed
             progressed = self.context.tick() or progressed
+            progressed = self.verification.tick() or progressed
             if not progressed:
                 break
             progressed_any = True
@@ -782,6 +826,10 @@ class Provider:
             return self.evidence.authorize(method, env)
         if method.startswith("context."):
             return self.context.authorize(method, env)
+        if method.startswith("knowledge."):
+            return self.knowledge.authorize(method, env)
+        if method.startswith("verification."):
+            return self.verification.authorize(method, env)
         if method == "core-test.subject.put":
             needs = [("core-test.write", env["subject"])]
             needs += [("core-test.read", p["subject"]) for p in env["preconditions"] if p["subject"] != env["subject"]]
@@ -1366,7 +1414,8 @@ def main(argv: list[str]) -> int:
     # window, stream epoch, event retention, capability snapshot.
     store.apply_generation_config(config["advance"], config["retain"])
     store.apply_event_config(config["new_epoch"], config["unvouched_last"], config["retain_last"])
-    predicates = capability_predicates(config, provider.executor.adapter_predicates())
+    predicates = capability_predicates(config, provider.executor.adapter_predicates()
+                                       + provider.verification.predicates())
 
     def capability_event(revision: int) -> dict:
         # CORE 17.3: provider-origin, so no operation_ref or command_id.

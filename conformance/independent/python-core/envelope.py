@@ -347,9 +347,30 @@ def resource(v, path: str) -> dict:
     return v
 
 
+# CORE 15.3 "Constraints": the constraint kinds this provider implements, and
+# the feature each needs in the issuing session (H8-CONSTRAINTS).
+CONSTRAINT_FEATURES = {"evidence.work_binding": "evidence.work_binding"}
+
+
+def grant_constraints(v, path: str) -> list:
+    constraints = array(v, path, max_items=8, unique=True)
+    for idx, c in enumerate(constraints):
+        p = ptr(path, idx)
+        if not isinstance(c, dict):
+            raise Invalid(p, "must be an object")
+        if "kind" not in c:
+            raise Invalid(ptr(p, "kind"), "required field missing")
+        dotted_name(c["kind"], ptr(p, "kind"), "constraint kind")
+        if c["kind"] not in CONSTRAINT_FEATURES:
+            raise Invalid(ptr(p, "kind"), "a constraint kind this provider does not implement")
+        closed(c, p, ("kind", "work"))
+        subject(c["work"], ptr(p, "work"))
+    return constraints
+
+
 def grant_terms(v, path: str) -> dict:
     closed(v, path, ("holder", "audience", "rights", "resources", "delegation"),
-           ("expires_at", "authority_binding", "parent"))
+           ("expires_at", "authority_binding", "parent", "constraints"))
     identifier(v["holder"], ptr(path, "holder"))
     identifier(v["audience"], ptr(path, "audience"))
     rights = array(v["rights"], ptr(path, "rights"), 1, 32, unique=True)
@@ -370,6 +391,8 @@ def grant_terms(v, path: str) -> dict:
     integer(d["max_depth"], ptr(ptr(path, "delegation"), "max_depth"), 0, 16)
     if "parent" in v:
         identifier(v["parent"], ptr(path, "parent"))
+    if "constraints" in v:
+        grant_constraints(v["constraints"], ptr(path, "constraints"))
     return v
 
 

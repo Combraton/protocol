@@ -50,7 +50,8 @@
       "context.required_before_transition",
       "context.shared_jobs",
       "context.updates",
-      "context.expand"
+      "context.expand",
+      "evidence.work_binding"
     ],
     "test_controls": [
       "clock.file",

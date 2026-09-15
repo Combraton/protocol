@@ -682,6 +682,15 @@
             "unsupported",
             "unchecked"
           ]
+        },
+        "reason": {
+          "enum": [
+            "self_reference",
+            "remote_dependency",
+            "unresolved",
+            "not_evaluated",
+            "not_established"
+          ]
         }
       },
       "unevaluatedProperties": false

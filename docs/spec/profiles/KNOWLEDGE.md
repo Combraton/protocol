@@ -35,7 +35,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 
 - **Revisions are immutable.** A revision's record never changes once proposed. Supersession, rejection, challenge and corrected validity are later records; they never edit the revision (KNW-1, KNW-8).
 - **References grant nothing.** Possessing a claim reference authorizes no read, as for evidence.
-- **Provider-qualified references.** Every reference to a claim or artifact names its provider. A digest alone never identifies a claim, an artifact or its provenance.
+- **Provider-qualified references.** Every reference to a claim or artifact names its provider. A digest alone never identifies a claim, an artifact or its provenance. A command naming a claim revision under another provider (a decision, a conflict, an evaluation) gets `not_found`: that revision is not held here, even when a local claim has the same ID and revision.
 
 ## 3. Claim revisions (M5-Q1)
 
@@ -202,12 +202,26 @@ So "staging uses 5 workers" and "production uses 3 workers" are not comparable (
 - `missing_anchor` when the target lacks the repository, snapshot or environment the condition names;
 - `unsupported` when the evaluator does not implement that condition kind.
 
-Each dependency gets one finding from the latest evaluation of that exact revision for an equal target (canonical JSON):
+Each dependency resolves only as an **exact local reference**. It resolves when it names this provider, and a revision this provider holds with exactly its claim ID, revision and digest. It then gets its finding from the latest evaluation recorded for that exact reference (provider, claim, revision and digest) and a target equal to this one (canonical JSON):
 - `match` if that evaluation is `applicable`;
 - `mismatch` if it is `invalid_for_target`;
-- `unchecked` if it is `needs_check` or `unknown`, if no such evaluation exists, or if the dependency names this revision itself.
+- `unchecked`, with `reason`, in every other case:
 
-Dependencies name exact digests, so a revision can never depend on itself or on a later revision whose digest did not exist when it was proposed. Digest-bound dependencies cannot form a cycle, so none is ever used as support for itself.
+| `reason` | When |
+|---|---|
+| `self_reference` | The dependency names the evaluated revision's own claim ID and revision, whatever its digest |
+| `remote_dependency` | The dependency names another provider. This profile defines no cross-provider dependency evaluation, and the provider never substitutes an evaluation of a local revision with the same claim ID. |
+| `unresolved` | No revision with that claim ID, revision and digest exists here. This covers malformed or guessed references, and references to revisions proposed later. |
+| `not_evaluated` | The reference resolves, but no evaluation of it exists for an equal target |
+| `not_established` | The latest such evaluation is `needs_check` or `unknown` |
+
+An evaluation of a different digest, provider, revision or target never satisfies a dependency.
+
+**Validation assumptions.**
+- **Why content-addressed cycles are infeasible.** A revision's digest is SHA-256 over a record that includes its dependencies' digests. A dependency on itself, directly or through other revisions, would need the digest of a record that includes that same digest. Under the preimage and collision resistance of SHA-256, such a cycle cannot feasibly be built.
+- **What that does not guarantee.** It says nothing about whether an incoming reference is valid. Producers may name any provider, claim, revision and digest. Propose and revise do not resolve dependencies, so a guessed, malformed, remote, future or self-referential reference is accepted as written.
+- **What the evaluator does instead.** It relies on exact resolution and never on hash properties. Anything it cannot resolve stays `unchecked`, so the revision is at best `needs_check`. No unrelated or cached evaluation can make such a dependency count as a match.
+- **No cycle detection.** The profile needs no general cycle detection: a supported case that could form a cycle would have to resolve by exact digest, and building one is infeasible.
 
 **Result.** The first rule that applies wins:
 
@@ -215,11 +229,11 @@ Dependencies name exact digests, so a revision can never depend on itself or on 
 |---|---|---|
 | 1 | Any `mismatch` | `invalid_for_target`: an observed relevant mismatch settles it, whatever else is incomplete |
 | 2 | Any `missing_anchor` or `unsupported` | `unknown`: this evaluator cannot settle it against this target |
-| 3 | Any `unchecked` | `needs_check`: the anchors exist, and checking the named dependencies could settle it |
+| 3 | Any `unchecked` | `needs_check`: the conditions it could observe match, but a dependency is not established; its `reason` says why |
 | 4 | No conditions and no dependencies | `unknown`: nothing checkable was declared |
 | 5 | Otherwise (every finding `match`) | `applicable` |
 
-The evaluation records `{ claim, target, evaluator, result, findings: [ { condition_id?, dependency?, finding } ], supersedes_evaluation }`, where `supersedes_evaluation` is the previous latest evaluation of the same revision for an equal target, or `null`.
+The evaluation records `{ claim, target, evaluator, result, findings: [ { condition_id?, dependency?, finding, reason? } ], supersedes_evaluation }`, where `supersedes_evaluation` is the previous latest evaluation of the same revision for an equal target, or `null`.
 
 - Incomplete checks never yield `applicable`. An unavailable input never compares equal to an earlier one.
 - `needs_check` and `unknown` mean "not established", not "stale" or "historical". Readers, including context packets (CONTEXT §14), MUST keep them distinct from `invalid_for_target`.

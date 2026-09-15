@@ -5,6 +5,22 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "dependency-digest-ignored",
+        "resolves a dependency by claim and revision whatever its digest",
+    ),
+    (
+        "dependency-provider-ignored",
+        "resolves a dependency naming another provider against this provider's claims",
+    ),
+    (
+        "missing-dependency-satisfied",
+        "treats an unresolved dependency as a match",
+    ),
+    (
+        "reference-provider-unchecked",
+        "accepts a claim reference naming another provider as a local revision",
+    ),
+    (
         "dirty-snapshot-as-tree",
         "treats a dirty-snapshot condition as matching whenever the repository is present",
     ),

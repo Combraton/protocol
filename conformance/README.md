@@ -47,7 +47,7 @@ A fixture is a JSON file conforming to `schemas/fixture.schema.json`. The common
 
 | Step | Effect |
 |---|---|
-| `start`, `stop` | Launch the provider (optionally with configuration overrides, which may use `$var` like `start_participant`); end its input and require it to close and exit |
+| `start`, `stop` | Launch the provider (optionally with configuration overrides, which may use `$var` like `start_participant`); end its input and require it to close and exit. Substitution is a runner feature for test environment only. It happens before the merged configuration is validated against `conformance/schemas/launch-config.schema.json`, and nothing substituted reaches the protocol except through the provider's own launch configuration. |
 | `negotiate`, `describe` | Core session steps. Negotiation stores `negotiation` and `generation` variables. |
 | `command`, `query` | Build a Core envelope with defaults. Use `set` and `remove` to override fields. The command digest is computed unless `digest` gives a literal. |
 | `request`, `notify`, `raw` | Send an arbitrary request, a notification, or raw, padded or unterminated bytes |

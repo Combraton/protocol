@@ -202,12 +202,23 @@ fn same_revision(a: &Value, b: &Value) -> bool {
     a["claim"] == b["claim"] && a["revision"] == b["revision"]
 }
 
-/// Resolve a reference: `Ok(entry)`, or the refusal for a missing revision or a digest mismatch.
+/// Exact reference identity: provider, claim, revision and digest (KNOWLEDGE section 2).
+fn same_reference(a: &Value, b: &Value) -> bool {
+    same_revision(a, b) && a["provider"] == b["provider"] && a["digest"] == b["digest"]
+}
+
+/// Resolve a reference: `Ok(entry)`, or the refusal for a revision this provider does not hold
+/// (another provider, or no such claim and revision) or a digest mismatch.
 fn resolve(
     tx: &Transaction,
     reference: &Value,
+    provider_id: &str,
     path: &str,
+    mutants: &Mutants,
 ) -> rusqlite::Result<Result<Value, Refusal>> {
+    if reference["provider"] != provider_id && !mutants.on("reference-provider-unchecked") {
+        return Ok(Err(("not_found", json!({}))));
+    }
     let claim = reference["claim"].as_str().unwrap_or_default();
     let revision = reference["revision"].as_i64().unwrap_or(0);
     let Some(entry) = revision_entry(tx, claim, revision)? else {
@@ -313,7 +324,7 @@ fn latest_decision(
         None
     };
     for (id, decision) in all(tx, DECISION)? {
-        if !same_revision(&decision["claim"], reference) {
+        if !same_reference(&decision["claim"], reference) {
             continue;
         }
         if let Some(epoch) = &current_epoch
@@ -584,16 +595,23 @@ fn availability(
 // ---------------------------------------------------------------------------------------------
 // Applicability (KNOWLEDGE section 8).
 
+/// The latest evaluation of exactly `reference` (provider, claim, revision and digest) for a target
+/// equal to `target`.
 fn latest_evaluation(
     tx: &Transaction,
     reference: &Value,
     target: &Value,
+    mutants: &Mutants,
 ) -> rusqlite::Result<Option<(String, Value)>> {
     let mut latest = None;
     for (id, evaluation) in all(tx, EVALUATION)? {
-        if same_revision(&evaluation["claim"], reference)
-            && canonical_eq(&evaluation["target"], target)
-        {
+        let recorded = &evaluation["claim"];
+        let identity = same_revision(recorded, reference)
+            && (recorded["digest"] == reference["digest"]
+                || mutants.on("dependency-digest-ignored"))
+            && (recorded["provider"] == reference["provider"]
+                || mutants.on("dependency-provider-ignored"));
+        if identity && canonical_eq(&evaluation["target"], target) {
             latest = Some((id, evaluation));
         }
     }
@@ -606,6 +624,7 @@ pub fn evaluate(
     record: &Value,
     target: &Value,
     config: &Value,
+    provider_id: &str,
     mutants: &Mutants,
 ) -> rusqlite::Result<(&'static str, Vec<Value>)> {
     let supported: Vec<String> = match config["evaluator"]["condition_kinds"].as_array() {
@@ -650,21 +669,16 @@ pub fn evaluate(
         };
         findings.push(json!({"condition_id": condition["condition_id"], "finding": finding}));
     }
+    // Dependencies resolve only as exact local references; nothing else can satisfy them.
     let own = json!({"claim": record["claim"], "revision": record["revision"]});
     for dependency in record["dependencies"].as_array().into_iter().flatten() {
-        let finding = if same_revision(dependency, &own) {
-            "unchecked"
-        } else {
-            match latest_evaluation(tx, dependency, target)? {
-                Some((_, evaluation)) => match evaluation["result"].as_str() {
-                    Some("applicable") => "match",
-                    Some("invalid_for_target") => "mismatch",
-                    _ => "unchecked",
-                },
-                None => "unchecked",
-            }
-        };
-        findings.push(json!({"dependency": dependency, "finding": finding}));
+        let (finding, reason) =
+            dependency_finding(tx, dependency, &own, target, provider_id, mutants)?;
+        let mut entry = json!({"dependency": dependency, "finding": finding});
+        if let Some(reason) = reason {
+            entry["reason"] = json!(reason);
+        }
+        findings.push(entry);
     }
     let has = |names: &[&str]| {
         findings
@@ -689,6 +703,46 @@ pub fn evaluate(
     Ok((result, findings))
 }
 
+/// One dependency's finding and, for `unchecked`, why (KNOWLEDGE section 8).
+fn dependency_finding(
+    tx: &Transaction,
+    dependency: &Value,
+    own: &Value,
+    target: &Value,
+    provider_id: &str,
+    mutants: &Mutants,
+) -> rusqlite::Result<(&'static str, Option<&'static str>)> {
+    if same_revision(dependency, own) {
+        return Ok(("unchecked", Some("self_reference")));
+    }
+    if dependency["provider"] != provider_id && !mutants.on("dependency-provider-ignored") {
+        return Ok(("unchecked", Some("remote_dependency")));
+    }
+    let held = revision_entry(
+        tx,
+        dependency["claim"].as_str().unwrap_or_default(),
+        dependency["revision"].as_i64().unwrap_or(0),
+    )?
+    .is_some_and(|entry| {
+        entry["digest"] == dependency["digest"] || mutants.on("dependency-digest-ignored")
+    });
+    if !held {
+        return Ok(if mutants.on("missing-dependency-satisfied") {
+            ("match", None)
+        } else {
+            ("unchecked", Some("unresolved"))
+        });
+    }
+    Ok(match latest_evaluation(tx, dependency, target, mutants)? {
+        Some((_, evaluation)) => match evaluation["result"].as_str() {
+            Some("applicable") => ("match", None),
+            Some("invalid_for_target") => ("mismatch", None),
+            _ => ("unchecked", Some("not_established")),
+        },
+        None => ("unchecked", Some("not_evaluated")),
+    })
+}
+
 // ---------------------------------------------------------------------------------------------
 // Step 7.
 
@@ -697,6 +751,7 @@ pub fn check(
     operation: &str,
     params: &Value,
     principal: &str,
+    provider_id: &str,
     mutants: &Mutants,
 ) -> rusqlite::Result<Result<(), Refusal>> {
     let payload = &params["payload"];
@@ -729,12 +784,14 @@ pub fn check(
         }
         "knowledge.decision.record" => {
             let reference = &payload["claim"];
+            let local =
+                reference["provider"] == provider_id || mutants.on("reference-provider-unchecked");
             let Some(entry) = revision_entry(
                 tx,
                 reference["claim"].as_str().unwrap_or_default(),
                 reference["revision"].as_i64().unwrap_or(0),
             )?
-            else {
+            .filter(|_| local) else {
                 return Ok(Err(("not_found", json!({}))));
             };
             let record = &entry["record"];
@@ -772,7 +829,13 @@ pub fn check(
                 .flatten()
                 .enumerate()
             {
-                match resolve(tx, reference, &format!("/payload/revisions/{index}/digest"))? {
+                match resolve(
+                    tx,
+                    reference,
+                    provider_id,
+                    &format!("/payload/revisions/{index}/digest"),
+                    mutants,
+                )? {
                     Ok(entry) => records.push(entry["record"].clone()),
                     Err(refusal) => return Ok(Err(refusal)),
                 }
@@ -825,7 +888,13 @@ pub fn check(
             Ok(Ok(()))
         }
         "knowledge.applicability.evaluate" => {
-            match resolve(tx, &payload["claim"], "/payload/claim/digest")? {
+            match resolve(
+                tx,
+                &payload["claim"],
+                provider_id,
+                "/payload/claim/digest",
+                mutants,
+            )? {
                 Ok(_) => Ok(Ok(())),
                 Err(refusal) => Ok(Err(refusal)),
             }
@@ -1007,12 +1076,19 @@ pub fn apply(
             )?
             .unwrap_or(Value::Null);
             let target = &payload["target"];
-            let (result, findings) = evaluate(tx, &entry["record"], target, ctx.config, mutants)?;
+            let (result, findings) = evaluate(
+                tx,
+                &entry["record"],
+                target,
+                ctx.config,
+                ctx.provider_id,
+                mutants,
+            )?;
             let evaluator = json!({
                 "id": ctx.config["evaluator"]["id"].as_str().unwrap_or("reference-conditions"),
                 "version": ctx.config["evaluator"]["version"].as_str().unwrap_or("1"),
             });
-            let supersedes = latest_evaluation(tx, reference, target)?
+            let supersedes = latest_evaluation(tx, reference, target, &Mutants::default())?
                 .map(|(id, _)| json!(id))
                 .unwrap_or(Value::Null);
             let value = json!({
@@ -1084,7 +1160,7 @@ pub fn inspect(
     }
     let mut applicability: Vec<Value> = Vec::new();
     for (id, evaluation) in all(tx, EVALUATION)? {
-        if !same_revision(&evaluation["claim"], &reference) {
+        if !same_reference(&evaluation["claim"], &reference) {
             continue;
         }
         let item = json!({"evaluation": id, "target": evaluation["target"], "result": evaluation["result"], "evaluator": evaluation["evaluator"]});
@@ -1108,7 +1184,7 @@ pub fn inspect(
             .as_array()
             .into_iter()
             .flatten()
-            .any(|r| same_revision(r, &reference))
+            .any(|r| same_reference(r, &reference))
         {
             conflicts.push(json!({"conflict": id, "kind": conflict["kind"], "status": conflict["status"], "state": conflict["state"]}));
         }

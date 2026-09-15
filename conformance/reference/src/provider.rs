@@ -2349,6 +2349,7 @@ impl Provider {
                     name,
                     params,
                     &self.identity.principal,
+                    &self.identity.provider_id,
                     &self.mutants,
                 )
                 .map_err(storage)?

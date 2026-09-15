@@ -418,7 +418,11 @@
       "claim-digest-unchecked",
       "claims-without-negotiation",
       "claim-invalidation-unreported",
-      "dirty-snapshot-as-tree"
+      "dirty-snapshot-as-tree",
+      "dependency-digest-ignored",
+      "dependency-provider-ignored",
+      "missing-dependency-satisfied",
+      "reference-provider-unchecked"
     ]
   }
 }

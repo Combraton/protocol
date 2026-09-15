@@ -57,7 +57,7 @@ A contract is a sealed Evidence artifact in format `combraton-verification-contr
 | `evaluator` | `{ id, version }` |
 
 - **Outcome: a job reference only.** `{ job, state: "queued" }`. A command never returns property results; the report is a separate receipt (VER-3).
-- **Evaluator capability.** Each installed evaluator version is advertised as the capability predicate `verification.evaluator.<id>.v<version>` (CORE §17). Evaluator IDs match `[a-z][a-z0-9_-]*` and versions `[a-z0-9_-]+`, so every predicate name is a Core dotted name. If that predicate's status is not `supported`, the command is refused with `capability_unavailable` at step 7. The provider never substitutes another version.
+- **Evaluator capability.** Each installed evaluator version is advertised as the capability predicate `verification.evaluator.<id>.v<version>` (CORE §17). Evaluator IDs match `[a-z][a-z0-9_-]{0,63}` and versions `[a-z0-9_-]{1,32}`. Neither contains a dot, so the encoding is unambiguous: the name has exactly five dot-separated segments, the fourth is the ID, and the fifth is `v` followed by the version. Every predicate name is therefore a Core dotted name. For example, evaluator `journey` version `2` is `verification.evaluator.journey.v2`, and version `v2` would be `verification.evaluator.journey.vv2`. If that predicate's status is not `supported`, the command is refused with `capability_unavailable` at step 7. The provider never substitutes another version.
 - **Order at step 7.**
   1. Evaluator capability.
   2. Contract readability (§3).

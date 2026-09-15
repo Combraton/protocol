@@ -18,7 +18,7 @@ Cross-repository requirements in this plan and the matrix were read at these com
 | Repository | Commit | Documents used |
 |---|---|---|
 | protocol | `f654a29bd6574a75d8ce7c7b76d6a67ef22b45ea` | README, docs/spec/SPEC.md, docs/VERIFICATION.md, AGENTS.md |
-| combraton | `9af69ce966bfacf0deb03606d99f28a355d1f944` | docs/DEVELOPMENT.md, docs/STANDALONE-RELEASES.md, docs/decisions/001, docs/architecture/BASELINE.md, docs/architecture/PLAN.md, templates |
+| combraton | `9af69ce966bfacf0deb03606d99f28a355d1f944` | docs/DEVELOPMENT.md, docs/STANDALONE-RELEASES.md, docs/decisions/001, docs/architecture/BASELINE.md, docs/architecture/PLAN.md, templates; for M5, docs/architecture/MODEL.md and docs/architecture/VERIFICATION.md |
 | pio | `e65b7c02318e71e848ab7c8b3f8efab3489fb2d2` | docs/spec/SPEC.md, docs/spec/STANDALONE-CLIENT.md, docs/spec/INTERNALS.md |
 | cbr | `32783934b4e52d38a67f4bcc770f16e14b5993e3` | docs/spec/SPEC.md, docs/spec/PREPARATION-AND-DELIVERY.md, docs/spec/INTERNALS.md |
 | benchmarks | `c8d5878ab655d090942ad613cd932b44b5e62929` | docs/METHODOLOGY.md |
@@ -138,7 +138,7 @@ Detailed task: [M4](M4.md). All EVD and CTX rows, EXE-21, plus the cross-profile
 
 ### M5 — Knowledge and Verification profiles
 
-All KNW and VER rows. Adds scenarios for a provider reconnecting with a changed capability and for packets carrying claims.
+Detailed task: [M5](M5.md). All KNW and VER rows. Adds scenarios for a provider reconnecting with a changed capability (SCN-7) and for packets carrying claims (SCN-16, CMP-9).
 
 ### M6 — Release candidate
 

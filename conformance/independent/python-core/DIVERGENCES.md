@@ -1862,3 +1862,40 @@ Readings committed as `94871cf`; implementation as `a5e966a`, before any fixture
 - **HM6-WAIT-ONLY-SCRIPT** (VERIFICATION §11). A script with no step other than `wait_until`, or an empty script, has no "first step other than `wait_until`", yet "a script that runs out without `complete` leaves the job `running`". Implemented: once every leading `wait_until` has passed and the script is exhausted, the job becomes `running` and stays there. The other reading keeps it `queued` forever. Basis: own judgment.
 - **HM6-NO-SCRIPT** (VERIFICATION §11). "A job with no script completes at once" is unchanged: it passes through `running` at its first tick (an evaluation), then completes. Basis: spec text (unchanged since H.M5c).
 - **HM6-WAIT-LOSS** (VERIFICATION §4, §11). A job whose evaluator is lost while its script waits at a leading `wait_until`, including after the wait instant passed but before the next step ran, completes from `queued` with every property `indeterminate`/`evaluator_unavailable`, no `running` event, and `observed_from` equal to `observed_until` (HM5C-QUEUED-LOSS-EVENTS). Basis: spec text.
+
+#### Implementation and runs
+
+Readings committed as `681485d`; implementation as `b4856b8` ("M6 independent: core.feature_dependencies, feature-triggered dependencies and queued script wait from the documents"), before any fixture was opened. One reading (HM6-DEPENDENCY-STATE) was revised in that commit, before any fixture, after `tests/probe_m6.py` showed the first wording dropped an unsatisfied item. 276 fixtures at `a77219e`, runner built at this base.
+
+| Run | pass | fail | timeout | harness_error | unsupported | skipped |
+|---|---|---|---|---|---|---|
+| Thirteenth-pass code (the `a77219e` tree) | 244 | 1 | 0 | 0 | 5 | 26 |
+| First complete run after `b4856b8`, and one repeat | 245 | 0 | 0 | 0 | 5 | 26 |
+| Accepted M5 fixture set (`target/pinned-m5/src/conformance/fixtures`, 273 fixtures), unmodified | 245 | 0 | 0 | 0 | 4 | 24 |
+
+- Full suite: `run: 276 fixtures (245 pass, 26 skipped, 5 unsupported), 0 not passing`. The 5 unsupported are the four backpressure fixtures and `core.feature-dependencies-match-negotiation`; the 26 skipped are 13 `socket.*` (including `socket.feature-dependencies-after-authentication`), 12 `composition.*` and `compat.feature-dependencies-older-provider-falls-back` (pinned participant only).
+- `--filter feature-dependencies`: `run: 3 fixtures (2 skipped, 1 unsupported), 0 not passing`.
+- `--filter verification.reconnect`: `run: 1 fixtures (1 pass), 0 not passing` (it failed at step 27 before change 4).
+- M5 fixture set: `python3 conformance/scripts/build_pinned.py m5` (run, not read) exported and built `6ed4727`; `run: 273 fixtures (245 pass, 24 skipped, 4 unsupported), 0 not passing`. Older clients are unaffected on this participant, as expected: no M5 fixture requests a feature with a dependency this provider enforces.
+- `tests/check_vectors.py` (0 failures), `probe_provider.py` (19/19), `probe_m2.py` (43/43), `probe_f.py` (31/31) and the new `probe_m6.py` (17/17) pass.
+
+**No fixture failed after the implementation, so none was read.** Every change has basis spec text; the readings are spec text or own judgment as marked. Nothing is fixture-informed.
+
+**Sensitivity** (throwaway scratch copies with their own descriptors, not committed; only runner output read):
+- `core.feature_dependencies` removed entirely (`method_not_found`): every fixture still passes (full suite, 245 pass). The query is unguarded on this participant.
+- Change 4 reverted (running at the first tick): `verification.reconnect-with-changed-evaluator-keeps-pinned-meaning` step 27 fails (`result/state: expected "queued", found "running"`).
+- HM6-WAIT-ONLY-SCRIPT reversed (a job whose script has only `wait_until` steps stays `queued`): `--filter verification.` still passes 5 of 5. Unguarded.
+
+#### Remaining contradictions, silences and unchecked requirements
+
+None fails a fixture.
+
+- **HM6-UNSUPPORTED-TRIGGER.** EXECUTION §1 states the `feature` entry unconditionally; CORE §4.3 limits entries to enforced dependencies of supported features. Suggested: EXECUTION §1 should say "a provider that supports `execution.claim_revalidation` reports …". On this participant CMP-5's A column (required, optional and optional-profile forms) and the exact-result assertion cannot run; the query, its read-only property and feature-triggered enforcement are checked only by `probe_m6.py`. Basis: spec text / own judgment.
+- **HM6-REFUSAL-CODE.** CORE §4.2's code order is written per reason; `dependency_not_selected` is now two codes depending on the trigger. Suggested: state the order per item kind, and the code for a required profile refused by both kinds. Unchecked here. Basis: spec text.
+- **HM6-DEPENDENCY-STATE**, **HM6-ITEM-ORDER**, **HM6-UNSELECTED-PROFILE-ITEMS**, **HM6-REQUIRED-TWICE.** CORE §4.2 does not say against which selection state a feature dependency is judged, the order of items, which items an optional profile dropped by a required feature reports, or how a feature listed as both required and optional is treated. All unchecked by any fixture on this participant (and, as far as runner output shows, not reachable on it). Basis: own judgment.
+- **HM6-QUERY-PROTECTION.** CORE §15.5's list of unprotected operations omits `core.feature_dependencies`. Suggested: add it. Basis: own judgment.
+- **HM6-PREAUTH.** CORE §3 item 1 and §10 step 1 list the query beside `core.describe`; §18.2 still allows only `core.describe` and `core.authenticate` before authentication, and §4.3 says authentication is needed. Consistent, but §18.2 could name the query explicitly. Socket only; skipped here. Basis: spec text.
+- **HM6-WAIT-ONLY-SCRIPT.** VERIFICATION §11 does not say what state a script of only `wait_until` steps (or an empty script) leaves a job in once the waits pass. Unguarded (sensitivity above). Basis: own judgment.
+- **HM6-QUEUED-WAIT-STEPS**, **HM6-WAIT-LOSS.** Whether the `running` event and the first non-wait step's events share an evaluation is not stated; loss after the wait instant passed but before the next step ran is not fixture-checked. Basis: own judgment / spec text.
+- **Requirements no fixture checks on this participant:** CORE §4.3 exact result, order, `requires` feature order, read-only (no command record, no event, session left unnegotiated), boundedness, and "exactly what negotiation enforces"; CORE §4.2 feature-triggered required, optional-profile and optional forms and the `unsupported_required_feature` refusal; the query refused before authentication on a shared transport. The profile-triggered forms remain checked by `execution.requires-core-features` and `execution.optional-request-missing-core-features-is-unselected`, which pass.
+- **Coverage limits unchanged** from H.M5b (no Unix-socket binding; `execution.claim_revalidation` not implemented).

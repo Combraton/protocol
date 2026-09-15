@@ -5,6 +5,10 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "dirty-snapshot-as-tree",
+        "treats a dirty-snapshot condition as matching whenever the repository is present",
+    ),
+    (
         "label-promotes-claim",
         "publishes a claim section labeled binding although the claim is not accepted for binding use",
     ),

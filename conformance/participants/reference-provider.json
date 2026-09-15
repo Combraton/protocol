@@ -417,7 +417,8 @@
       "claim-latest-substituted",
       "claim-digest-unchecked",
       "claims-without-negotiation",
-      "claim-invalidation-unreported"
+      "claim-invalidation-unreported",
+      "dirty-snapshot-as-tree"
     ]
   }
 }

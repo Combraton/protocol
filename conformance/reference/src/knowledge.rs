@@ -634,6 +634,9 @@ pub fn evaluate(
                 "repository_tree" => {
                     repository(&condition["repository"]).map(|r| r["tree"].clone())
                 }
+                "dirty_snapshot" if mutants.on("dirty-snapshot-as-tree") => {
+                    repository(&condition["repository"]).map(|_| condition["expected"].clone())
+                }
                 "dirty_snapshot" => repository(&condition["repository"])
                     .and_then(|r| r["dirty"]["snapshot_digest"].as_str().map(|d| json!(d))),
                 _ => target["environment"].as_str().map(|e| json!(e)),

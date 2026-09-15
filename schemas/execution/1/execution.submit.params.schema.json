@@ -100,6 +100,9 @@
             }
           },
           "unevaluatedProperties": false
+        },
+        "origin": {
+          "$ref": "common.schema.json#/$defs/origin"
         }
       },
       "unevaluatedProperties": false

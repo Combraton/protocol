@@ -69,4 +69,8 @@ def delegation_exceeded(child: dict, parent: dict) -> bool:
         return True
     if "authority_binding" in parent and child.get("authority_binding") != parent["authority_binding"]:
         return True
+    # CORE 15.3 "Constraints": a delegated grant carries every constraint of
+    # its parent, unchanged; it may add more, since constraints only narrow.
+    if any(c not in child.get("constraints", []) for c in parent.get("constraints", [])):
+        return True
     return False

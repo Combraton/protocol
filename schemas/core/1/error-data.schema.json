@@ -41,7 +41,13 @@
         "capability_unavailable",
         "authentication_required",
         "authentication_failed",
-        "already_authenticated"
+        "already_authenticated",
+        "upload_offset_mismatch",
+        "upload_size_exceeded",
+        "upload_incomplete",
+        "content_digest_mismatch",
+        "artifact_digest_mismatch",
+        "hold_active"
       ]
     },
     "retry": {

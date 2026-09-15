@@ -156,6 +156,81 @@ const OPERATIONS: &[Operation] = &[
         command: true,
     },
     Operation {
+        name: "evidence.upload.prepare",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.upload.append",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.seal",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.upload.abandon",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.inspect",
+        profile: "evidence",
+        command: false,
+    },
+    Operation {
+        name: "evidence.query",
+        profile: "evidence",
+        command: false,
+    },
+    Operation {
+        name: "evidence.fetch",
+        profile: "evidence",
+        command: false,
+    },
+    Operation {
+        name: "evidence.hold",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.release",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "evidence.purge",
+        profile: "evidence",
+        command: true,
+    },
+    Operation {
+        name: "context.request.submit",
+        profile: "context",
+        command: true,
+    },
+    Operation {
+        name: "context.request.cancel",
+        profile: "context",
+        command: true,
+    },
+    Operation {
+        name: "context.request.inspect",
+        profile: "context",
+        command: false,
+    },
+    Operation {
+        name: "context.packet.inspect",
+        profile: "context",
+        command: false,
+    },
+    Operation {
+        name: "context.expand",
+        profile: "context",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -209,6 +284,31 @@ const SUPPORTED: &[SupportedProfile] = &[
         requires_core_features: &["core.events", "core.capabilities", "core.effects"],
     },
     SupportedProfile {
+        name: "evidence",
+        majors: &[1],
+        features: &[
+            "evidence.manifests",
+            "evidence.retention_control",
+            "evidence.work_binding",
+        ],
+        depends_on: &["core"],
+        requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
+        name: "context",
+        majors: &[1],
+        features: &[
+            "context.advisory",
+            "context.required_before_start",
+            "context.required_before_transition",
+            "context.shared_jobs",
+            "context.updates",
+            "context.expand",
+        ],
+        depends_on: &["core"],
+        requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
         name: "core-test",
         majors: &[1],
         features: &[],
@@ -216,8 +316,10 @@ const SUPPORTED: &[SupportedProfile] = &[
         requires_core_features: &[],
     },
 ];
-/// Optional `execution/1` features (EXECUTION section 11).
-const EXECUTION_FEATURES: [&str; 9] = [
+/// Optional `execution/1` features (EXECUTION sections 11 and 13).
+const EXECUTION_FEATURES: [&str; 11] = [
+    "execution.context_revalidation",
+    "execution.evidence_outputs",
     "execution.steering",
     "execution.actions",
     "execution.controller",
@@ -264,7 +366,10 @@ pub fn retry_class(code: &str) -> &'static str {
         | "effect_history_unavailable"
         | "stale_authority_epoch"
         | "precondition_failed"
-        | "internal_error" => "after_reconcile",
+        | "internal_error"
+        | "upload_offset_mismatch"
+        | "upload_incomplete"
+        | "hold_active" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
         "capability_unavailable" => "after_reconcile",
         _ => "no",
@@ -317,6 +422,10 @@ pub struct Identity {
     pub executor: std::sync::Arc<Value>,
     /// Injected store faults remaining in this process (test environment; decision 007).
     pub faults: std::sync::Arc<std::sync::Mutex<Value>>,
+    /// Scripted evidence store controls (test environment; decision 007).
+    pub evidence_store: std::sync::Arc<Value>,
+    /// Scripted context preparation (test environment; CONTEXT section 12).
+    pub context_script: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -453,9 +562,31 @@ impl Provider {
     fn tick(&mut self) {
         let now = self.identity.clock.now();
         let executor = self.identity.executor.clone();
-        if let Err(error) = crate::execution::tick(&mut self.store, &now, &executor, &self.mutants)
-        {
+        let authorities = self.identity.authorities.clone();
+        if let Err(error) = crate::execution::tick(
+            &mut self.store,
+            &now,
+            &executor,
+            &authorities,
+            &self.mutants,
+        ) {
             eprintln!("executor tick: {error}");
+        }
+        let evidence_store = self.identity.evidence_store.clone();
+        if let Err(error) =
+            crate::evidence::tick(&mut self.store, &now, &evidence_store, &self.mutants)
+        {
+            eprintln!("evidence tick: {error}");
+        }
+        let mut publisher = json!({"provider_id": self.identity.provider_id});
+        if let Some(peer) = self.identity.context_script.get("evidence_provider") {
+            publisher["evidence_provider"] = peer.clone();
+        }
+        if let Some(peer) = self.identity.context_script.get("executor") {
+            publisher["executor"] = peer.clone();
+        }
+        if let Err(error) = crate::context::tick(&mut self.store, &now, &publisher, &self.mutants) {
+            eprintln!("context tick: {error}");
         }
     }
 
@@ -542,6 +673,10 @@ impl Provider {
                 "execution.workspace.checkpoint" => Some("execution.workspaces"),
                 "execution.discovery.list" => Some("execution.discovery"),
                 "execution.output.read" => Some("execution.output"),
+                "evidence.hold" | "evidence.release" | "evidence.purge" => {
+                    Some("evidence.retention_control")
+                }
+                "context.expand" => Some("context.expand"),
                 _ => None,
             };
             if let Some(feature) = feature
@@ -551,6 +686,23 @@ impl Provider {
                     "unsupported_required_feature",
                     json!({"features": [feature]}),
                 ));
+            }
+            if operation.name == "context.request.submit" {
+                // Timing semantics are negotiated explicitly (CONTEXT section 1, CTX-9).
+                let missing: Vec<String> = crate::context::obligation_features(&params["payload"])
+                    .into_iter()
+                    .filter(|feature| !self.feature_negotiated(feature))
+                    .filter(|feature| {
+                        !(feature == "context.required_before_transition"
+                            && self.mutants.on("transition-as-advisory"))
+                    })
+                    .collect();
+                if !missing.is_empty() && !self.mutants.on("feature-operations-ungated") {
+                    return Err(reject(
+                        "unsupported_required_feature",
+                        json!({"features": missing}),
+                    ));
+                }
             }
         }
 
@@ -751,6 +903,17 @@ impl Provider {
             .and_then(Value::as_str)
             .map(String::from);
         let fault = self.take_fault(operation_name);
+        let evidence_store = self.identity.evidence_store.clone();
+        let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
+        let context_script = self.identity.context_script.clone();
+        let execution_features = (
+            self.feature_negotiated("execution.context_revalidation"),
+            self.feature_negotiated("execution.evidence_outputs"),
+        );
+        let context_features = (
+            self.feature_negotiated("context.shared_jobs"),
+            self.feature_negotiated("context.updates"),
+        );
         let fail_commit =
             fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
         let mutants = &self.mutants;
@@ -763,6 +926,8 @@ impl Provider {
                     mutants,
                     principal: &principal,
                     grant: grant_id.as_deref(),
+                    revalidation: execution_features.0,
+                    evidence_outputs: execution_features.1,
                 };
                 let (revision, outcome, events, effect_refs) = match operation_name {
                     "execution.submit" => {
@@ -789,6 +954,30 @@ impl Provider {
                     }
                     "core.effects.abort_obligation" => {
                         crate::features::abort_obligation(tx, &subject_id, &payload, &context)?
+                    }
+                    "context.request.submit" | "context.request.cancel" => {
+                        let session = crate::context::Session {
+                            principal: &principal,
+                            shared_jobs: context_features.0,
+                            updates: context_features.1,
+                            script: &context_script,
+                            mutants,
+                        };
+                        if operation_name == "context.request.submit" {
+                            crate::context::submit(tx, &subject_id, &payload, &session)?
+                        } else {
+                            crate::context::cancel(tx, &subject_id, &session)?
+                        }
+                    }
+                    name if name.starts_with("evidence.") => {
+                        let evidence_context = crate::evidence::Context {
+                            now: recorded_at.clone(),
+                            principal: &principal,
+                            chunk_limit,
+                            store_config: &evidence_store,
+                            mutants,
+                        };
+                        crate::evidence::apply(tx, name, &subject_id, &payload, &evidence_context)?
                     }
                     _ => {
                         let (revision, outcome, events) = apply_change(
@@ -996,6 +1185,60 @@ impl Provider {
             "core.effects.get" => {
                 self.effect_execution(params["payload"]["effect"].as_str().unwrap_or_default())?
             }
+            "context.packet.inspect" | "context.expand"
+                if self.mutants.on("packet-grant-covers-all-packets") =>
+            {
+                return Ok(Some(Vec::new()));
+            }
+            "evidence.release" => {
+                let id = params["subject"]["id"].as_str().unwrap_or_default();
+                let owner = crate::evidence::hold_owner(&self.store, id).map_err(storage)?;
+                if owner.as_deref() == Some(self.identity.principal.as_str())
+                    || self.mutants.on("release-without-authority")
+                {
+                    return Ok(Some(Vec::new()));
+                }
+                return Ok(Some(vec![(
+                    "evidence.release".to_string(),
+                    params["subject"].clone(),
+                )]));
+            }
+            "evidence.purge" => {
+                let mut needed = vec![("evidence.purge".to_string(), params["subject"].clone())];
+                if !self.mutants.on("release-holds-as-authorization") {
+                    for hold in params["payload"]["release_holds"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        let id = hold.as_str().unwrap_or_default();
+                        let owner =
+                            crate::evidence::hold_owner(&self.store, id).map_err(storage)?;
+                        if owner.as_deref() != Some(self.identity.principal.as_str()) {
+                            needed.push((
+                                "evidence.release".to_string(),
+                                json!({"kind": crate::evidence::HOLD, "id": id}),
+                            ));
+                        }
+                    }
+                }
+                return Ok(Some(needed));
+            }
+            "evidence.fetch" | "evidence.inspect"
+                if self.mutants.on("fetch-leaks-existence")
+                    && self
+                        .store
+                        .subject(
+                            crate::evidence::ARTIFACT,
+                            params["payload"]["artifact"]["id"]
+                                .as_str()
+                                .unwrap_or_default(),
+                        )
+                        .map_err(storage)?
+                        .is_none() =>
+            {
+                return Err(reject("not_found", json!({})));
+            }
             "core.effects.abort_obligation" => {
                 let execution =
                     self.effect_execution(params["subject"]["id"].as_str().unwrap_or_default())?;
@@ -1035,6 +1278,19 @@ impl Provider {
         self.store.effect_execution(effect).map_err(storage)
     }
 
+    /// Which subjects this request's principal may read, as a reusable predicate (CORE section 16.6).
+    fn reader_filter(&self, params: &Value) -> impl Fn(&Value) -> bool + '_ {
+        let grant = match params.get("grant").and_then(Value::as_str) {
+            Some(id) => self.usable_grant(id).ok().map(Some),
+            None if self.is_authority() => Some(None),
+            None => Some(Some(json!({"rights": [], "resources": []}))),
+        };
+        move |subject: &Value| match &grant {
+            None => false,
+            Some(grant) => self.visible(subject, &None, grant).unwrap_or(false),
+        }
+    }
+
     /// Whether a profile feature was negotiated in this session.
     fn feature_negotiated(&self, feature: &str) -> bool {
         let profile = feature.split('.').next().unwrap_or_default();
@@ -1063,6 +1319,12 @@ impl Provider {
     fn usable_grant_checked(&self, id: &str, check_holder: bool) -> Result<Value, Reject> {
         let denied = |reason: &str| reject("permission_denied", json!({"reason": reason}));
         let Some((_, grant)) = self.store.grant(id).map_err(storage)? else {
+            if self.mutants.on("foreign-grant-honored") {
+                // Mutant: a grant ID this provider never issued is trusted as if it covered all.
+                return Ok(json!({"holder": self.identity.principal, "state": "active",
+                    "rights": ["evidence.read", "evidence.publish", "context.read", "context.packet.read", "execution.read"],
+                    "resources": [{"kind": crate::evidence::ARTIFACT}, {"kind": crate::context::PACKET}, {"kind": crate::context::REQUEST}, {"kind": crate::execution::KIND}]}));
+            }
             return Err(denied("grant_not_found"));
         };
         let state_first = self.mutants.on("grant-state-before-holder");
@@ -1145,6 +1407,31 @@ impl Provider {
         };
         if self.mutants.on("issue-binding-before-expiry") {
             binding_check()?;
+        }
+        // Typed grant constraints (CORE section 15): only kinds this provider implements, and
+        // only when their feature was negotiated.
+        for (index, constraint) in payload["constraints"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            match constraint["kind"].as_str() {
+                Some("evidence.work_binding") => {
+                    if !self.feature_negotiated("evidence.work_binding") {
+                        return Err(reject(
+                            "unsupported_required_feature",
+                            json!({"features": ["evidence.work_binding"]}),
+                        ));
+                    }
+                }
+                _ => {
+                    return invalid(
+                        &format!("/payload/constraints/{index}/kind"),
+                        "not a grant constraint this provider implements",
+                    );
+                }
+            }
         }
         if let Some(expiry) = payload.get("expires_at").and_then(Value::as_str) {
             let now = self.identity.clock.now();
@@ -1310,10 +1597,44 @@ impl Provider {
                         } else {
                             rights(&grant).or_else(|| scopes(&grant))
                         };
-                        match first {
-                            Some(reason) => denied(reason),
-                            None => Ok(()),
+                        if let Some(reason) = first {
+                            return denied(reason);
                         }
+                        // Only an explicit `evidence.work_binding` constraint binds the artifact's
+                        // work; resource kinds never imply one (EVIDENCE section 10).
+                        if operation == "evidence.upload.prepare"
+                            && !self.mutants.on("work-binding-ignored")
+                        {
+                            let bound = &params["payload"]["work"];
+                            let constrained: Vec<&Value> =
+                                if self.mutants.on("work-constraint-inferred") {
+                                    grant["resources"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter(|r| r["kind"] != crate::evidence::ARTIFACT)
+                                        .collect()
+                                } else {
+                                    grant["constraints"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter(|c| c["kind"] == "evidence.work_binding")
+                                        .map(|c| &c["work"])
+                                        .collect()
+                                };
+                            let matches = |w: &&Value| {
+                                if w.get("kind").is_some() && w.get("id").is_some() {
+                                    *w == bound
+                                } else {
+                                    grants::resource_covers_subject(w, bound)
+                                }
+                            };
+                            if !constrained.is_empty() && !constrained.iter().all(matches) {
+                                return denied("binding_violation");
+                            }
+                        }
+                        Ok(())
                     }
                 }
             }
@@ -1413,6 +1734,33 @@ impl Provider {
         let ignore_unknown = self.mutants.on("accept-unknown-fields");
         // Mutant `ignore-unique-items` validates a copy with duplicate requires entries removed.
         let mut deduplicated = params.clone();
+        if self.mutants.on("uncheckable-item-accepted")
+            && operation == "context.request.submit"
+            && let Some(items) = deduplicated
+                .pointer_mut("/payload/items")
+                .and_then(Value::as_array_mut)
+        {
+            for item in items {
+                let known = [
+                    "source_included",
+                    "evidence_included",
+                    "authority_content_included",
+                ];
+                if !known.iter().any(|kind| item["check"]["kind"] == *kind) {
+                    item["check"] = json!({"kind": "authority_content_included"});
+                }
+            }
+        }
+        if self.mutants.on("coverage-optional")
+            && operation == "evidence.upload.prepare"
+            && let Some(payload) = deduplicated
+                .get_mut("payload")
+                .and_then(Value::as_object_mut)
+        {
+            payload
+                .entry("coverage")
+                .or_insert_with(|| json!({"completeness": "unknown"}));
+        }
         if self.mutants.on("ignore-unique-items")
             && let Some(requires) = deduplicated
                 .get_mut("requires")
@@ -1463,6 +1811,48 @@ impl Provider {
         {
             self.validate_issue(&params["payload"])?;
         }
+        if operation.name == "execution.submit"
+            && !self.mutants.on("feature-fields-accepted")
+            && !self.feature_negotiated("execution.context_revalidation")
+        {
+            // Revalidation members extend the M3 binding only under their feature (EXECUTION 13.1).
+            for (index, binding) in params["payload"]["context_bindings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                for member in ["conditions", "fetch", "request", "require_current"] {
+                    if binding.get(member).is_some() {
+                        return invalid(
+                            &format!("/payload/context_bindings/{index}/{member}"),
+                            "feature execution.context_revalidation was not negotiated",
+                        );
+                    }
+                }
+                if binding["packet"].get("artifact").is_some() {
+                    return invalid(
+                        &format!("/payload/context_bindings/{index}/packet"),
+                        "feature execution.context_revalidation was not negotiated",
+                    );
+                }
+            }
+        }
+        if operation.name == "execution.submit" {
+            for (index, binding) in params["payload"]["context_bindings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                if binding["require_current"] == true && binding["fetch"].get("context").is_none() {
+                    return invalid(
+                        &format!("/payload/context_bindings/{index}/require_current"),
+                        "the current revision can only be confirmed through a context fetch grant",
+                    );
+                }
+            }
+        }
         if operation.name == "execution.submit" && !self.mutants.on("feature-fields-accepted") {
             for (field, feature) in FEATURE_FIELDS {
                 if params["payload"].get(field).is_some() && !self.feature_negotiated(feature) {
@@ -1491,8 +1881,119 @@ impl Provider {
                 );
             }
         }
+        if operation.name == "context.request.submit"
+            && let Err((path, reason)) =
+                crate::context::validate_submit(&params["payload"], &self.mutants)
+        {
+            return invalid(&path, reason);
+        }
+        if operation.name == "evidence.upload.prepare" {
+            let payload = &params["payload"];
+            if let Some(locator) = payload["locator"].as_str()
+                && crate::evidence::locator_has_credentials(locator)
+                && !self.mutants.on("locator-credentials-accepted")
+            {
+                return invalid("/payload/locator", "locator carries credentials");
+            }
+            if payload["producer"]
+                .get("principal")
+                .is_some_and(|p| p != self.identity.principal.as_str())
+                && !self.mutants.on("producer-principal-from-payload")
+            {
+                return invalid(
+                    "/payload/producer/principal",
+                    "the producer principal is the session principal",
+                );
+            }
+            if payload["source"]["kind"] == "terminal_output"
+                && payload["coverage"]["completeness"] == "complete"
+                && !self.mutants.on("terminal-output-complete-accepted")
+            {
+                return invalid(
+                    "/payload/coverage/completeness",
+                    "terminal output is never a complete tool trace",
+                );
+            }
+            let uncertainty = &payload["capture"]["uncertainty"];
+            if uncertainty.is_object()
+                && uncertainty["not_before"].as_str() > uncertainty["not_after"].as_str()
+            {
+                return invalid(
+                    "/payload/capture/uncertainty",
+                    "not_before is after not_after",
+                );
+            }
+            // Content digests use the digest algorithms this provider supports (EVIDENCE 3).
+            let (algorithm, hex) = payload["digest"]
+                .as_str()
+                .and_then(|d| d.split_once(':'))
+                .unwrap_or(("", ""));
+            if algorithm != "sha256" {
+                return Err(reject(
+                    "unsupported_digest_algorithm",
+                    json!({"algorithm": algorithm, "supported": ["sha256"]}),
+                ));
+            }
+            if hex.len() != 64 {
+                return invalid(
+                    "/payload/digest",
+                    "a sha256 digest has 64 hexadecimal digits",
+                );
+            }
+        }
+        if operation.name == "evidence.hold"
+            && params["payload"]["expires_at"]
+                .as_str()
+                .is_some_and(|expiry| expiry <= self.identity.clock.now().as_str())
+        {
+            return invalid("/payload/expires_at", "a hold must expire in the future");
+        }
+        if operation.name == "evidence.upload.append" {
+            // The chunk limit is a declared limit, decided with the others (EVIDENCE section 4).
+            let text = params["payload"]["data_base64"]
+                .as_str()
+                .unwrap_or_default();
+            let Some(data) = crate::evidence::decode_base64(text) else {
+                return invalid("/payload/data_base64", "not valid padded base64");
+            };
+            let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
+            if data.len() as i64 > chunk_limit {
+                return Err(reject(
+                    "limit_exceeded",
+                    json!({"limit": "chunk_limit", "maximum": chunk_limit}),
+                ));
+            }
+        }
         if !operation.command {
             return Ok(());
+        }
+        if matches!(operation.name, "evidence.upload.prepare" | "evidence.hold")
+            && params["preconditions"][0]["revision"] != 0
+        {
+            return invalid(
+                "/preconditions/0/revision",
+                "creating an artifact or hold needs revision 0",
+            );
+        }
+        if operation.name == "evidence.purge" {
+            for hold in params["payload"]["release_holds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                let hold_subject = json!({"kind": crate::evidence::HOLD, "id": hold});
+                let named = params["preconditions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|p| p["subject"] == hold_subject);
+                if !named && !self.mutants.on("purge-ignores-hold-revisions") {
+                    return invalid(
+                        "/preconditions",
+                        "every hold named in release_holds needs a precondition on its revision",
+                    );
+                }
+            }
         }
         if let Some((algorithm, hex)) = params["command_digest"]
             .as_str()
@@ -1662,6 +2163,45 @@ impl Provider {
             "execution.controller.claim" => {
                 id == crate::execution::host_id(&self.identity.executor)
             }
+            "context.request.cancel" => crate::context::preparing(&reader, id)
+                .map_err(storage)?
+                .unwrap_or(false),
+            name if name.starts_with("evidence.") => {
+                let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
+                return match crate::evidence::check(
+                    &reader,
+                    name,
+                    params,
+                    &self.mutants,
+                    chunk_limit,
+                )
+                .map_err(storage)?
+                {
+                    Ok(()) => Ok(()),
+                    Err(("hold_active", details)) => {
+                        let visible: Vec<Value> = details["holds"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|h| {
+                                self.may_read(
+                                    &json!({"kind": crate::evidence::HOLD, "id": h}),
+                                    params,
+                                )
+                                .unwrap_or(false)
+                            })
+                            .cloned()
+                            .collect();
+                        let filtered =
+                            visible.len() < details["holds"].as_array().map_or(0, Vec::len);
+                        Err(reject(
+                            "hold_active",
+                            json!({"holds": visible, "filtered": filtered}),
+                        ))
+                    }
+                    Err((code, details)) => Err(reject(code, details)),
+                };
+            }
             "core.effects.abort_obligation" => self
                 .store
                 .effect_record(id)
@@ -1712,7 +2252,10 @@ impl Provider {
             if self.mutants.on("first-precondition-failure-only") && !failed.is_empty() {
                 break;
             }
-            if self.mutants.on("ignore-preconditions") {
+            if self.mutants.on("ignore-preconditions")
+                || (self.mutants.on("duplicate-chunk-accepted")
+                    && params["operation"] == "evidence.upload.append")
+            {
                 break;
             }
             if self.mutants.on("partial-preconditions") && entry["subject"] != params["subject"] {
@@ -1797,7 +2340,8 @@ impl Provider {
             "execution.inspect" => {
                 let id = params["payload"]["execution"].as_str().unwrap_or_default();
                 let cursor = self.cursor(self.head()?, false)?;
-                crate::execution::inspect(&mut self.store, id, cursor)
+                let revalidation = self.feature_negotiated("execution.context_revalidation");
+                crate::execution::inspect(&mut self.store, id, cursor, revalidation, &self.mutants)
                     .map_err(storage)?
                     .ok_or_else(|| reject("not_found", json!({})))
             }
@@ -1839,6 +2383,138 @@ impl Provider {
                 )
                 .map_err(storage)?
                 .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "evidence.inspect" => {
+                let id = params["payload"]["artifact"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let manifests = self.feature_negotiated("evidence.manifests");
+                let can_read = self.reader_filter(params);
+                crate::evidence::inspect(
+                    &self.store,
+                    &id,
+                    &self.identity.provider_id,
+                    &self.identity.evidence_store,
+                    manifests,
+                    &can_read,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "evidence.fetch" => {
+                let id = params["payload"]["artifact"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let budget = self.caller_frame_limit;
+                match crate::evidence::fetch(
+                    &self.store,
+                    &id,
+                    &params["payload"],
+                    &self.identity.evidence_store,
+                    budget,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                {
+                    Ok(result) => Ok(result),
+                    Err(code) => Err(reject(code, json!({}))),
+                }
+            }
+            "context.request.inspect" => {
+                let id = params["payload"]["request"].as_str().unwrap_or_default();
+                crate::context::inspect_request(&self.store, id, &self.mutants)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "context.packet.inspect" => crate::context::inspect_packet(
+                &self.store,
+                &params["payload"],
+                self.caller_frame_limit,
+                &self.mutants,
+            )
+            .map_err(storage)?
+            .ok_or_else(|| reject("not_found", json!({}))),
+            "context.expand" => {
+                // A citation the principal may not read, a nonexistent citation and one held at
+                // another provider are refused identically (CONTEXT section 6, CORE-12).
+                let denied = || reject("permission_denied", json!({"reason": "out_of_scope"}));
+                let payload = &params["payload"];
+                let packet_exists = self
+                    .store
+                    .subject(
+                        crate::context::REQUEST,
+                        payload["packet"].as_str().unwrap_or_default(),
+                    )
+                    .map_err(storage)?
+                    .is_some();
+                let Some(reference) = crate::context::citation(&self.store, payload, &self.mutants)
+                    .map_err(storage)?
+                else {
+                    return Err(if packet_exists {
+                        denied()
+                    } else {
+                        reject("not_found", json!({}))
+                    });
+                };
+                let local = reference["provider"]
+                    .as_str()
+                    .is_none_or(|p| p == self.identity.provider_id);
+                if !local {
+                    return Err(denied());
+                }
+                if !self.mutants.on("expand-ignores-grant")
+                    && !self.may_read(&reference["artifact"], params)?
+                {
+                    return Err(denied());
+                }
+                match crate::context::expand(
+                    &self.store,
+                    payload,
+                    &reference,
+                    self.caller_frame_limit,
+                )
+                .map_err(storage)?
+                {
+                    Ok(result) => Ok(result),
+                    Err("artifact_digest_mismatch") => {
+                        Err(reject("artifact_digest_mismatch", json!({})))
+                    }
+                    Err(_) => Err(denied()),
+                }
+            }
+            "evidence.query" => {
+                let can_read = self.reader_filter(params);
+                let restricted =
+                    match params.get("grant").and_then(Value::as_str) {
+                        None => !self.is_authority(),
+                        Some(id) => !self.usable_grant(id).is_ok_and(|grant| {
+                            grant["rights"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|r| r == "evidence.read")
+                                && grant["resources"].as_array().into_iter().flatten().any(
+                                    |resource| {
+                                        resource["kind"] == crate::evidence::ARTIFACT
+                                            && resource.get("id").is_none()
+                                            && resource.get("id_prefix").is_none()
+                                    },
+                                )
+                        }),
+                    };
+                crate::evidence::query(
+                    &self.store,
+                    &params["payload"],
+                    &self.identity.evidence_store,
+                    restricted,
+                    &can_read,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                .map_err(|code| reject(code, json!({"reason": "malformed"})))
             }
             "execution.discovery.list" => Ok(crate::features::discovery(
                 &self.identity.executor,
@@ -2250,6 +2926,45 @@ impl Provider {
                     .into_iter()
                     .flatten()
                     .any(|right| right == "execution.read")
+        } else if kind == crate::context::REQUEST {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "context.read")
+        } else if kind == crate::context::JOB {
+            let id = subject["id"].as_str().unwrap_or_default();
+            let mut any = false;
+            for request in crate::context::job_requests(&self.store, id).map_err(storage)? {
+                any |= self.visible(
+                    &json!({"kind": crate::context::REQUEST, "id": request}),
+                    &None,
+                    &Some(grant.clone()),
+                )?;
+            }
+            any
+        } else if kind == crate::evidence::ARTIFACT {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "evidence.read")
+        } else if kind == crate::evidence::HOLD {
+            let id = subject["id"].as_str().unwrap_or_default();
+            if crate::evidence::hold_owner(&self.store, id)
+                .map_err(storage)?
+                .as_deref()
+                == Some(self.identity.principal.as_str())
+            {
+                true
+            } else {
+                match crate::evidence::hold_artifact(&self.store, id).map_err(storage)? {
+                    Some(artifact) => self.visible(&artifact, &None, &Some(grant.clone()))?,
+                    None => false,
+                }
+            }
         } else if kind == "core.effect" {
             // An effect is visible exactly when its target execution is (CORE section 19.2).
             let id = subject["id"].as_str().unwrap_or_default();

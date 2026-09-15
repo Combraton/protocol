@@ -38,6 +38,33 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "execution.discovery.list".to_string(),
             serde_json::json!({"kind": "execution.discovery", "id": "installations"}),
         )]),
+        "evidence.upload.prepare"
+        | "evidence.upload.append"
+        | "evidence.seal"
+        | "evidence.upload.abandon" => Some(vec![(
+            "evidence.publish".to_string(),
+            params["subject"].clone(),
+        )]),
+        "context.request.submit" | "context.request.cancel" => Some(vec![(
+            "context.request".to_string(),
+            params["subject"].clone(),
+        )]),
+        "context.request.inspect" => Some(vec![(
+            "context.read".to_string(),
+            serde_json::json!({"kind": "context.request", "id": params["payload"]["request"]}),
+        )]),
+        "context.packet.inspect" | "context.expand" => Some(vec![(
+            "context.packet.read".to_string(),
+            serde_json::json!({"kind": "context.packet", "id": params["payload"]["packet"]}),
+        )]),
+        "evidence.hold" => Some(vec![(
+            "evidence.hold".to_string(),
+            serde_json::json!({"kind": "evidence.artifact", "id": params["payload"]["artifact"]["id"]}),
+        )]),
+        "evidence.inspect" | "evidence.fetch" => Some(vec![(
+            "evidence.read".to_string(),
+            serde_json::json!({"kind": "evidence.artifact", "id": params["payload"]["artifact"]["id"]}),
+        )]),
         "execution.inspect" | "execution.output.read" => Some(vec![(
             "execution.read".to_string(),
             serde_json::json!({"kind": crate::execution::KIND, "id": params["payload"]["execution"]}),
@@ -137,11 +164,23 @@ pub fn within_parent(parent: &Value, child: &Value) -> bool {
     };
     let parent_depth = parent["delegation"]["max_depth"].as_i64().unwrap_or(0);
     let depth_ok = child["delegation"]["max_depth"].as_i64().unwrap_or(0) < parent_depth;
+    // A delegated grant keeps every constraint of its parent (CORE section 15.3).
+    let constraints_ok = parent["constraints"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .all(|c| {
+            child["constraints"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|d| d == c)
+        });
     let binding_ok = match parent.get("authority_binding") {
         None => true,
         Some(binding) => child.get("authority_binding") == Some(binding),
     };
-    rights_ok && resources_ok && expiry_ok && depth_ok && binding_ok
+    rights_ok && resources_ok && expiry_ok && depth_ok && binding_ok && constraints_ok
 }
 
 /// Current system instant as `YYYY-MM-DDTHH:MM:SSZ` (used by `clock::Clock::System`).

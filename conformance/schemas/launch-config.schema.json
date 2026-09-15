@@ -280,9 +280,18 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": [
-              "ref",
-              "digest"
+            "oneOf": [
+              {
+                "required": [
+                  "ref",
+                  "digest"
+                ]
+              },
+              {
+                "required": [
+                  "reference"
+                ]
+              }
             ],
             "properties": {
               "ref": {
@@ -290,11 +299,14 @@
               },
               "digest": {
                 "type": "string"
+              },
+              "reference": {
+                "type": "object"
               }
             },
             "additionalProperties": false
           },
-          "description": "Context packets the executor holds, by reference and exact digest."
+          "description": "Context packets the executor holds, by M3 reference and exact digest, or by packet reference (EXECUTION 13.1)."
         },
         "installations": {
           "type": "array",
@@ -358,6 +370,124 @@
           "type": "integer",
           "minimum": 1,
           "description": "Bytes of output the executor keeps per execution (default 65536)."
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "provider_id",
+              "socket",
+              "credential"
+            ],
+            "properties": {
+              "provider_id": {
+                "type": "string"
+              },
+              "socket": {
+                "type": "string"
+              },
+              "credential": {
+                "type": "string"
+              },
+              "grant": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "description": "Separately running providers the executor reaches over their public sockets to fetch packets (owner decision M4-Q3)."
+        },
+        "evidence_outputs": {
+          "type": "object",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "The evidence provider where the executor seals completion outputs under its work-bound grant (EXECUTION 13.2)."
+        },
+        "observed_basis": {
+          "type": "object",
+          "properties": {
+            "repositories": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "tree": {
+                    "type": "string"
+                  },
+                  "dirty_snapshot": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "environment_digest": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
+        },
+        "basis_changes": {
+          "type": "array",
+          "description": "Scheduled changes to what the executor observes, applied at the controlled clock (test control; EXECUTION 15).",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "observed_basis"
+            ],
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "observed_basis": {
+                "type": "object",
+                "properties": {
+                  "repositories": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "tree": {
+                          "type": "string"
+                        },
+                        "dirty_snapshot": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "environment_digest": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -405,6 +535,110 @@
             },
             "additionalProperties": false
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_store": {
+      "type": "object",
+      "description": "Scripted evidence store controls (decision 007): corrupt stored bytes, unavailable artifacts, staging timeout, deferred physical deletion.",
+      "properties": {
+        "corrupt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unavailable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "staging_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "deletion_delay_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "serve_altered_bytes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Adversarial control: fetch returns these artifacts' bytes altered while keeping the sealed digest and availability metadata."
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "description": "Scripted context preparation (decision 007; CONTEXT section 12).",
+      "properties": {
+        "scripts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/context_step"
+            }
+          }
+        },
+        "default_script": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/context_step"
+          }
+        },
+        "evidence_provider": {
+          "type": "object",
+          "description": "A separately running evidence provider that seals this provider's packets, reached over its public socket (owner decision M4-Q3).",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "executor": {
+          "type": "object",
+          "description": "A separately running executor where the context provider runs its own investigation executions (CTX-18, CTX-19).",
+          "required": [
+            "provider_id",
+            "socket",
+            "credential"
+          ],
+          "properties": {
+            "provider_id": {
+              "type": "string"
+            },
+            "socket": {
+              "type": "string"
+            },
+            "credential": {
+              "type": "string"
+            },
+            "grant": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -682,10 +916,146 @@
             "type": "integer",
             "minimum": 1,
             "description": "Emit this many alternating runtime observations at once."
+          },
+          "observe_basis": {
+            "type": "object",
+            "properties": {
+              "repositories": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "tree": {
+                      "type": "string"
+                    },
+                    "dirty_snapshot": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "environment_digest": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
+          },
+          "observe_host_basis": {
+            "type": "object",
+            "properties": {
+              "repositories": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "tree": {
+                      "type": "string"
+                    },
+                    "dirty_snapshot": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "environment_digest": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "description": "The basis the executor can observe for revalidation; conditions on anything else are unavailable."
           }
         },
         "additionalProperties": false
       }
+    },
+    "context_step": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "wait_until": {
+          "type": "string"
+        },
+        "investigate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "section": {
+          "type": "object",
+          "required": [
+            "section_id",
+            "label",
+            "content"
+          ]
+        },
+        "coverage": {
+          "type": "object",
+          "required": [
+            "producer",
+            "frontier",
+            "gaps"
+          ]
+        },
+        "unmet": {
+          "type": "object",
+          "required": [
+            "item_id",
+            "reason"
+          ]
+        },
+        "omit": {
+          "type": "object",
+          "required": [
+            "reason"
+          ]
+        },
+        "correction": {
+          "type": "object",
+          "required": [
+            "item_id",
+            "authority_revision"
+          ]
+        },
+        "conditions": {
+          "type": "array"
+        },
+        "publish": {
+          "type": "object"
+        },
+        "end": {
+          "type": "string"
+        },
+        "stall": {
+          "const": true
+        },
+        "execute": {
+          "type": "object",
+          "required": [
+            "execution"
+          ],
+          "properties": {
+            "execution": {
+              "type": "string"
+            },
+            "brief": {
+              "type": "string"
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "call_budget": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

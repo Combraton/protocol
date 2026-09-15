@@ -180,12 +180,28 @@
           "items": {
             "$ref": "common.schema.json#/$defs/context_delivery"
           }
+        },
+        "checks": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "$ref": "common.schema.json#/$defs/context_check"
+          }
+        },
+        "blocked": {
+          "$ref": "common.schema.json#/$defs/context_block"
         }
       },
       "unevaluatedProperties": false
     },
     "continuation": {
       "$ref": "common.schema.json#/$defs/continuation"
+    },
+    "origin": {
+      "$ref": "common.schema.json#/$defs/origin"
+    },
+    "scheduling": {
+      "$ref": "common.schema.json#/$defs/scheduling"
     }
   },
   "unevaluatedProperties": false

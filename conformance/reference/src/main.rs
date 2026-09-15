@@ -5,6 +5,8 @@
 
 mod barriers;
 mod clock;
+mod context;
+mod evidence;
 mod execution;
 mod features;
 mod frames;
@@ -12,7 +14,9 @@ mod grants;
 mod json;
 mod mutants;
 mod outbox;
+mod peer;
 mod provider;
+mod revalidation;
 mod store;
 
 use std::collections::HashMap;
@@ -241,6 +245,8 @@ fn run(args: Args) -> Result<(), String> {
             clock,
             executor: std::sync::Arc::new(config["executor"].clone()),
             faults: std::sync::Arc::new(std::sync::Mutex::new(config["faults"].clone())),
+            evidence_store: std::sync::Arc::new(config["evidence_store"].clone()),
+            context_script: std::sync::Arc::new(config["context"].clone()),
             capabilities,
             authorities,
             principal,

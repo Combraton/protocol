@@ -427,6 +427,12 @@
               "name": {
                 "type": "string",
                 "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+              },
+              "eventually_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000,
+                "description": "Repeat the query until its expectation holds, within this real-time bound (asynchronous compositions)."
               }
             },
             "additionalProperties": false
@@ -795,6 +801,10 @@
               },
               "principal": {
                 "type": "string"
+              },
+              "participant": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
               }
             },
             "additionalProperties": false
@@ -1230,6 +1240,128 @@
               }
             },
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "name",
+              "config"
+            ],
+            "properties": {
+              "step": {
+                "const": "start_participant"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "config": {
+                "type": "object"
+              },
+              "credential_principals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false,
+            "description": "Launch a named participant as its own process with its own data directory, configuration and socket (unix binding). Its socket path is variable socket.<name>."
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "name"
+            ],
+            "properties": {
+              "step": {
+                "const": "stop_participant"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "step",
+              "name"
+            ],
+            "properties": {
+              "step": {
+                "const": "kill_participant"
+              },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              },
+              "within_ms": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "expect": {
+                "$ref": "#/$defs/expect"
+              },
+              "capture": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "note": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,32}$"
+              }
+            },
+            "additionalProperties": false
           }
         ]
       }
@@ -1247,6 +1379,8 @@
       "items": {
         "enum": [
           "clock.file",
+          "context.script",
+          "evidence.store",
           "executor.script",
           "store.faults"
         ]

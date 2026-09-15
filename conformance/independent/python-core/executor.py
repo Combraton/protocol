@@ -207,13 +207,35 @@ def validate_step(step, what: str) -> None:
             _int(val["bytes"], w)
     elif key == "runtime_burst":
         _int(val, w, 1)
+    elif key in ("observe_basis", "observe_host_basis"):
+        _observed_basis(val, w)
     else:
         _fail(f"{what}: unknown script step {key!r}")
 
 
+def _observed_basis(val, what: str) -> None:
+    """Launch-configuration ``observed_basis`` and script step
+    ``observe_basis``: repositories by ID with ``tree`` and
+    ``dirty_snapshot``, and ``environment_digest``."""
+    _obj(val, what, (), ("repositories", "environment_digest"))
+    for rid, repo in val.get("repositories", {}).items():
+        _obj(repo, f"{what}.repositories.{rid}", (), ("tree", "dirty_snapshot"))
+        for member in ("tree", "dirty_snapshot"):
+            if member in repo:
+                _str(repo[member], f"{what}.repositories.{rid}.{member}", 1)
+    if "environment_digest" in val:
+        _str(val["environment_digest"], f"{what}.environment_digest", 1)
+
+
 def parse_executor_config(raw) -> dict:
+    if isinstance(raw, dict):
+        for member in ("peers", "evidence_outputs"):
+            if member in raw:
+                # Reached over peers' public sockets (M4-Q3); this provider is stdio only.
+                _fail(f"executor.{member} needs the socket binding; not supported (H-REVAL-SCOPE)")
     cfg = _obj(raw, "executor", (), ("adapter", "scripts", "default_script", "recovery_policy", "host_id", "capacity",
-                                     "budget_pools", "context_packets", "installations", "output_spool_bytes"))
+                                     "budget_pools", "context_packets", "installations", "output_spool_bytes",
+                                     "observed_basis", "basis_changes"))
     adapter = _obj(cfg.get("adapter", {}), "executor.adapter", (),
                    ("enforcement", "echo_proves_delivery", "predicates", "steering", "enforced_bounds", "context_boundaries"))
     if "enforcement" in adapter:
@@ -251,9 +273,28 @@ def parse_executor_config(raw) -> dict:
         _str(pool["measure"], "pool measure", 1)
         _int(pool["limit"], "pool limit")
     for idx, packet in enumerate(cfg.get("context_packets", [])):
-        _obj(packet, f"executor.context_packets[{idx}]", ("ref", "digest"))
-        _str(packet["ref"], "packet ref", 1)
-        _str(packet["digest"], "packet digest", 1)
+        if isinstance(packet, dict) and "reference" in packet:
+            _obj(packet, f"executor.context_packets[{idx}]", ("reference",))
+            try:
+                import context as CTX
+                CTX.packet_reference(packet["reference"], f"executor.context_packets[{idx}].reference")
+            except Exception as exc:  # envelope.Invalid
+                _fail(f"executor.context_packets[{idx}].reference: {exc}")
+        else:
+            _obj(packet, f"executor.context_packets[{idx}]", ("ref", "digest"))
+            _str(packet["ref"], "packet ref", 1)
+            _str(packet["digest"], "packet digest", 1)
+    if "observed_basis" in cfg:
+        _observed_basis(cfg["observed_basis"], "executor.observed_basis")
+    changes = cfg.get("basis_changes", [])
+    if not isinstance(changes, list):
+        _fail("executor.basis_changes must be an array")
+    for idx, change in enumerate(changes):
+        w = f"executor.basis_changes[{idx}]"
+        _obj(change, w, ("at", "observed_basis"))
+        if not C.valid_instant(change["at"]):
+            _fail(f"{w}.at must be an instant")
+        _observed_basis(change["observed_basis"], f"{w}.observed_basis")
     for idx, inst in enumerate(cfg.get("installations", [])):
         w = f"executor.installations[{idx}]"
         _obj(inst, w, ("installation_id", "harness", "detected"),
@@ -292,7 +333,11 @@ class Executor:
         self.host_id = cfg.get("host_id", DEFAULT_HOST)
         self.capacity = cfg.get("capacity")
         self.pools = cfg.get("budget_pools", {})
-        self.packets = {(pk["ref"], pk["digest"]) for pk in cfg.get("context_packets", [])}
+        self.packets = {(pk["ref"], pk["digest"]) for pk in cfg.get("context_packets", []) if "ref" in pk}
+        # EXECUTION 13.1: packets the host was given by packet reference.
+        self.packet_references = [pk["reference"] for pk in cfg.get("context_packets", []) if "reference" in pk]
+        self.observed_basis = cfg.get("observed_basis", {})
+        self.basis_changes = cfg.get("basis_changes", [])
         self.installations = cfg.get("installations", [])
         self.spool_bytes = cfg.get("output_spool_bytes", DEFAULT_SPOOL)
 
@@ -508,10 +553,138 @@ class Executor:
         return "resolved" if all(b in ("observed", "enforced_bound") for b in latest.values()) else "unresolved"
 
     # ------------------------------------------------------------ context
-    def binding_state(self, binding: dict) -> str:
-        if (binding["packet"]["ref"], binding["packet"]["digest"]) in self.packets:
+    @staticmethod
+    def m3_packet(packet: dict) -> dict:
+        """The M3 form of a binding's packet (EXECUTION 13.1 "Compatibility")."""
+        if "ref" in packet:
+            return {"ref": packet["ref"], "digest": packet["digest"]}
+        return {"ref": packet["packet"]["id"], "digest": packet["artifact"]["digest"]}
+
+    def held(self, binding: dict) -> bool:
+        """Whether the executor holds the bound packet (H-REVAL-HELD)."""
+        packet = binding["packet"]
+        if "ref" in packet:
+            if (packet["ref"], packet["digest"]) in self.packets:
+                return True
+            return any(r["packet"]["id"] == packet["ref"] and r["artifact"]["digest"] == packet["digest"]
+                       for r in self.packet_references)
+        if any(V.canonical(r) == V.canonical(packet) for r in self.packet_references):
+            return True
+        return (packet["packet"]["id"], packet["artifact"]["digest"]) in self.packets
+
+    def check_binding(self, x: dict, binding: dict) -> dict:
+        """EXECUTION 13.1 "What the executor checks": typed conditions against
+        the observed basis only (H-REVAL-OBSERVE). Returns the parts of a check
+        record that do not depend on the boundary."""
+        basis = self.observed_basis_of(x)
+        repos = basis.get("repositories", {})
+        results = []
+        if "context" in binding.get("fetch", {}):
+            # EXECUTION 13.1 "Packet facts at each check": the context provider
+            # cannot be read from here (no peers), so packet.facts, and
+            # packet.current under require_current, are unavailable (H8-PINNING).
+            results.append({"condition_id": "packet.facts", "result": "unavailable",
+                            "evidence": "context_provider_unreachable"})
+            if binding.get("require_current"):
+                results.append({"condition_id": "packet.current", "result": "unavailable",
+                                "evidence": "context_provider_unreachable"})
+        for cond in binding.get("conditions", []):
+            kind = cond["kind"]
+            observed = None
+            if kind == "repository_tree":
+                observed = repos.get(cond.get("repository"), {}).get("tree")
+            elif kind == "dirty_snapshot":
+                observed = repos.get(cond.get("repository"), {}).get("dirty_snapshot")
+            elif kind == "environment_digest":
+                observed = basis.get("environment_digest")
+            # authority_revision is never observable by the executor.
+            if observed is None:
+                results.append({"condition_id": cond["condition_id"], "result": "unavailable", "evidence": "not_observed"})
+            else:
+                results.append({"condition_id": cond["condition_id"],
+                                "result": "match" if observed == cond["expected"] else "mismatch",
+                                "observed": observed, "evidence": "observed_basis"})
+        held = self.held(binding)
+        if any(r["result"] == "mismatch" for r in results):
+            state = "stale"
+        elif held and all(r["result"] == "match" for r in results):
+            state = "current"
+        else:
+            state = "unknown"
+        check = {"observed_basis": V.loads(V.canonical_text(basis)), "held": held}
+        if not held and "fetch" in binding:
+            check["fetch"] = "provider_unreachable"
+        check.update(results=results, state=state)
+        return check
+
+    @staticmethod
+    def block_reason(check: dict) -> str | None:
+        if check["state"] == "current":
+            return None
+        if check["state"] == "stale":
+            return "context_binding_stale"
+        return "context_binding_unsatisfied" if not check["held"] else "context_binding_unknown"
+
+    @staticmethod
+    def latest_check(x: dict, binding: dict):
+        return next((c for c in reversed(x.get("checks", [])) if c["binding_id"] == binding["binding_id"]), None)
+
+    def revalidation_state(self, x: dict, binding: dict):
+        """EXECUTION 13.1: the state of the binding's latest check, or None
+        when it has none (H7-REVALIDATION-NO-CHECK)."""
+        check = self.latest_check(x, binding)
+        return check["state"] if check is not None else None
+
+    def binding_state(self, x: dict, binding: dict) -> str:
+        if x.get("revalidation"):
+            state = self.revalidation_state(x, binding)
+            if state is None:
+                state = self.check_binding(x, binding)["state"]
+            satisfied = state == "current"
+        else:
+            satisfied = self.held(binding)
+        if satisfied:
             return "satisfied"
         return "gap" if binding["obligation"] == "advisory" else "unsatisfied"
+
+    def _record_checks(self, st, boundary: str, bindings: list, transition: str | None = None,
+                       always: bool = False) -> list:
+        """Append a check per binding at a boundary: always at a new boundary,
+        otherwise only when the result differs from the last check of that
+        binding at that boundary (EXECUTION 13.1 "Records", H-REVAL-BOUNDARIES).
+        Returns [(binding, check)]."""
+        x = st["x"]
+        out = []
+        for binding in bindings:
+            parts = self.check_binding(x, binding)
+            last = next((c for c in reversed(x["checks"]) if c["binding_id"] == binding["binding_id"]
+                         and c["boundary"] == boundary and c.get("transition") == transition), None)
+            record = {"binding_id": binding["binding_id"], "boundary": boundary}
+            if transition is not None:
+                record["transition"] = transition
+            record["checked_at"] = self.now()
+            record.update(parts)
+
+            def essence(c):
+                return (c["held"], c["state"], [(r["condition_id"], r["result"], r.get("observed")) for r in c["results"]])
+
+            if always or last is None or essence(last) != essence(record):
+                x["checks"].append(record)
+                self._xevent(st, "execution.context.checked", dict(record))
+            out.append((binding, record))
+        return out
+
+    @staticmethod
+    def _start_bindings(x: dict) -> list:
+        return [b for b in x.get("context_bindings", []) if b["obligation"] in ("advisory", "required_before_start")]
+
+    def _revalidation_queue_reason(self, checked: list):
+        """H-REVAL-QUEUE-REASON."""
+        reasons = [self.block_reason(c) for b, c in checked if b["obligation"] == "required_before_start"]
+        for reason in ("context_binding_stale", "context_binding_unsatisfied", "context_binding_unknown"):
+            if reason in reasons:
+                return reason
+        return None
 
     # ---------------------------------------------------------- admission
     def _refusal(self, payload: dict):
@@ -549,16 +722,23 @@ class Executor:
                 or x.get("cancellation", {}).get("outcome") == "cancelled")
 
     def _running(self) -> int:
+        """Executions holding a capacity slot. Work that released its slot
+        while blocked before dispatch does not count (EXECUTION 13.1)."""
         count = 0
         for xid in self.store.ids_of(EXECUTION_KIND):
             _, x = self.load(xid)
-            if x["admission"] == "admitted" and not self._finished(x):
+            if (x["admission"] == "admitted" and not self._finished(x)
+                    and x.get("scheduling", {}).get("capacity") != "released"):
                 count += 1
         return count
 
-    def _queue_reason(self, x: dict):
-        if any(b["obligation"] == "required_before_start" and self.binding_state(b) != "satisfied"
-               for b in x.get("context_bindings", [])):
+    def _queue_reason(self, x: dict, checked: list | None = None):
+        if x.get("revalidation"):
+            reason = self._revalidation_queue_reason(checked or [])
+            if reason is not None:
+                return reason
+        elif any(b["obligation"] == "required_before_start" and self.binding_state(x, b) != "satisfied"
+                 for b in x.get("context_bindings", [])):
             return "context_binding_unsatisfied"
         if self.capacity is not None and self._running() >= self.capacity:
             return "capacity"
@@ -632,7 +812,10 @@ class Executor:
             "steering": [], "actions": [], "annotations": [], "checkpoints": [], "usage_observations": [],
             "context_deliveries": [], "transitions": [],
         }
-        for member in ("predecessor", "correlation"):
+        if "execution.context_revalidation" in features:
+            # EXECUTION 13.1: the extension applies to work submitted under it (H-REVAL-SCOPE).
+            x.update(revalidation=True, checks=[])
+        for member in ("predecessor", "correlation", "origin"):
             if member in payload:
                 x[member] = payload[member]
         if "context_bindings" in payload:
@@ -658,7 +841,11 @@ class Executor:
             x["delivery"] = "failed_before_delivery"
             event = {"admission": "refused", "runtime": "not_started", "reason": reason}
         else:
-            queue_reason = self._queue_reason(x)
+            checked = []
+            if x.get("revalidation") and self._start_bindings(x):
+                # EXECUTION 13.1 "Boundaries": admission; the checks precede the decision.
+                checked = self._record_checks(st, "admission", self._start_bindings(x), always=True)
+            queue_reason = self._queue_reason(x, checked)
             if queue_reason is not None:
                 x["admission"] = "queued"
                 x["queue_reason"] = queue_reason
@@ -850,9 +1037,12 @@ class Executor:
         view = {"execution": self.subject_of(xid), "revision": revision, "admission": x["admission"],
                 "delivery": x["delivery"], "runtime": x["runtime"], "result": x["result"], "exit": x["exit"],
                 "evaluation": x["evaluation"]}
+        revalidating = "execution.context_revalidation" in features
         for member in ("predecessor", "correlation", "finalized_by", "reason", "alternative", "queue_reason"):
             if member in x:
                 view[member] = x[member]
+        if not revalidating and view.get("queue_reason") in ("context_binding_stale", "context_binding_unknown"):
+            view["queue_reason"] = "context_binding_unsatisfied"  # CMP-8
         view["deliveries"] = [x["delivery_record"]] if "delivery_record" in x else []
         view["completions"] = x["completions"]
         view["effects"] = list(x["effects"])
@@ -882,8 +1072,28 @@ class Executor:
         if "execution.context" in features:
             bindings = []
             for b in x.get("context_bindings", []):
-                bindings.append(dict(b, state=self.binding_state(b)))
+                if revalidating:
+                    entry = dict(b, state=self.binding_state(x, b))
+                    state = self.revalidation_state(x, b)
+                    if state is not None:
+                        entry["revalidation"] = state
+                else:
+                    # EXECUTION 13.1 "Compatibility (CMP-8)": the M3 shape.
+                    entry = {"binding_id": b["binding_id"], "packet": self.m3_packet(b["packet"]),
+                             "obligation": b["obligation"]}
+                    if "transition" in b:
+                        entry["transition"] = b["transition"]
+                    entry.update(selected_by=b["selected_by"], state=self.binding_state(x, b))
+                bindings.append(entry)
             view["context"] = {"bindings": bindings, "deliveries": x["context_deliveries"]}
+            if revalidating and "scheduling" in x:
+                view["scheduling"] = x["scheduling"]
+            if revalidating:
+                view["context"]["checks"] = x.get("checks", [])
+                if x.get("blocked") is not None:
+                    view["context"]["blocked"] = x["blocked"]
+        if "origin" in x:
+            view["origin"] = x["origin"]
         if "execution.continuation" in features and "continuation" in x:
             view["continuation"] = x["continuation"]
         return view
@@ -1034,6 +1244,7 @@ class Executor:
         else:
             decision, reason = "dispatch_resumed", "provably_not_dispatched"
         delivery_id = x["delivery_id"]
+        x["dispatch_checked"] = False  # dispatch after recovery is a new boundary (EXECUTION 13.1)
         x["recovery"].append({"delivery_id": delivery_id, "decision": decision, "reason": reason,
                               "recorded_at": self.now()})
         # EXECUTION 7.1 item 3: recovery advances the host generation, whatever
@@ -1140,6 +1351,11 @@ class Executor:
         if x["delivery"] == "pending" and due("delivery", admitted_at):
             pass_("delivery")
             dispatched = x.get("marker") is not None
+            released = not dispatched and x.get("scheduling", {}).get("capacity") == "released"
+            if released and x["runtime"] != "exited" and due("execution_deadline", admitted_at):
+                # EXECUTION 15.1 "Event order": released work ending emits every
+                # passed timeout before the overdue markings (H.10).
+                pass_("execution_deadline")
             evidence = {"class": "delivery_timeout" if dispatched else "delivery_timeout_before_dispatch",
                         "source": "delivery timeout"}
             # 15.1 order: timeout.passed, overdue obligations, then the
@@ -1148,6 +1364,11 @@ class Executor:
             # obligations stay overdue (G5-TIMEOUT-OBLIGATIONS).
             self._overdue(st, x["delivery_id"])
             self._determine(st, "ambiguous" if dispatched else "failed_before_delivery", evidence, close=False)
+            if released:
+                # EXECUTION 13.1, 15.1: a passed delivery timeout ends released
+                # work; the scheduling change that records the ending is last.
+                x.pop("blocked", None)
+                self._set_scheduling(st, "released", "deadline_passed")
             progressed = True
         # EXECUTION 8: execution_deadline applies while runtime is not exited.
         if x["runtime"] != "exited" and due("execution_deadline", admitted_at):
@@ -1182,7 +1403,11 @@ class Executor:
 
     def _try_admit(self, st) -> bool:
         x = st["x"]
-        reason = self._queue_reason(x)
+        checked = []
+        before = st["rev"]
+        if x.get("revalidation") and self._start_bindings(x):
+            checked = self._record_checks(st, "admission", self._start_bindings(x))
+        reason = self._queue_reason(x, checked)
         if reason is None:
             delivery_id = self._admit(st)
             self._xevent(st, "execution.admission.changed", {"admission": "admitted", "runtime": "preparing",
@@ -1193,7 +1418,7 @@ class Executor:
             self._xevent(st, "execution.admission.changed", {"admission": "queued", "runtime": "not_started",
                                                                      "queue_reason": reason})
             return True
-        return False
+        return st["rev"] != before  # a changed check was recorded
 
     def _pending_attempts(self, st) -> bool:
         x = st["x"]
@@ -1277,6 +1502,18 @@ class Executor:
         (key, val), = script[pos].items()
         now = self.now()
         pending = x["delivery"] == "pending"
+        if x.get("revalidation"):
+            starts_dispatch = pending and x.get("marker") is None and (
+                key == "deliver" or (key == "crash" and val == "after_write")
+                or (key == "stale_dispatch" and val["generation"] == x["generation"]))
+            if starts_dispatch:
+                gated = self._dispatch_gate(st)
+                if gated is not None:
+                    return gated
+            if key == "transition":
+                gated = self._transition_gate(st, val)
+                if gated is not None:
+                    return gated
         if key == "wait_until":
             if now < val:
                 return False
@@ -1333,11 +1570,174 @@ class Executor:
             elif pending and not x["dispatched"]:
                 self._dispatch_attempt(st)  # a dispatcher that is not fenced dispatches (15.1)
         else:
-            if key not in ("transport_errors", "on_cancel", "stall", "probe_status", "reconcile_finds"):
+            if key not in ("transport_errors", "on_cancel", "stall", "probe_status", "reconcile_finds", "observe_basis",
+                           "observe_host_basis"):
                 self._observed(st)
             getattr(self, f"_step_{key}")(st, x, val, now)
         x["script_pos"] = pos + 1
         return True
+
+    def _set_scheduling(self, st, capacity: str, reason: str | None) -> bool:
+        """EXECUTION 13.1 "Capacity while blocked before dispatch": record a
+        scheduling change with its event (H8-CAPACITY-RELEASE)."""
+        x = st["x"]
+        value = {"capacity": capacity}
+        if reason is not None:
+            value["reason"] = reason
+        if x.get("scheduling") == value:
+            return False
+        x["scheduling"] = value
+        # EXECUTION 9: the event always carries a reason; reacquiring capacity
+        # is "resumed", which the inspect member omits (H8-RESUMED-REASON,
+        # fixture-informed: the scheduling schema's reasons do not include it).
+        payload = dict(value) if reason is not None else {"capacity": capacity, "reason": "resumed"}
+        self._xevent(st, "execution.scheduling.changed", payload)
+        return True
+
+    def _end_reason(self, x: dict):
+        """The EXECUTION 7.1 revalidation applied to released work."""
+        if x["counters"]["cancels"] > 0:
+            return "cancelled"
+        if not self._submitter_authorized(x):
+            return "authorization_lost"
+        if self._deadline_passed(x):
+            return "deadline_passed"
+        return None
+
+    def _end_released(self, st, reason: str) -> None:
+        """Released work ends instead of resuming: never dispatched. EXECUTION
+        15.1: any passed timeout was already appended by the timeout pass;
+        then the overdue markings for a deadline, the delivery observation
+        (class ``scheduling`` on the record, ``never_dispatched`` on the
+        effect), and last the scheduling change that records the ending (H.10)."""
+        x = st["x"]
+        x.pop("blocked", None)
+        deadline = reason == "deadline_passed"
+        if deadline:
+            self._overdue(st, x["delivery_id"])  # a deadline leaves obligations overdue (7.1)
+        self._determine(st, "failed_before_delivery", {"class": "scheduling", "source": reason},
+                        effect_evidence={"class": "never_dispatched", "source": reason}, close=not deadline)
+        self._set_scheduling(st, "released", reason)
+
+    def _dispatch_gate(self, st):
+        """EXECUTION 13.1: a required-before-start binding that is not current
+        holds dispatch of the initial brief (H-REVAL-BLOCKS) and releases the
+        capacity slot; released work ends or revalidates, reacquires capacity
+        and dispatches once (H8-CAPACITY-RELEASE). Returns None when dispatch
+        may proceed, else whether anything was recorded."""
+        x = st["x"]
+        before = st["rev"]
+        released = x.get("scheduling", {}).get("capacity") == "released"
+        if released:
+            reason = self._end_reason(x)
+            if reason is not None:
+                self._end_released(st, reason)
+                return True
+        bindings = self._start_bindings(x)
+        if not bindings and not released:
+            return None
+        new_boundary = not x.get("dispatch_checked")
+        checked = self._record_checks(st, "dispatch", bindings, always=new_boundary) if bindings else []
+        x["dispatch_checked"] = True
+        blocking = [(b, c) for b, c in checked
+                    if b["obligation"] == "required_before_start" and c["state"] != "current"]
+        previous = x.get("blocked")
+        if not blocking:
+            if previous is not None and previous["boundary"] == "dispatch":
+                x.pop("blocked")
+            if released:
+                if self.capacity is not None and self._running() >= self.capacity:
+                    self._set_scheduling(st, "released", "capacity")
+                    return st["rev"] != before or previous is not None
+                self._set_scheduling(st, "held", None)
+            x["dispatch_checked"] = False  # the next dispatch boundary is a new one
+            return None
+        b, c = blocking[0]
+        block = {"boundary": "dispatch", "binding_id": b["binding_id"], "reason": self.block_reason(c)}
+        changed = previous != block
+        x["blocked"] = block
+        self._set_scheduling(st, "released", block["reason"])
+        return changed or new_boundary or st["rev"] != before
+
+    def _transition_gate(self, st, name: str):
+        """EXECUTION 13.1: block only the named transition (H-REVAL-BLOCKS)."""
+        x = st["x"]
+        bindings = [b for b in x.get("context_bindings", [])
+                    if b["obligation"] == "required_before_transition" and b.get("transition") == name]
+        if not bindings:
+            return None
+        before = st["rev"]
+        key = f"transition:{name}"
+        new_boundary = x.get("transition_checked") != key
+        checked = self._record_checks(st, "transition", bindings, transition=name, always=new_boundary)
+        x["transition_checked"] = key
+        blocking = [(b, c) for b, c in checked if c["state"] != "current"]
+        previous = x.get("blocked")
+        if not blocking:
+            if previous is not None and previous["boundary"] == "transition":
+                x.pop("blocked")
+            x.pop("transition_checked", None)
+            return None
+        b, c = blocking[0]
+        block = {"boundary": "transition", "binding_id": b["binding_id"], "transition": name,
+                 "reason": self.block_reason(c)}
+        changed = previous != block
+        x["blocked"] = block
+        if changed:
+            self._xevent(st, "execution.transition.blocked", dict(block))
+        return changed or new_boundary or st["rev"] != before
+
+    @staticmethod
+    def _merge_basis(basis: dict, overlay: dict) -> None:
+        for rid, repo in overlay.get("repositories", {}).items():
+            basis.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
+        if "environment_digest" in overlay:
+            basis["environment_digest"] = overlay["environment_digest"]
+
+    def host_basis(self) -> dict:
+        """The host's observed basis (H8-BASIS-CHANGES as resolved): launch
+        ``observed_basis``, then due ``basis_changes`` and recorded
+        ``observe_host_basis`` steps, each merged in time order."""
+        now = self.now()
+        # Conformance README: basis_changes merge per member and repository,
+        # like observe_host_basis, in time order (H.9).
+        timeline = [(c["at"], 0, i, "merge", c["observed_basis"])
+                    for i, c in enumerate(self.basis_changes) if c["at"] <= now]
+        text = self.store.get_kv("host_observations")
+        for i, obs in enumerate(V.loads(text) if text else []):
+            timeline.append((obs["recorded_at"], 1, i, "merge", obs["basis"]))
+        basis = V.loads(V.canonical_text(self.observed_basis))
+        for _, _, _, _, value in sorted(timeline, key=lambda t: t[:3]):
+            self._merge_basis(basis, value)
+        return basis
+
+    def _step_observe_host_basis(self, st, x, val, now):
+        text = self.store.get_kv("host_observations")
+        observations = V.loads(text) if text else []
+        observations.append({"recorded_at": now, "basis": val})
+        self.store.set_kv("host_observations", V.canonical_text(observations))
+
+    def observed_basis_of(self, x: dict) -> dict:
+        """What revalidation can observe for an execution: the host basis
+        with the execution's own ``observe_basis`` observations merged over
+        it (H-REVAL-OBSERVE, H8-BASIS-CHANGES; the launch part is re-read at
+        every start, H3-OBSERVED-BASIS-RESTART)."""
+        basis = self.host_basis()
+        overlay = x.get("observations", {})
+        for rid, repo in overlay.get("repositories", {}).items():
+            basis.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
+        if "environment_digest" in overlay:
+            basis["environment_digest"] = overlay["environment_digest"]
+        return basis
+
+    def _step_observe_basis(self, st, x, val, now):
+        """Launch step observe_basis: the execution's observed basis changes,
+        merged per repository and member (H-REVAL-OBSERVE)."""
+        overlay = x.setdefault("observations", {})
+        for rid, repo in val.get("repositories", {}).items():
+            overlay.setdefault("repositories", {}).setdefault(rid, {}).update(repo)
+        if "environment_digest" in val:
+            overlay["environment_digest"] = val["environment_digest"]
 
     def _send_responses(self, st) -> None:
         """EXECUTION 15.1: when every requested action is answered,
@@ -1549,7 +1949,7 @@ class Executor:
         else:
             outcome = {"acknowledged": "acknowledged", "accepted": "delivered", "queued": "queued",
                        "lost": "unknown"}[val["harness"]]
-        obs = {"binding_id": binding["binding_id"], "digest": binding["packet"]["digest"],
+        obs = {"binding_id": binding["binding_id"], "digest": self.m3_packet(binding["packet"])["digest"],
                "target": {"execution": self.subject_of(st["id"])}, "boundary": val["boundary"],
                "outcome": outcome, "recorded_at": now}
         x["context_deliveries"].append(obs)

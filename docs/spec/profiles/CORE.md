@@ -299,6 +299,12 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `idempotency_conflict` | `no` | Command identity bound to a different intent | `command_id` |
 | `dedupe_history_unavailable` | `after_reconcile` | Command identity may have been used but its record was discarded | `oldest_retained` |
 | `effect_history_unavailable` | `after_reconcile` | The effect may have been recorded but its record is no longer retained (§19.2) | — |
+| `upload_offset_mismatch` | `after_reconcile` | Evidence: an append's offset is not the bytes received so far (EVIDENCE §4) | `received` |
+| `upload_size_exceeded` | `no` | Evidence: an append would exceed the declared size | `received`, `size` |
+| `upload_incomplete` | `after_reconcile` | Evidence: seal before all declared bytes were received; a new seal needs the revision after the missing appends | `received`, `size` |
+| `content_digest_mismatch` | `no` | Evidence: received bytes do not match the declared digest | `computed` |
+| `artifact_digest_mismatch` | `no` | Evidence: a reference's digest differs from the artifact's sealed digest; sealed content is immutable | — |
+| `hold_active` | `after_reconcile` | Evidence: purge while an active hold is not released by this command | `holds`, `filtered` |
 | `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |
@@ -311,6 +317,8 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `permission_denied` | `no` | The principal is not authorized for this operation on this subject (§15.5) | `reason` |
 | `unavailable` | `same_command` | Provider temporarily cannot process; nothing was bound | — |
 | `internal_error` | `after_reconcile` | Provider failed in an undefined way; outcome unknown | — |
+
+Profile error codes are raised only after authorization (§15.5), so an unauthorized principal never receives them or their details. A profile limit that names no subject, such as Evidence's `chunk_limit`, is decided with the Core limits at step 2 and reveals nothing.
 
 `retry: same_command` means retransmitting the identical command, with the same `command_id`, is safe. It never means "send a new command". A caller that loses a response retransmits the same command; `unavailable` and `internal_error` do not tell the caller whether the command was bound.
 
@@ -405,6 +413,12 @@ A grant is a provider-owned subject of kind `core.grant`. Its record contains:
 - A grant is expired from the instant `expires_at` onward: it authorizes only while the provider clock is strictly before `expires_at`.
 
 **Revoking:** a grant may be revoked by its issuer or by an authority principal. Anyone else gets `permission_denied` with reason `not_authority`, whether or not the grant exists. Revoking a grant that is already revoked is `permission_denied` with reason `revoked`, decided after that check. The outcome's `revoked` lists the named grant first, then its descendants that were still active, in a provider-chosen order; each gets a new revision and one `core.grant.revoked` event. Already revoked descendants are neither listed nor changed. Revocation stops future operations under the grant. It does not undo operations already accepted, and it does not recall effects that later profiles may already have sent.
+
+- **Constraints.** A grant may carry `constraints`: a list of typed restrictions, each `{ kind, ... }`, whose kinds are defined by profile features (for example `evidence.work_binding`, EVIDENCE §10).
+  - A constraint only narrows what the grant's rights and resources allow; it never widens them.
+  - Issuing a grant with a constraint kind this provider does not implement is `invalid_envelope` at `/payload/constraints/<i>/kind`. A kind whose feature the issuing session did not negotiate is `unsupported_required_feature` with `features`.
+  - A delegated grant carries every constraint of its parent, unchanged, otherwise `delegation_exceeded`. It may add constraints, which only narrow it further.
+  - Resource kinds never imply a constraint.
 
 ### 15.4 Grants and authority epochs
 

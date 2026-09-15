@@ -134,7 +134,7 @@ All EXE rows with a deterministic reference executor (fake host), mutants and sc
 
 ### M4 — Evidence and Context profiles
 
-All EVD and CTX rows plus the cross-profile scenarios. These cover direct composition, missing required context at the deadline, correction during preparation, stale basis, CBR outage, shared-subscriber cancellation and the preparation/resource cycle.
+Detailed task: [M4](M4.md). All EVD and CTX rows, EXE-21, plus the cross-profile scenarios. These cover direct composition, missing required context at the deadline, correction during preparation, stale basis, CBR outage, shared-subscriber cancellation and the preparation/resource cycle.
 
 ### M5 — Knowledge and Verification profiles
 

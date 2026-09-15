@@ -24,6 +24,7 @@ No fixture, interface, spec, schema or runner file was edited.
 - **Question.** The schema requires `scope` and `retention_class`. The interface does not give values, and EVIDENCE §3 calls them opaque and provider-defined.
 - **Implemented.** `scope: "thirdparty"` and `retention_class: "standard"`. `capture` carries only `captured_at` (now, from the clock file). `coverage` is `{ completeness: "complete" }`. `work` and `locator` are omitted.
 - **Basis.** Own judgment. If a provider refuses these class names, the interface would need to name them.
+- **After the first run.** The reference Evidence provider accepted both values, and the fixtures do not match them. They remain unspecified by the interface.
 
 ### TP-3: publisher descriptor provenance
 - **Location.** Interface, `minimal-publisher` "Behavior".
@@ -94,3 +95,52 @@ No fixture, interface, spec, schema or runner file was edited.
   - `context.packet.inspect` asks for a 1-byte excerpt, because complete bytes come only from `evidence.fetch`.
   - Frames the clients send are bounded by the provider's negotiated `max_frame_bytes`, and appends by `chunk_limit`.
 - **Basis.** Documents; the sizes are own judgment.
+
+## Changes and findings after the first runner run
+
+First run, at commit `fbc71fe`: both fixtures failed.
+- `composition.thirdparty-kernel-enforces-required-claim-boundary` failed at step 29 (0-based): `check.w-valid.1` was `not_found` within 20000 ms.
+- `composition.thirdparty-publisher-feeds-reference-verification` failed at step 5: the publisher exited with status 1.
+
+The fixtures were opened only after that run.
+
+### TP-13: `core.grants` was intended but never requested (implementation bug)
+- **Location.** TP-1; CORE §5.
+- **Question.** Why did every `evidence.upload.prepare` and `evidence.fetch` answer `invalid_envelope`?
+- **What happened.** TP-1 was written before the run, but the sessions requested only the dependency set. The client logs showed `core/1[core.events]` and `invalid_envelope` on the first prepare, so the `grant` field was an unknown field (CORE §5.1). The kernel therefore recorded `w-valid` as `unsatisfied`, and its records were never published.
+- **Implemented.** Every session now lists `core` with `core.grants` among its required profiles. Both fixtures then pass.
+- **Basis.** Documents (CORE §5, §15) and the interface. The diagnosis came from the client stderr logs the runner saved, not from fixture content.
+
+### TP-14: diagnostics
+- **Change.** Refusal messages in client logs now name the error's `details.path`, `reason`, `limit`, `features`, `computed` or `received` when present. Identical consecutive log lines are collapsed into a repeat count. Credentials are still redacted, and the runner's stderr logs were checked to contain no `ccred1` string.
+- **Basis.** Own judgment. The first run's kernel log held about 64 KB of one repeated line.
+
+### TP-15: the state is per packet revision, not per binding obligation
+- **Location.** Interface evaluation rules 3 and 4; fixture work item `w-adv`.
+- **Question.** For an advisory binding to a packet whose **required** item is invalidated, is the state `stale` or `current`?
+- **Documents and interface.** Rules 3 and 4 refer to the obligations of the packet's items ("an item whose obligation is not advisory"), not to the binding's obligation.
+- **Implemented, unchanged.** `w-adv` is recorded `stale` with decision `dispatch` and `gap: true`. The fixture expects exactly this.
+- **Basis.** Interface; confirmed by fixture.
+
+### TP-16: a withheld item's later check after the Knowledge provider stops
+- **Location.** Interface "Re-evaluation"; CONTEXT §14 "At the read".
+- **Observation.** After `knw` stopped, `w-req` (bound to `r-1`, whose required claim had been rejected) was re-evaluated. The Context provider then reported the item as unverified rather than invalidated, so the kernel published `check.w-req.2` with state `unknown`, still withheld. The fixture does not look at `check.w-req.2`; it checks only that `dispatch.w-req` does not exist.
+- **Implemented, unchanged.** A new check record is published because the state differs from the previous check, as the interface requires.
+- **Basis.** Interface; observed in the client log.
+
+### TP-17: what the digest-mismatch case exercises
+- **Location.** Fixture work item `w-tampered`; interface rule 1; EVIDENCE §5 "Reference mismatch".
+- **Observation.** `w-tampered` binds `packet.r-2.1` with the digest of `packet.r-1.1`. The reference provider refuses the fetch with `artifact_digest_mismatch`, so the kernel records `unsatisfied` with reason `packet bytes not fetched: artifact_digest_mismatch`.
+- **Coverage.** The kernel's own hash of the bytes it assembled is not what decides this case. Bytes served under the right digest but altered, as the `evidence_store.serve_altered_bytes` control would produce, are not exercised by this fixture. The kernel would still refuse them (`fetched packet bytes do not match the reference digest`), but no fixture run shows it.
+- **Basis.** Fixture and transcript. Nothing changed; recorded as a coverage limit.
+
+## Mutant runs
+
+| Mutant | Fixture | Outcome | Failing step (0-based) and reason | Cause |
+|---|---|---|---|---|
+| `minimal-executor=ignores-required-boundary` | `composition.thirdparty-kernel-enforces-required-claim-boundary` | `fail` | 51: `expected error not_found, received success` for `evidence.inspect` of `dispatch.w-req` | The mutant published an honest `check.w-req.1` (`stale`, `withhold`) and then dispatched anyway (`dispatch.w-req`, `gap: true`). It also dispatched `w-tampered`. |
+| `minimal-publisher=uploads-bytes-differing-from-digest` | `composition.thirdparty-publisher-feeds-reference-verification` | `fail` | 5: `client "publisher" exited with status 1; 0 is required` | The provider refused the seal of `tp-contract` with `content_digest_mismatch` (client log), and the publisher exited 1. |
+
+## Unresolved
+
+Nothing fails in these runs. Open interface questions, for the owner and not for the clients: TP-2 (descriptor `scope` and `retention_class`), TP-6 (kernel restart) and TP-8 (Context provider outage when it also holds the packets).

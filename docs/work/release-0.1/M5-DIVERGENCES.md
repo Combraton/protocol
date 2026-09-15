@@ -3,9 +3,10 @@
 The independent Python provider was extended to `knowledge/1`, `verification/1` and single-provider `context.claims` by a spec-only helper. The helper worked in a separate worktree, based on `950f3e0`, and never read the reference, the runner source or the cross-checks. It committed its implementation (`97b5471`) before opening any M5 fixture, and afterwards read only the five fixtures that failed. Its record is `conformance/independent/python-core/DIVERGENCES.md` §H.M5, merged from `release-0.1/m5-independent`.
 
 **Runs:**
-- Baseline: 229 pass, 24 skipped, 18 unsupported.
-- First run: 238 pass, 5 fail, 24 skipped, 4 unsupported.
-- Final: 243 pass, 0 fail, 24 skipped, 4 unsupported.
+- Eleventh pass, baseline: 229 pass, 24 skipped, 18 unsupported.
+- Eleventh pass, first run: 238 pass, 5 fail, 24 skipped, 4 unsupported.
+- Eleventh pass, final: 243 pass, 0 fail, 24 skipped, 4 unsupported.
+- Twelfth and thirteenth passes (realignments, §D): 245 pass, 24 skipped, 4 unsupported, with no fixture read.
 
 Every point is resolved against the written contract. Where the reference, a fixture or the documents were wrong, that side was changed, not the independent implementation merely made to copy the reference.
 
@@ -89,6 +90,18 @@ Every point is resolved against the written contract. Where the reference, a fix
 | HM5B-CONTRACT-MEMBERS | **spec (VERIFICATION §3):** a contract is a closed object (CORE §5.1). Every member is required, and a wrongly typed or unlisted member is `invalid_format`. The reference accepted unlisted members and is fixed. **fixture:** receipts v3. **mutant:** `contract-members-open`. |
 | HM5B-DUPLICATE-PATH-ORDER | **spec (KNOWLEDGE §3):** each entry is validated before duplicates are checked, as the helper read it |
 | HM5B-EVALUATE-DEPENDENCY-RIGHTS | Confirmed. The difference matters only for commands that then fail `not_found` at step 7. |
+
+**Thirteenth pass (short realignment, base `808801b`).**
+
+- **Result.** At that base the helper's code failed exactly the two step 7 order fixtures. After realigning with the corrected order and implementing the queued-loss rule from the text, it passed every fixture without reading one: 245 pass, 24 skipped, 4 unsupported.
+- **Readings.** Its H.M5c readings agree with the documents and the reference, so no further change was needed:
+  - **HM5C-EPOCH-REMOTE:** no epoch check for another provider's revision.
+  - **HM5C-EPOCH-RESOLVED-RECORD:** a resolved record's scope epoch is still checked first.
+  - **HM5C-EPOCH-BEFORE-AUTHORITY:** a non-authority with a wrong epoch gets the epoch error.
+  - **HM5C-PERMITTED-FIRST:** one invalidation entry.
+  - **HM5C-QUEUED-LOSS-EVENTS:** no `running` event.
+  - **HM5C-CONTRACT-TYPES:** evaluator ID strings are not validated further.
+- **Probe.** Its probe found two deviations no fixture notices, both already listed below.
 
 ## E. Still unchecked by fixtures (coverage limits)
 

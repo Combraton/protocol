@@ -989,6 +989,61 @@ pub fn query(
     Ok(result)
 }
 
+/// Seal bytes the provider itself produced (for example a context packet revision) as one
+/// artifact, with the provider as producer. Returns the artifact's events.
+pub fn publish_sealed(
+    tx: &Transaction,
+    id: &str,
+    provider: &str,
+    source: &str,
+    content: &[u8],
+    media_type: &str,
+    now: &str,
+) -> rusqlite::Result<Vec<Draft>> {
+    let digest = crate::json::sha256_digest(content);
+    let descriptor = json!({
+        "digest": digest,
+        "size": content.len(),
+        "media_type": media_type,
+        "producer": {"principal": provider, "producer_id": "reference-context-provider"},
+        "source": {"kind": "context.packet", "id": source},
+        "scope": "context",
+        "capture": {"captured_at": now, "anchors": []},
+        "coverage": {"completeness": "complete"},
+        "retention_class": "context-packet",
+    });
+    let record = json!({
+        "descriptor": descriptor,
+        "state": "sealed",
+        "received": content.len(),
+        "availability": {"state": "available"},
+        "prepared_at": now,
+        "sealed_at": now,
+    });
+    set_bytes(tx, id, content)?;
+    save(tx, ARTIFACT, id, 2, &record)?;
+    let artifact = subject(ARTIFACT, id);
+    Ok(vec![
+        (
+            "evidence.artifact.staged",
+            artifact.clone(),
+            1,
+            json!({"descriptor": descriptor}),
+        ),
+        (
+            "evidence.artifact.sealed",
+            artifact,
+            2,
+            json!({"digest": digest, "size": content.len()}),
+        ),
+    ])
+}
+
+/// Bytes of a sealed artifact as stored, without injected store faults.
+pub fn sealed_bytes(tx: &Transaction, id: &str) -> rusqlite::Result<Vec<u8>> {
+    bytes(tx, id)
+}
+
 /// A hold record, read without opening a transaction so authorization checks can run inside one.
 fn hold_record(store: &Store, id: &str) -> rusqlite::Result<Option<Value>> {
     Ok(store

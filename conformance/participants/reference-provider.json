@@ -22,6 +22,10 @@
       {
         "name": "evidence",
         "major": 1
+      },
+      {
+        "name": "context",
+        "major": 1
       }
     ],
     "features": [
@@ -40,13 +44,20 @@
       "core.events.backpressure",
       "execution.output",
       "evidence.manifests",
-      "evidence.retention_control"
+      "evidence.retention_control",
+      "context.advisory",
+      "context.required_before_start",
+      "context.required_before_transition",
+      "context.shared_jobs",
+      "context.updates",
+      "context.expand"
     ],
     "test_controls": [
       "clock.file",
       "executor.script",
       "store.faults",
-      "evidence.store"
+      "evidence.store",
+      "context.script"
     ],
     "test_barriers": [
       "backpressure.limit.reached",
@@ -307,7 +318,26 @@
       "duplicate-chunk-accepted",
       "coverage-optional",
       "locator-as-identity",
-      "release-without-authority"
+      "release-without-authority",
+      "uncheckable-item-accepted",
+      "dirty-basis-complete-accepted",
+      "limits-collapsed",
+      "packet-bytes-regenerated",
+      "excerpt-carries-digest",
+      "revision-remapped",
+      "global-coverage-cursor",
+      "required-downgraded-to-advisory",
+      "missing-required-satisfied",
+      "mandatory-items-dropped",
+      "transition-as-advisory",
+      "cancel-ends-job",
+      "expand-ignores-grant",
+      "packet-mutated-in-place",
+      "old-revision-relabeled-current",
+      "stale-derivation-current",
+      "unobserved-frontier-claimed",
+      "unlabeled-section",
+      "authority-revision-dropped"
     ]
   }
 }

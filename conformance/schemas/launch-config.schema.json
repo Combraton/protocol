@@ -435,6 +435,28 @@
         }
       },
       "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "description": "Scripted context preparation (decision 007; CONTEXT section 12).",
+      "properties": {
+        "scripts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/context_step"
+            }
+          }
+        },
+        "default_script": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/context_step"
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -713,6 +735,69 @@
         },
         "additionalProperties": false
       }
+    },
+    "context_step": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "wait_until": {
+          "type": "string"
+        },
+        "investigate": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "section": {
+          "type": "object",
+          "required": [
+            "section_id",
+            "label",
+            "content"
+          ]
+        },
+        "coverage": {
+          "type": "object",
+          "required": [
+            "producer",
+            "frontier",
+            "gaps"
+          ]
+        },
+        "unmet": {
+          "type": "object",
+          "required": [
+            "item_id",
+            "reason"
+          ]
+        },
+        "omit": {
+          "type": "object",
+          "required": [
+            "reason"
+          ]
+        },
+        "correction": {
+          "type": "object",
+          "required": [
+            "item_id",
+            "authority_revision"
+          ]
+        },
+        "conditions": {
+          "type": "array"
+        },
+        "publish": {
+          "type": "object"
+        },
+        "end": {
+          "type": "string"
+        },
+        "stall": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

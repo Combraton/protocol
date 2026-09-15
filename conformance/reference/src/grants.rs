@@ -45,6 +45,18 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "evidence.publish".to_string(),
             params["subject"].clone(),
         )]),
+        "context.request.submit" | "context.request.cancel" => Some(vec![(
+            "context.request".to_string(),
+            params["subject"].clone(),
+        )]),
+        "context.request.inspect" => Some(vec![(
+            "context.read".to_string(),
+            serde_json::json!({"kind": "context.request", "id": params["payload"]["request"]}),
+        )]),
+        "context.packet.inspect" | "context.expand" => Some(vec![(
+            "context.packet.read".to_string(),
+            serde_json::json!({"kind": "context.packet", "id": params["payload"]["packet"]}),
+        )]),
         "evidence.hold" => Some(vec![(
             "evidence.hold".to_string(),
             serde_json::json!({"kind": "evidence.artifact", "id": params["payload"]["artifact"]["id"]}),

@@ -206,6 +206,31 @@ const OPERATIONS: &[Operation] = &[
         command: true,
     },
     Operation {
+        name: "context.request.submit",
+        profile: "context",
+        command: true,
+    },
+    Operation {
+        name: "context.request.cancel",
+        profile: "context",
+        command: true,
+    },
+    Operation {
+        name: "context.request.inspect",
+        profile: "context",
+        command: false,
+    },
+    Operation {
+        name: "context.packet.inspect",
+        profile: "context",
+        command: false,
+    },
+    Operation {
+        name: "context.expand",
+        profile: "context",
+        command: false,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -262,6 +287,20 @@ const SUPPORTED: &[SupportedProfile] = &[
         name: "evidence",
         majors: &[1],
         features: &["evidence.manifests", "evidence.retention_control"],
+        depends_on: &["core"],
+        requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
+        name: "context",
+        majors: &[1],
+        features: &[
+            "context.advisory",
+            "context.required_before_start",
+            "context.required_before_transition",
+            "context.shared_jobs",
+            "context.updates",
+            "context.expand",
+        ],
         depends_on: &["core"],
         requires_core_features: &["core.events"],
     },
@@ -376,6 +415,8 @@ pub struct Identity {
     pub faults: std::sync::Arc<std::sync::Mutex<Value>>,
     /// Scripted evidence store controls (test environment; decision 007).
     pub evidence_store: std::sync::Arc<Value>,
+    /// Scripted context preparation (test environment; CONTEXT section 12).
+    pub context_script: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -520,6 +561,11 @@ impl Provider {
         if let Err(error) = crate::evidence::tick(&mut self.store, &now, &evidence_store) {
             eprintln!("evidence tick: {error}");
         }
+        let provider_id = self.identity.provider_id.clone();
+        if let Err(error) = crate::context::tick(&mut self.store, &now, &provider_id, &self.mutants)
+        {
+            eprintln!("context tick: {error}");
+        }
     }
 
     fn process(&mut self, id: &Value, method: &str, params: Value) -> Result<Value, Reject> {
@@ -608,6 +654,7 @@ impl Provider {
                 "evidence.hold" | "evidence.release" | "evidence.purge" => {
                     Some("evidence.retention_control")
                 }
+                "context.expand" => Some("context.expand"),
                 _ => None,
             };
             if let Some(feature) = feature
@@ -617,6 +664,23 @@ impl Provider {
                     "unsupported_required_feature",
                     json!({"features": [feature]}),
                 ));
+            }
+            if operation.name == "context.request.submit" {
+                // Timing semantics are negotiated explicitly (CONTEXT section 1, CTX-9).
+                let missing: Vec<String> = crate::context::obligation_features(&params["payload"])
+                    .into_iter()
+                    .filter(|feature| !self.feature_negotiated(feature))
+                    .filter(|feature| {
+                        !(feature == "context.required_before_transition"
+                            && self.mutants.on("transition-as-advisory"))
+                    })
+                    .collect();
+                if !missing.is_empty() && !self.mutants.on("feature-operations-ungated") {
+                    return Err(reject(
+                        "unsupported_required_feature",
+                        json!({"features": missing}),
+                    ));
+                }
             }
         }
 
@@ -819,6 +883,11 @@ impl Provider {
         let fault = self.take_fault(operation_name);
         let evidence_store = self.identity.evidence_store.clone();
         let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
+        let context_script = self.identity.context_script.clone();
+        let context_features = (
+            self.feature_negotiated("context.shared_jobs"),
+            self.feature_negotiated("context.updates"),
+        );
         let fail_commit =
             fault == Some("commit_unavailable") && !self.mutants.on("unavailable-after-binding");
         let mutants = &self.mutants;
@@ -857,6 +926,20 @@ impl Provider {
                     }
                     "core.effects.abort_obligation" => {
                         crate::features::abort_obligation(tx, &subject_id, &payload, &context)?
+                    }
+                    "context.request.submit" | "context.request.cancel" => {
+                        let session = crate::context::Session {
+                            principal: &principal,
+                            shared_jobs: context_features.0,
+                            updates: context_features.1,
+                            script: &context_script,
+                            mutants,
+                        };
+                        if operation_name == "context.request.submit" {
+                            crate::context::submit(tx, &subject_id, &payload, &session)?
+                        } else {
+                            crate::context::cancel(tx, &subject_id, &session)?
+                        }
                     }
                     name if name.starts_with("evidence.") => {
                         let evidence_context = crate::evidence::Context {
@@ -1553,6 +1636,23 @@ impl Provider {
         let ignore_unknown = self.mutants.on("accept-unknown-fields");
         // Mutant `ignore-unique-items` validates a copy with duplicate requires entries removed.
         let mut deduplicated = params.clone();
+        if self.mutants.on("uncheckable-item-accepted")
+            && operation == "context.request.submit"
+            && let Some(items) = deduplicated
+                .pointer_mut("/payload/items")
+                .and_then(Value::as_array_mut)
+        {
+            for item in items {
+                let known = [
+                    "source_included",
+                    "evidence_included",
+                    "authority_content_included",
+                ];
+                if !known.iter().any(|kind| item["check"]["kind"] == *kind) {
+                    item["check"] = json!({"kind": "authority_content_included"});
+                }
+            }
+        }
         if self.mutants.on("coverage-optional")
             && operation == "evidence.upload.prepare"
             && let Some(payload) = deduplicated
@@ -1640,6 +1740,12 @@ impl Provider {
                     "required extension is not present in extensions",
                 );
             }
+        }
+        if operation.name == "context.request.submit"
+            && let Err((path, reason)) =
+                crate::context::validate_submit(&params["payload"], &self.mutants)
+        {
+            return invalid(&path, reason);
         }
         if operation.name == "evidence.upload.prepare" {
             let payload = &params["payload"];
@@ -1868,6 +1974,9 @@ impl Provider {
             "execution.controller.claim" => {
                 id == crate::execution::host_id(&self.identity.executor)
             }
+            "context.request.cancel" => crate::context::preparing(&reader, id)
+                .map_err(storage)?
+                .unwrap_or(false),
             name if name.starts_with("evidence.") => {
                 let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
                 return match crate::evidence::check(
@@ -2123,6 +2232,57 @@ impl Provider {
                     Ok(result) => Ok(result),
                     Err(code) => Err(reject(code, json!({}))),
                 }
+            }
+            "context.request.inspect" => {
+                let id = params["payload"]["request"].as_str().unwrap_or_default();
+                crate::context::inspect_request(&self.store, id, &self.mutants)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "context.packet.inspect" => crate::context::inspect_packet(
+                &self.store,
+                &params["payload"],
+                self.caller_frame_limit,
+                &self.mutants,
+            )
+            .map_err(storage)?
+            .ok_or_else(|| reject("not_found", json!({}))),
+            "context.expand" => {
+                // A citation the principal may not read, a nonexistent citation and one held at
+                // another provider are refused identically (CONTEXT section 6, CORE-12).
+                let denied = || reject("permission_denied", json!({"reason": "out_of_scope"}));
+                let payload = &params["payload"];
+                let packet_exists = self
+                    .store
+                    .subject(
+                        crate::context::REQUEST,
+                        payload["packet"].as_str().unwrap_or_default(),
+                    )
+                    .map_err(storage)?
+                    .is_some();
+                let Some(reference) = crate::context::citation(&self.store, payload, &self.mutants)
+                    .map_err(storage)?
+                else {
+                    return Err(if packet_exists {
+                        denied()
+                    } else {
+                        reject("not_found", json!({}))
+                    });
+                };
+                let local = reference["provider"]
+                    .as_str()
+                    .is_none_or(|p| p == self.identity.provider_id);
+                if !local {
+                    return Err(denied());
+                }
+                if !self.mutants.on("expand-ignores-grant")
+                    && !self.may_read(&reference["artifact"], params)?
+                {
+                    return Err(denied());
+                }
+                crate::context::expand(&self.store, payload, &reference, self.caller_frame_limit)
+                    .map_err(storage)?
+                    .ok_or_else(denied)
             }
             "evidence.query" => {
                 let can_read = self.reader_filter(params);
@@ -2564,6 +2724,24 @@ impl Provider {
                     .into_iter()
                     .flatten()
                     .any(|right| right == "execution.read")
+        } else if kind == crate::context::REQUEST {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "context.read")
+        } else if kind == crate::context::JOB {
+            let id = subject["id"].as_str().unwrap_or_default();
+            let mut any = false;
+            for request in crate::context::job_requests(&self.store, id).map_err(storage)? {
+                any |= self.visible(
+                    &json!({"kind": crate::context::REQUEST, "id": request}),
+                    &None,
+                    &Some(grant.clone()),
+                )?;
+            }
+            any
         } else if kind == crate::evidence::ARTIFACT {
             covers
                 && grant["rights"]

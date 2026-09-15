@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
+use sha2::Digest;
 
 pub type Vars = BTreeMap<String, Value>;
 
@@ -129,8 +130,56 @@ fn directive_match(
                 ))
             }
         }
+        "$sha256_base64" => {
+            // The decoded bytes' sha256 digest matches the argument pattern (for example a
+            // captured digest): how a reader checks fetched bytes against a reference.
+            let found = actual
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{path}: expected a base64 string"))?;
+            let bytes = decode_base64(found).ok_or_else(|| format!("{path}: not base64"))?;
+            let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(&bytes)));
+            matches(
+                argument,
+                Some(&Value::String(digest)),
+                vars,
+                &format!("{path}(sha256)"),
+            )
+        }
         other => Err(format!("{path}: unknown pattern directive {other}")),
     }
+}
+
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some(u32::from(c - b'A')),
+            b'a'..=b'z' => Some(u32::from(c - b'a') + 26),
+            b'0'..=b'9' => Some(u32::from(c - b'0') + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let input = text.as_bytes();
+    if !input.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    for chunk in input.chunks(4) {
+        let pad = chunk.iter().rev().take_while(|c| **c == b'=').count();
+        let mut n = 0u32;
+        for c in chunk {
+            n = (n << 6) | if *c == b'=' { 0 } else { value(*c)? };
+        }
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
 }
 
 /// Expand outgoing templates: `{"$var": name}` and `{"$unique": prefix}`.

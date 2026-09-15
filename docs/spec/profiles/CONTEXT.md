@@ -11,6 +11,7 @@ The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119 and RFC 817
 ## 1. Dependencies and negotiation
 
 - `context/1` depends on `core/1` with `core.events`, and on `evidence/1` as a **protocol dependency**: every packet revision is an exact sealed Evidence artifact (§5), so its identity, integrity, retention and fetch reuse EVIDENCE (owner decision M4-Q2). This does not require a separate running service: a standalone context provider MAY implement `evidence/1` for its own packets.
+- Negotiating `context/1` does not require `evidence/1` in the same session. The packet reference names the evidence provider holding the bytes, and the reader negotiates `evidence/1` there, which may be this provider.
 - **Timing semantics are negotiated explicitly** (SPEC §14): features `context.advisory`, `context.required_before_start` and `context.required_before_transition`. A request using an obligation whose feature was not negotiated is refused with `unsupported_required_feature` (CTX-9).
 - Other optional features (*candidate*): `context.shared_jobs` (§4), `context.updates` (§8), `context.expand` (§6).
 - A provider that cannot meet a requested boundary or delivery semantics refuses the request explicitly; it never silently degrades a required obligation (CTX-9).
@@ -29,45 +30,58 @@ When preparation leads to admission, the execution's context binding names the r
 
 ## 3. Requests
 
-`context.request.submit` (command, *candidate*) creates the request (precondition revision 0). Payload:
+| Operation | Kind | Semantics |
+|---|---|---|
+| `context.request.submit` | command | Creates the request (subject `{ kind: "context.request", id }`, precondition revision 0) |
+| `context.request.cancel` | command | Cancels that request only (§4); precondition on its current revision |
+| `context.request.inspect` | query | `{ request }` → state, `reason`, job, consumer, limits, item results, and `packets`: each published revision with its packet reference, `current` and `supersedes` |
+| `context.packet.inspect` | query | Result facts and a bounded excerpt (§6) |
+| `context.expand` | query | Newly authorized cited content (§6, `context.expand`) |
+
+`context.request.submit` payload:
 
 | Member | Meaning |
 |---|---|
 | `consumer` | `{ task, principal, executor? }`: who the context is for |
-| `basis` | Target basis manifest (CTX-2): `repositories: [ { id, tree, dirty: { snapshot_digest } \| null } ]`, `environment`, `configuration`, `build`, and `completeness`. A commit-only basis for a workspace with uncommitted changes MUST declare `completeness: "partial"`. |
-| `items` | Required and advisory items (CTX-3): `{ item_id, selector, obligation: "advisory" \| "required_before_start" \| "required_before_transition", transition?, reliance: "binding" \| "evidence" \| "hypothesis" \| "reference", selected_by, check }`. `selected_by` names the authority that chose the item. `check` states how satisfaction is decided, for example exact inclusion of a named source revision. "Understand the repository" is not a checkable item. |
+| `basis` | Target basis manifest (CTX-2): `repositories: [ { id, tree, workspace: "clean" \| "dirty" \| "unknown", dirty: { snapshot_digest } \| null } ]`, optional `environment`, `configuration` and `build`, and `completeness: "complete" \| "partial"`. Each repository keeps its own tree. A repository whose workspace is not `clean` but whose `dirty` is `null` is a commit-only basis, and the basis MUST then declare `completeness: "partial"`; otherwise the request is `invalid_envelope` at `/payload/basis/completeness`. |
+| `items` | Required and advisory items (CTX-3): `{ item_id, selector: { kind, value }, obligation: "advisory" \| "required_before_start" \| "required_before_transition", transition?, reliance: "binding" \| "evidence" \| "hypothesis" \| "reference", selected_by, check }`. `selected_by` names the principal or authority that chose the item. `transition` is present exactly when the obligation is `required_before_transition`. `check` states how satisfaction is decided: `{ kind: "source_included", repository, path }`, `{ kind: "evidence_included", evidence }` or `{ kind: "authority_content_included" }` (the item's authority content at its current authority revision). "Understand the repository" is not a checkable item; an unknown check kind is `invalid_envelope`. |
 | `fallback` | For advisory items only: `proceed_with_gap` or `wait_until_deadline` (CTX-7) |
-| `limits` | Three separate limits (CTX-4): `deadline` (provider clock), `investigation` budget `{ units, amount }` for the provider's own work, and `output_capacity` `{ units, amount }` for the packet |
+| `limits` | Three separate limits (CTX-4): `deadline` (provider clock), `investigation` budget `{ units, amount }` for the provider's own work, and `output_capacity` `{ units: "bytes", amount }` for the section content of the packet. Exhausting one is reported as that limit and never as another. |
 | `authority_content` | Optional binding content supplied directly by an authority: `{ item_id, evidence: reference, authority_revision }` (CTX-14) |
 | `origin` | Optional, for requests made by a job's own investigation: `{ initiator, depth, call_budget }` (CTX-19) |
 
-Outcome: `{ request, state, job }`. Request states: `preparing`, `ready`, `partial`, `unmet`, `refused`, `cancelled`.
+Outcome: `{ request, state, job?, reason?, needed? }`. Request states: `preparing`, `ready`, `partial`, `unmet`, `refused`, `cancelled`.
 
-- An unknown obligation, reliance label or check kind is `invalid_envelope`; an obligation whose feature was not negotiated is `unsupported_required_feature`.
-- A request whose mandatory items cannot fit `output_capacity` ends `refused` with reason `budget_insufficient` and the size the mandatory items need (CTX-8). A provider MUST NOT drop mandatory items to fit.
+- An unknown obligation, reliance label or check kind is `invalid_envelope`; an obligation whose feature was not negotiated is `unsupported_required_feature` with `features`, decided at CORE §10 step 3. A provider MUST NOT accept it under another obligation.
+- A request whose mandatory items cannot fit `output_capacity` ends `refused` with reason `budget_insufficient` and `needed: { units: "bytes", amount }`, the size the mandatory items need (CTX-8). A provider MUST NOT drop mandatory items to fit. Advisory content that does not fit is omitted with reason `output_capacity`.
+- **After preparation** the request is `ready` when every item is satisfied, `partial` when every required item is satisfied and an advisory item is `degraded`, and `unmet` when a required item is `unmet`.
+- **Item results:** `pending` while preparing; then `satisfied`, `unmet` with `reason` (`deadline_passed`, `investigation_budget_exhausted`, `output_capacity`, `corrected_during_preparation`, `unavailable`, or a provider reason), or `degraded` with `reason` for advisory items under their fallback.
 
 ## 4. Jobs, subscribers and cancellation
 
-- A provider MAY attach a request to an existing compatible job: same basis, compatible access scope and compatible items. Each attached request is a separate subscriber (`context.shared_jobs`).
-- `context.request.cancel` (command) cancels **that request only**. The job continues while any other request still needs it (CTX-10). Cancellation of the job itself is a provider decision reported as `context.job.ended` with its reason, for example an exhausted investigation budget.
+- A provider MAY attach a request to an existing compatible job that has not yet published: same basis, compatible access scope and compatible items. Each attached request is a separate subscriber (`context.shared_jobs`). Without that feature negotiated for the submitting session, a request always gets its own job.
+- `context.request.cancel` (command) cancels **that request only**. Outcome `{ request, state: "cancelled", job, job_continues }`. The job continues while any other request still needs it (CTX-10); a cancelled request receives no further packet revisions. Cancelling a request already `ready`, `partial`, `unmet` or `refused` is `not_found`: nothing is being prepared for it. Ending the job itself is a provider decision reported as `context.job.ended` with its reason, for example an exhausted investigation budget or no remaining subscribers.
 - A consumer waiting for context MUST NOT be required to hold an execution reservation (CTX-18). If preparation needs an execution, the provider submits it as an ordinary, separately authorized caller, with `origin` naming the job, its depth and call budget. Such an execution is never automatically re-enriched through the same path (CTX-19).
 
 ## 5. Results and packets
 
-When a request reaches `ready`, `partial` or `unmet`, the provider publishes a packet revision (revision 1, or a later one under §8) with these result facts:
+When a request reaches `ready`, `partial` or `unmet`, the provider publishes a packet revision (revision 1, or a later one under §8). The packet subject is `{ kind: "context.packet", id }` with the request's ID. Its result facts:
 
 | Member | Meaning |
 |---|---|
-| `packet` | The packet reference (§2) |
-| `selected` | Selected source revisions and artifact references (CTX-5) |
-| `provenance` | Compiler and job identity, and the input manifest |
-| `inclusions` / `omissions` | What was included, and what was omitted with the reason (budget, authorization, applicability, unavailability) |
-| `citations` | For each cited section, the Evidence references it rests on |
-| `labels` | Per section: `binding`, `observation`, `hypothesis`, `unknown`, `declared_requirement`, `source_inspected`, `runtime_observed`, `inferred`, `stale` (CTX-20). A section without a label is invalid. |
+| `reference` | The packet reference (§2) |
+| `request`, `job`, `current`, `supersedes?` | The request, the job, whether this revision is the request's current one, and the revision it supersedes (§8) |
+| `selected` | Selected source revisions (`{ repository, path, tree }`) and Evidence references (CTX-5) |
+| `provenance` | `{ compiler, job, basis }`: compiler and job identity, and the input basis |
+| `sections` | `[ { section_id, item_id?, label, length, citations, historical } ]`, in packet order. `label` is required (CTX-20): `binding`, `observation`, `hypothesis`, `unknown`, `declared_requirement`, `source_inspected`, `runtime_observed`, `inferred` or `stale`. `historical: true` marks content kept for the record that is not current for its item (§8). |
+| `inclusions` / `omissions` | Section IDs included, and `[ { item_id?, section_id?, reason } ]` with reason `output_capacity`, `authorization`, `applicability` or `unavailable` |
+| `citations` | `[ { citation_id, evidence: { provider, artifact, digest } } ]` |
 | `coverage` | Per-producer frontiers and gaps: `[ { producer, frontier, gaps } ]` (CTX-6). There is no global cursor. |
-| `items` | Each item's result: `satisfied`, `unmet` (with reason), or `degraded` for advisory items under their fallback |
-| `applicability` | The basis the packet is valid for, and invalidation conditions (CTX-15) |
-| `authority` | For authority-supplied content: the authority revision included and the coverage it rests on (CTX-14) |
+| `items` | `[ { item_id, obligation, result, reason? } ]` |
+| `applicability` | `{ basis, conditions }`: the basis the packet is valid for, and typed invalidation conditions (§8, CTX-15) |
+| `authority` | `[ { item_id, authority_revision, evidence, coverage } ]` for authority-supplied content: the revision included and what it rests on (CTX-14) |
+
+**Packet bytes.** The sealed artifact holds `{ "format": "combraton-context-packet/1", request, revision, supersedes?, sections: [ { section_id, item_id?, label, historical, content, citations } ], items, coverage, omissions, applicability, authority }` as canonical JSON (ENCODING), with media type `application/vnd.combraton.context-packet+json`. A later format is a new `format` value.
 
 - **Packet-to-artifact mapping** (M4-Q2). Each packet revision maps immutably to exactly one sealed Evidence artifact, named by provider, artifact and digest. The mapping is recorded when the revision is published and never changes. A later revision maps to a different artifact.
 - **Exact bytes** (CTX-5). The complete packet bytes are the sealed artifact's bytes, fetched with `evidence.fetch` at the named provider. A provider MUST NOT regenerate them.
@@ -79,8 +93,8 @@ When a request reaches `ready`, `partial` or `unmet`, the provider publishes a p
 | Operation | Kind | Semantics |
 |---|---|---|
 | `context.request.inspect` | query | Request state, job, packet references and item results |
-| `context.packet.inspect` | query | `{ packet, revision }` → the result facts of §5 and an **excerpt**: `{ offset, data_base64, length, complete }`, bounded, with omission markers (CTX-11). An excerpt is never the complete sealed bytes: it carries no digest of its own, and it is never presented under the artifact's digest. Complete bytes come from `evidence.fetch`. |
-| `context.expand` | query | `{ packet, revision, citation }` → cited content the principal is **newly** authorized to read under its grant. Content outside the grant is refused with `permission_denied`, indistinguishable from nonexistent content (CTX-11, CORE-12). |
+| `context.packet.inspect` | query | `{ packet, revision, offset?, max_bytes? }` → the result facts of §5 and an **excerpt** `{ offset, length, size, data_base64 }`: an exact byte range of the packet, bounded by `max_bytes` (default 4096) and the caller's receive limit (CTX-11). The result facts' `omissions` are its omission markers. An excerpt is never presented as the complete sealed bytes: it carries no digest, even when the range covers the whole packet. Complete bytes come from `evidence.fetch`, checked against the reference's digest. |
+| `context.expand` | query | `{ packet, revision, citation, offset?, max_bytes? }` → `{ citation, evidence, excerpt }`: a byte range of the cited artifact that the principal is authorized to read, including content omitted from the packet for authorization. It needs `context.packet.read` on the packet and `evidence.read` on the cited artifact at this provider. A citation the principal may not read, a citation that does not exist and a citation held at another provider the reader must query there are all `permission_denied`, identical to each other (CTX-11, CORE-12). |
 
 ## 7. Direct fetch by an executor
 
@@ -97,8 +111,8 @@ Grants are provider-local (CORE §15.2): a grant's audience is the provider that
 
 ## 8. Updates, corrections and staleness
 
-- **Updates are new revisions** (CTX-12, `context.updates`). A finding during work is published as a new packet revision with its own basis, digest and `supersedes: { revision }`. Earlier revisions stay retrievable, and old bytes are never relabeled current. Delivery of an update to a running execution is an Execution observation (EXECUTION §13); a late update is recorded `late` (CTX-17).
-- **Correction during preparation** (CTX-13). When an authority supplies a correction to a binding item while a job runs, a derivation made from the older binding MUST NOT become the current result for that item. The provider rebuilds within budget, marks the older result `historical`, or refuses current reliance for that item.
+- **Updates are new revisions** (CTX-12, `context.updates`). A finding during work is published as a new packet revision with its own basis, digest and `supersedes: { revision }`, mapped to a new artifact. Earlier revisions stay retrievable with their original artifact and digest, report `current: false`, and old bytes are never relabeled current. A provider publishes later revisions only for requests submitted in a session that negotiated `context.updates`. Delivery of an update to a running execution is an Execution observation (EXECUTION §13); a late update is recorded `late` (CTX-17).
+- **Correction during preparation** (CTX-13). When an authority supplies a correction to a binding item while a job runs, a derivation made from the older binding MUST NOT become the current result for that item. The provider rebuilds within budget, marks the older result `historical`, or refuses current reliance for that item. Observably: a section derived from the older authority revision is `historical: true` with label `stale`, and the item is `unmet` with reason `corrected_during_preparation` unless a section at the corrected revision is included.
 - **Stale basis** (CTX-15, owner decision M4-Q4). A packet's `applicability` carries typed, checkable **conditions**, for example `{ condition_id, kind: "repository_tree", repository, expected }`, `dirty_snapshot`, `environment_digest` or `authority_revision`. An executor bound to the packet checks, at each relevant boundary, only the conditions it can actually observe, and reports each as `match`, `mismatch` or `unavailable` (EXECUTION §13.1). The executor decides nothing about semantic truth and is not an applicability engine: conditions it cannot observe are `unavailable`, which is neither fresh nor necessarily stale.
 
 ## 9. Provider unavailability
@@ -111,8 +125,8 @@ Grants are provider-local (CORE §15.2): a grant's audience is the provider that
 | Right | Covers |
 |---|---|
 | `context.request` | `context.request.submit` and `context.request.cancel` on covered requests |
-| `context.read` | `context.request.inspect`, events of covered requests |
-| `context.packet.read` | `context.packet.inspect` and `context.expand` on covered packets |
+| `context.read` | `context.request.inspect`, events of covered requests, and events of their jobs |
+| `context.packet.read` | `context.packet.inspect` and `context.expand` on covered packets (`{ kind: "context.packet", id }`) |
 
 Expanded content and packet bytes are additionally subject to the Evidence rights of their artifacts.
 
@@ -123,13 +137,17 @@ Context events use Core event records. *Candidate* types:
 | Type | Subject | Payload |
 |---|---|---|
 | `context.request.changed` | request | `{ state, job?, reason? }` |
-| `context.packet.published` | request | `{ packet reference, items }` |
+| `context.packet.published` | request | `{ reference, items }` |
 | `context.job.ended` | job | `{ reason }` |
 | `context.request.cancelled` | request | `{ job_continues }` |
+
+A packet published by the provider appears as a provider-origin event (CORE §16) together with the sealed artifact's Evidence events when the provider holds the artifact itself.
 
 ## 12. Conformance and test controls
 
 - **Reference participants only.** A reference context provider drives a **scripted preparation** selected by launch configuration: packet content per request, delays against the clock file, coverage frontiers, unmet items, mid-job corrections, budget exhaustion and outages. The script is test environment, normative only for its conformance tests (as EXECUTION §15, owner decision Q4). No fixture depends on CBR's memory engine.
+- **Script vocabulary** (launch configuration `context`, test control `context.script`): `scripts` maps the ID of the request that starts a job to a list of one-key steps, and `default_script` applies otherwise. Steps: `wait_until` (an instant), `investigate` (units of investigation budget spent), `section` (`section_id`, `item_id?`, `label`, `content`, `citations?`, `authority_revision?`, `source?`), `coverage` (`producer`, `frontier`, `gaps`), `unmet` (`item_id`, `reason`), `omit` (`item_id?`, `reason`), `correction` (`item_id`, `authority_revision`), `conditions` (typed applicability conditions), `publish`, `end` (a job end reason) and `stall`. Steps advance no later than the provider's next request. A `publish` whose advisory items are unsatisfied under `wait_until_deadline` waits for the deadline.
+- **Mandatory size.** For `budget_insufficient`, the reference provider counts the content of the scripted sections for required items.
 - **Separate participants** (owner decision M4-Q3). Cross-profile scenarios (SCN-1, SCN-4 to SCN-6, SCN-8, SCN-9, SCN-11) run separate reference participants, one per role: context provider, evidence provider and executor, each with its own isolated store. They talk only over public protocol connections, authenticated as their own principals and authorized by grants. A shared executable is acceptable; shared stores and private calls are not.
 
 ## 13. What context does not establish

@@ -2,7 +2,7 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-15 (M4 accepted and merged; M5 step 1 drafted).
+- **Updated:** 2026-09-15 (M5 decisions M5-Q1 to M5-Q9 incorporated; implementation authorized within M5 scope, not merge or release).
 - **Owner/current task:** Protocol session (Claude Code, Opus 5) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
   - Current milestone: [M5 task](release-0.1/M5.md), the Knowledge and Verification profiles.
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
@@ -21,7 +21,8 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - [KNOWLEDGE](../spec/profiles/KNOWLEDGE.md) and [VERIFICATION](../spec/profiles/VERIFICATION.md);
   - [CONTEXT §14](../spec/profiles/CONTEXT.md#14-claims-in-packets-proposed-m5), claims in packets, a proposed negotiated extension;
   - refined [MATRIX](release-0.1/MATRIX.md) rows: KNW-1 to KNW-10, VER-1 to VER-5, SCN-7, SCN-16 and CMP-9;
-  - the [M5 task](release-0.1/M5.md), with concrete examples, reuse and compatibility, proposed decisions M5-Q1 to M5-Q9, and M4 coverage carried forward.
+  - the [M5 task](release-0.1/M5.md), with concrete examples, reuse and compatibility, owner decisions M5-Q1 to M5-Q9, and M4 coverage carried forward;
+  - decisions incorporated into KNOWLEDGE, VERIFICATION, CONTEXT §14, EXECUTION §13.3 (`execution.claim_revalidation`), CORE §12 codes and the matrix.
 - **Evidence at M4 acceptance:** CI at `86e128f` on Ubuntu and macOS ([run 34959862568](https://github.com/Combraton/protocol/actions/runs/34959862568)):
   - reference over stdio: 233 pass, 23 skipped; Unix socket: 256 pass;
   - independent: 229 pass, 4 unsupported, 23 skipped, 0 fail;
@@ -32,8 +33,9 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - decision records 001–007 accepted (007 with refinements);
   - M2 accepted; M3 conditionally accepted (C1–C3); M4-Q1 to M4-Q7; the M4 close-out items; M4 accepted with its coverage limits on 2026-09-15;
   - M5: Knowledge and Verification per the release plan, reusing Core, Execution, Evidence and Context, with any compatibility change identified explicitly; reference participants only, with no real CBR memory engine or PIO adapters; M4 gaps carried forward with impact and disposition, not automatically blockers.
-- **Open owner decisions:** M5-Q1 to M5-Q9 ([M5 proposed decisions](release-0.1/M5.md#proposed-decisions)). Machine-readable feature-dependency advertising stays an M6 decision (CMP-5).
+- **Owner decisions M5-Q1 to M5-Q9** (2026-09-15): recorded in [M5](release-0.1/M5.md#owner-decisions-2026-09-15). Implementation is authorized within M5 scope; merging M5 and releasing Protocol 0.1 are not.
+- **Open owner decisions:** acceptance of M5 when presented. Machine-readable feature-dependency advertising stays an M6 decision (CMP-5).
 - **Prompt disposition:** no active continuation prompt. The workspace `START-PROTOCOL.md` is retired and points here.
-- **Next action:** owner decisions on M5-Q1 to M5-Q9; routine groundwork that does not fix disputed semantics may continue meanwhile.
+- **Next action:** M5 step 2, the Knowledge reference provider ([work plan](release-0.1/M5.md#work-plan)).
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

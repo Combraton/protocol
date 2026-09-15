@@ -358,6 +358,23 @@ EXE-21, with EVIDENCE §11. A completion record may carry `outputs: [ { role, ev
 - The reference executor seals each recorded completion's content as artifact `output.<execution>.<completion_id>`, with `work` naming the execution, under a grant bound to that work (EVIDENCE §10).
 - **Origin.** A submit may carry `origin: { initiator, depth, call_budget }` for work a context job initiated (CONTEXT §4, CTX-19); `execution.inspect` preserves it.
 
+### 13.3 Claim revalidation (`execution.claim_revalidation`, proposed M5)
+
+Owner decision M5-Q7. A **negotiated extension** of §13.1 for packets that carry claims (CONTEXT §14). It requires `execution.context_revalidation`. Without it, bindings behave exactly as §13.1, and claim changes are not enforced by the executor: a caller that needs enforcement negotiates this feature as required.
+
+- **Reading.** For a binding with `fetch.context` submitted under the feature, the executor reads packet facts in a session that negotiated `context.claims` at the context provider.
+- **`packet.facts` gains two outcomes**, beside authority corrections:
+  - `mismatch`, when `invalidated_items` names a required item of the bound revision with a `claim`, meaning its claim lost its permitted use or became invalid for the basis. `observed` is `claim invalidated: <item_id>[, <item_id>…]`. An authority correction keeps its `corrected: …` form, listed first when both apply.
+  - `unavailable`, when `unverified_items` names a required item of the bound revision: the claim cannot be read or verified, or its applicability is no longer established.
+- **Effect by obligation**, unchanged from §13.1:
+  - an `advisory` binding records the check and proceeds with its gap automatically;
+  - a `required_before_start` binding blocks admission or dispatch;
+  - a `required_before_transition` binding blocks only its named transition.
+
+  A stale result gives `context_binding_stale`, and an unavailable one gives `context_binding_unknown`.
+- **Never substitution.** The executor keeps the exact packet reference. A newer claim revision (`lineage_revised`) or a newer packet revision is information, not invalidity, unless the binding has `require_current` (§13.1).
+- **Compatibility.** Sessions that did not negotiate the feature see §13.1 check results, where claim-based outcomes do not occur.
+
 ## 14. Output telemetry and backpressure
 
 - **Separate channel.** Output chunks travel in a telemetry channel separate from semantic events, read with `execution.output.read` (*candidate*) using byte-offset cursors.

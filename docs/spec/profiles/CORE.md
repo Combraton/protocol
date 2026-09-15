@@ -305,6 +305,8 @@ Errors use the transport's error object. The symbolic `data.code` is normative; 
 | `content_digest_mismatch` | `no` | Evidence: received bytes do not match the declared digest | `computed` |
 | `artifact_digest_mismatch` | `no` | Evidence: a reference's digest differs from the artifact's sealed digest; sealed content is immutable | — |
 | `hold_active` | `after_reconcile` | Evidence: purge while an active hold is not released by this command | `holds`, `filtered` |
+| `claims_not_comparable` | `no` | Knowledge: two revisions cannot conflict under the structural comparison rules (KNOWLEDGE §7); proposed M5 | `reason` |
+| `contract_unavailable` | `after_reconcile` | Verification: the named contract cannot be read or is not a valid contract (VERIFICATION §3); proposed M5 | `reason` |
 | `capability_unavailable` | `after_reconcile` | A capability the operation depends on is `unsupported` or `unknown` right now (§17) | `capability`, `status` |
 | `stale_authority_epoch` | `after_reconcile` | Caller's epoch was superseded | `current_epoch` if permitted |
 | `unknown_authority_epoch` | `no` | Epoch never issued | — |

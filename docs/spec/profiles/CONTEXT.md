@@ -167,22 +167,45 @@ A packet establishes which exact bytes, with which labels, coverage and gaps, th
 
 ## 14. Claims in packets (proposed M5)
 
-> Proposed M5 extension, pending owner decision M5-Q7 ([M5](../../work/release-0.1/M5.md#proposed-decisions)). Nothing in this section applies to sessions that did not negotiate `context.claims`, and §1–§13 are unchanged for them.
+> Proposed M5 extension with owner decision M5-Q7 incorporated ([M5](../../work/release-0.1/M5.md#owner-decisions-2026-09-15)). Nothing in this section applies to sessions that did not negotiate `context.claims`; §1–§13 are unchanged for them.
 
-A packet that carries claims preserves Knowledge identity, reliance and applicability (SPEC §2, KNOWLEDGE §12).
-- **Feature** `context.claims`. A provider that negotiates it reads claims at a knowledge provider, its own or a peer, as an ordinary reader under grants (§7 applies to that audience too).
-- **Packet format** `combraton-context-packet/2`. It adds one optional section member `claim`; format `/1` packets never carry it. A packet for a request submitted without `context.claims` stays `/1`.
-- **Section claim snapshot**, as observed when the packet was prepared:
-  - `claim: { reference, reliance: { state, decision?, permitted_use? }, applicability: { result, evaluation?, target }, conflicts: [ { conflict, kind } ], support: { class } }`;
-  - `reference` is the exact claim revision reference, never "latest";
-  - `target` is the packet's basis.
-- **Labels cannot promote a claim.**
-  - A section may be labeled `binding` only when its claim is `accepted_for_use` with `permitted_use: binding` under the scope's current authority binding.
-  - A `proposed` or `rejected` claim is never `binding`. An extracted instruction stays a `hypothesis` or `inferred` section until decided (KNW-9).
-  - An item with reliance `binding` is satisfied by a claim section only under the same rule, and is otherwise `unmet` with reason `not_accepted`.
-- **Applicability travels.**
-  - A claim whose evaluation for the packet basis is not `applicable` is never presented as current. The section is labeled `stale` with `historical: true`, or omitted with reason `applicability`.
-  - A missing evaluation for the basis counts as `unknown`, never `applicable`.
-- **Conflicts travel.** An open conflict involving a carried claim is listed on the section. When the conflict is material to an item, the competing revisions are carried or omitted with a stated reason, never dropped silently.
-- **At the read.** `context.packet.inspect` reports `claim_changes: [ { section_id, claim, change } ]`, observed at the read. `change` is `superseded`, `reliance_changed`, `conflict_opened`, `applicability_changed` or `unavailable`. Packet bytes and published facts never change.
-- **Execution compatibility** (*candidate*, M5-Q7): `packet.facts` (EXECUTION §13.1) would report `mismatch` when a claim carried for a required item is no longer accepted for its binding use. The alternative leaves Execution unchanged in 0.1, and consumers read `claim_changes` themselves.
+A packet that carries claims preserves Knowledge identity, reliance and applicability (SPEC §2, KNOWLEDGE §12). Its sections are immutable snapshots. Later changes are reported separately at the read, and they make required items unsatisfied through the same invalidation path as authority corrections (§8).
+
+**Negotiation and format.**
+- **Feature** `context.claims`. A provider with it reads claims at a knowledge provider, its own or a peer, as an ordinary reader under a grant held there (§7 applies to that audience too).
+- **Packet format** `combraton-context-packet/2`. It adds the section member `claim`; format `/1` packets never carry it. A request submitted without `context.claims` gets `/1` packets and M4 behavior.
+- **Check kind** `{ kind: "claim_included", claim: reference }` for items. In a request whose session did not negotiate `context.claims`, it is `unsupported_required_feature` with `features: ["context.claims"]`.
+- **Recomputing digests.** The provider recomputes each claim record's digest from what it read (KNOWLEDGE §3). A record whose digest differs from the reference is never carried or relied on.
+
+**Section claim snapshot**, as read when the packet was prepared:
+
+`claim: { reference, plane, reliance: { state, decision?, permitted_use?, author_is_decider? }, applicability: { result, evaluation? }, conflicts: [ { conflict, kind, status } ], support: { class } }`
+
+- `reference` is the exact revision reference, never "latest".
+- `applicability` is the latest evaluation of that revision for a target equal to the packet's basis. With no such evaluation, `result` is `unknown` and `evaluation` is absent.
+
+**What a claim section can satisfy.** Item reliance uses rank `binding` > `evidence` > `hypothesis` > `reference`. A `claim_included` item is satisfied when a section carries exactly its reference and:
+
+| Item reliance | Needs | Otherwise `unmet` with reason |
+|---|---|---|
+| `binding` or `evidence` | reliance `accepted_for_use` with `permitted_use` of at least the item's rank, and applicability `applicable` | `not_accepted`; `invalid_for_target`; `applicability_not_established` for `needs_check` or `unknown` |
+| `hypothesis` or `reference` | reliance other than `rejected` | `not_accepted` |
+| any | the claim could be read and its digest verified | `knowledge_unavailable` or `claim_digest_mismatch` |
+
+**Labels cannot promote a claim, and applicability keeps its distinctions.**
+- A section may be labeled `binding` only when its claim is `accepted_for_use` with `permitted_use: binding`. A proposed or rejected claim is never `binding`. An extracted instruction stays a `hypothesis` or `inferred` section until decided (KNW-9).
+- Only `invalid_for_target` makes a claim section `historical: true` with label `stale`. A claim whose applicability is `needs_check` or `unknown` is not stale and not historical: its section keeps its label with `historical: false`, and its snapshot shows the result.
+- Open conflicts involving a carried claim are listed in the snapshot. When a conflict is material to an item, the competing revisions are carried, or omitted with a stated reason, never dropped silently.
+
+**At the read.** `context.packet.inspect`, in a session that negotiated `context.claims`, re-reads carried claims and reports:
+- `claim_changes: [ { section_id, claim, change } ]`, with `change` one of:
+  - `reliance_changed`;
+  - `applicability_changed`;
+  - `conflict_opened`;
+  - `lineage_revised`, when the claim has a newer revision; this is information, not invalidity;
+  - `unavailable`.
+- **Invalidated items.** A required item satisfied by a claim section that no longer meets the table above appears in `invalidated_items` as `{ item_id, claim, reason }`. `reason` is `permitted_use_lost` or `invalid_for_target`. These sit beside the authority corrections of §8.
+- **Unverified items.** A required item whose claim cannot be read or verified, or whose latest evaluation for the basis is now `needs_check` or `unknown`, appears in `unverified_items: [ { item_id, claim, reason } ]`. `reason` is `knowledge_unavailable`, `claim_digest_mismatch` or `applicability_not_established`. Unavailable knowledge is unknown, never valid.
+- Packet bytes and published facts never change. A newer claim revision or a newer packet revision is never substituted. Supersession stays distinct from invalidity, as in §8.
+
+Execution enforces these at the binding's own boundary under `execution.claim_revalidation` ([EXECUTION §13.3](EXECUTION.md#133-claim-revalidation-executionclaim_revalidation-proposed-m5)).

@@ -8,7 +8,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **Owner:** Protocol session (Claude Code, Opus 5).
 - **Checkpoint:** 2026-09-15.
   - The owner accepted M4 at `86e128f` as a completed milestone with its documented coverage limits. PR #5 merged as `ee82afb`.
-  - M5 began on `release-0.1/m5`. Step 1 is drafted: contracts, matrix and proposed decisions.
+  - M5 began on `release-0.1/m5`. Step 1 is done: the owner decided M5-Q1 to M5-Q9, and the decisions are incorporated. Implementation is authorized within M5 scope, but not merging or releasing.
 - **Status:** M0–M4 merged. M5 is in step 1 ([M5 task](M5.md)). Protocol 0.1 is not accepted or released.
 
 ## Goal, decisions and constraints
@@ -55,7 +55,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
   - `docs/spec/profiles/KNOWLEDGE.md` and `docs/spec/profiles/VERIFICATION.md` (proposed drafts);
   - `docs/spec/profiles/CONTEXT.md` §14, claims in packets (proposed extension);
   - MATRIX rows KNW-1 to KNW-10, VER-1 to VER-5, SCN-7, SCN-16 and CMP-9;
-  - [M5](M5.md), with examples, reuse and compatibility, assumptions and counterexamples, M5-Q1 to M5-Q9, work plan, acceptance, and M4 coverage carried forward;
+  - [M5](M5.md), with examples, reuse and compatibility, assumptions and counterexamples, owner decisions M5-Q1 to M5-Q9, work plan, acceptance, and M4 coverage carried forward;
+  - EXECUTION §13.3 `execution.claim_revalidation` and CORE §12 codes `claims_not_comparable` and `contract_unavailable` (proposed M5);
   - PLAN §2 pins combraton `docs/architecture/MODEL.md` and `docs/architecture/VERIFICATION.md` at `9af69ce` as M5 sources.
 
 ## Evidence
@@ -74,7 +75,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## What remains uncertain
 
-- **M5 decisions:** M5-Q1 to M5-Q9 are open ([M5](M5.md#proposed-decisions)).
+- **M5 decisions:** decided on 2026-09-15 ([M5](M5.md#owner-decisions-2026-09-15)); any genuinely new architectural or authority question goes back to the owner with a recommendation.
 - **M4 limits carried forward:** [M5 §M4 coverage carried forward](M5.md#m4-coverage-carried-forward), with impact and disposition for each.
 - **Profile status headers:** EXECUTION, EVIDENCE and CONTEXT still carry their "proposed draft" headers from before acceptance, as EXECUTION did after M3. Refreshing them belongs with M6's complete operation documentation.
 - **Carried from M3:**
@@ -93,6 +94,5 @@ None. No helper worktrees or background processes are owned by this task.
 
 ## Next action
 
-1. Owner decisions on M5-Q1 to M5-Q9.
-2. Then M5 step 2: the Knowledge reference provider, with schemas, fixtures and mutants for KNW-1 to KNW-9.
-3. Routine groundwork that does not fix disputed semantics may proceed before the decisions.
+1. M5 step 2: the Knowledge reference provider, with schemas, fixtures and mutants for KNW-1 to KNW-9.
+2. Steps 3–6 of the [M5 work plan](M5.md#work-plan); present M5 for acceptance before merging.

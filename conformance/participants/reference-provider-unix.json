@@ -26,6 +26,10 @@
       {
         "name": "context",
         "major": 1
+      },
+      {
+        "name": "knowledge",
+        "major": 1
       }
     ],
     "features": [
@@ -60,7 +64,8 @@
       "executor.script",
       "store.faults",
       "evidence.store",
-      "context.script"
+      "context.script",
+      "knowledge.store"
     ],
     "test_barriers": [
       "subscription.recheck.after_authorization",

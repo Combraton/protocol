@@ -231,6 +231,61 @@ const OPERATIONS: &[Operation] = &[
         command: false,
     },
     Operation {
+        name: "knowledge.claim.propose",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.claim.revise",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.claim.inspect",
+        profile: "knowledge",
+        command: false,
+    },
+    Operation {
+        name: "knowledge.claim.history",
+        profile: "knowledge",
+        command: false,
+    },
+    Operation {
+        name: "knowledge.authority.bind",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.authority.transfer",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.authority.get",
+        profile: "knowledge",
+        command: false,
+    },
+    Operation {
+        name: "knowledge.decision.record",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.conflict.open",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.conflict.resolve",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
+        name: "knowledge.applicability.evaluate",
+        profile: "knowledge",
+        command: true,
+    },
+    Operation {
         name: "core-test.authority.claim",
         profile: "core-test",
         command: true,
@@ -309,6 +364,13 @@ const SUPPORTED: &[SupportedProfile] = &[
         requires_core_features: &["core.events"],
     },
     SupportedProfile {
+        name: "knowledge",
+        majors: &[1],
+        features: &[],
+        depends_on: &["core"],
+        requires_core_features: &["core.events"],
+    },
+    SupportedProfile {
         name: "core-test",
         majors: &[1],
         features: &[],
@@ -371,7 +433,7 @@ pub fn retry_class(code: &str) -> &'static str {
         | "upload_incomplete"
         | "hold_active" => "after_reconcile",
         "unavailable" | "overloaded" => "same_command",
-        "capability_unavailable" => "after_reconcile",
+        "capability_unavailable" | "contract_unavailable" => "after_reconcile",
         _ => "no",
     }
 }
@@ -426,6 +488,8 @@ pub struct Identity {
     pub evidence_store: std::sync::Arc<Value>,
     /// Scripted context preparation (test environment; CONTEXT section 12).
     pub context_script: std::sync::Arc<Value>,
+    /// Knowledge evaluator and adversarial store controls (test environment; KNOWLEDGE section 13).
+    pub knowledge: std::sync::Arc<Value>,
 }
 
 pub struct Provider {
@@ -906,6 +970,9 @@ impl Provider {
         let evidence_store = self.identity.evidence_store.clone();
         let chunk_limit = crate::evidence::chunk_limit(&self.limits, &self.mutants);
         let context_script = self.identity.context_script.clone();
+        let knowledge_config = self.identity.knowledge.clone();
+        let provider_id = self.identity.provider_id.clone();
+        let full_params = params.clone();
         let execution_features = (
             self.feature_negotiated("execution.context_revalidation"),
             self.feature_negotiated("execution.evidence_outputs"),
@@ -968,6 +1035,23 @@ impl Provider {
                         } else {
                             crate::context::cancel(tx, &subject_id, &session)?
                         }
+                    }
+                    name if name.starts_with("knowledge.") => {
+                        let knowledge_context = crate::knowledge::Context {
+                            now: recorded_at.clone(),
+                            principal: &principal,
+                            provider_id: &provider_id,
+                            config: &knowledge_config,
+                            order: sequence,
+                            mutants,
+                        };
+                        crate::knowledge::apply(
+                            tx,
+                            name,
+                            &subject_id,
+                            &full_params,
+                            &knowledge_context,
+                        )?
                     }
                     name if name.starts_with("evidence.") => {
                         let evidence_context = crate::evidence::Context {
@@ -1509,6 +1593,14 @@ impl Provider {
         let denied = |reason: &str| Err(reject("permission_denied", json!({"reason": reason})));
         match operation {
             "core.grant.issue" => self.authorize_issuing(params),
+            // Only provider authority principals bind scopes; a grant never does (KNOWLEDGE 6).
+            "knowledge.authority.bind" | "knowledge.authority.transfer" => {
+                if self.is_authority() || self.mutants.on("bind-by-grant") {
+                    Ok(())
+                } else {
+                    denied("not_authority")
+                }
+            }
             "core.grant.revoke" => {
                 let id = params["subject"]["id"].as_str().unwrap_or_default();
                 let record = self.store.grant(id).map_err(storage)?;
@@ -1887,6 +1979,12 @@ impl Provider {
         {
             return invalid(&path, reason);
         }
+        if operation.name.starts_with("knowledge.")
+            && let Err((path, reason)) =
+                crate::knowledge::validate(operation.name, params, &self.mutants)
+        {
+            return invalid(&path, reason);
+        }
         if operation.name == "evidence.upload.prepare" {
             let payload = &params["payload"];
             if let Some(locator) = payload["locator"].as_str()
@@ -2162,6 +2260,31 @@ impl Provider {
             .is_some(),
             "execution.controller.claim" => {
                 id == crate::execution::host_id(&self.identity.executor)
+            }
+            name if name.starts_with("knowledge.") => {
+                return match crate::knowledge::check(
+                    &reader,
+                    name,
+                    params,
+                    &self.identity.principal,
+                    &self.mutants,
+                )
+                .map_err(storage)?
+                {
+                    Ok(()) => Ok(()),
+                    Err(("stale_authority_epoch", details)) => {
+                        let scope =
+                            crate::knowledge::scope_of(&reader, name, params).map_err(storage)?;
+                        let binding = json!({"kind": crate::knowledge::AUTHORITY, "id": scope});
+                        let details = if self.may_read(&binding, params)? {
+                            details
+                        } else {
+                            json!({})
+                        };
+                        Err(reject("stale_authority_epoch", details))
+                    }
+                    Err((code, details)) => Err(reject(code, details)),
+                };
             }
             "context.request.cancel" => crate::context::preparing(&reader, id)
                 .map_err(storage)?
@@ -2515,6 +2638,32 @@ impl Provider {
                 )
                 .map_err(storage)?
                 .map_err(|code| reject(code, json!({"reason": "malformed"})))
+            }
+            "knowledge.claim.inspect" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let knowledge_reader = crate::knowledge::Reader {
+                    provider_id: &self.identity.provider_id,
+                    config: &self.identity.knowledge,
+                    evidence_config: &self.identity.evidence_store,
+                    mutants: &self.mutants,
+                };
+                crate::knowledge::inspect(&reader, &params["payload"], &knowledge_reader)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "knowledge.claim.history" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let claim = params["payload"]["claim"].as_str().unwrap_or_default();
+                crate::knowledge::history(&reader, claim, &self.mutants)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
+            }
+            "knowledge.authority.get" => {
+                let reader = self.store.reader().map_err(storage)?;
+                let scope = params["payload"]["scope"].as_str().unwrap_or_default();
+                crate::knowledge::authority(&reader, scope)
+                    .map_err(storage)?
+                    .ok_or_else(|| reject("not_found", json!({})))
             }
             "execution.discovery.list" => Ok(crate::features::discovery(
                 &self.identity.executor,
@@ -2944,6 +3093,13 @@ impl Provider {
                 )?;
             }
             any
+        } else if kind.starts_with("knowledge.") {
+            covers
+                && grant["rights"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|right| right == "knowledge.read")
         } else if kind == crate::evidence::ARTIFACT {
             covers
                 && grant["rights"]

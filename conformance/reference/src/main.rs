@@ -12,6 +12,7 @@ mod features;
 mod frames;
 mod grants;
 mod json;
+mod knowledge;
 mod mutants;
 mod outbox;
 mod peer;
@@ -247,6 +248,7 @@ fn run(args: Args) -> Result<(), String> {
             faults: std::sync::Arc::new(std::sync::Mutex::new(config["faults"].clone())),
             evidence_store: std::sync::Arc::new(config["evidence_store"].clone()),
             context_script: std::sync::Arc::new(config["context"].clone()),
+            knowledge: std::sync::Arc::new(config["knowledge"].clone()),
             capabilities,
             authorities,
             principal,

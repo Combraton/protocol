@@ -145,6 +145,18 @@ fn directive_match(
                 &format!("{path}(sha256)"),
             )
         }
+        "$canonical_sha256" => {
+            // The sha256 digest of the value's canonical encoding matches the argument pattern:
+            // how a reader recomputes a record digest (KNOWLEDGE section 3).
+            let found = actual.ok_or_else(|| format!("{path}: missing"))?;
+            let digest = crate::strict::sha256(&crate::strict::canonical(found));
+            matches(
+                argument,
+                Some(&Value::String(digest)),
+                vars,
+                &format!("{path}(canonical sha256)"),
+            )
+        }
         other => Err(format!("{path}: unknown pattern directive {other}")),
     }
 }

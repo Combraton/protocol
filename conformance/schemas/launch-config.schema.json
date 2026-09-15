@@ -642,6 +642,46 @@
         }
       },
       "additionalProperties": false
+    },
+    "knowledge": {
+      "type": "object",
+      "description": "Knowledge evaluator and adversarial store controls (decision 007; KNOWLEDGE section 13).",
+      "properties": {
+        "evaluator": {
+          "type": "object",
+          "required": [
+            "id",
+            "version"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "condition_kinds": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "repository_tree",
+                  "dirty_snapshot",
+                  "environment_digest"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "serve_altered_claims": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Adversarial control: knowledge.claim.inspect returns these claims' records altered while keeping the reference and digest."
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,

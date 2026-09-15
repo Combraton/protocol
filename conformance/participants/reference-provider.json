@@ -26,6 +26,10 @@
       {
         "name": "context",
         "major": 1
+      },
+      {
+        "name": "knowledge",
+        "major": 1
       }
     ],
     "features": [
@@ -60,7 +64,8 @@
       "executor.script",
       "store.faults",
       "evidence.store",
-      "context.script"
+      "context.script",
+      "knowledge.store"
     ],
     "test_barriers": [
       "backpressure.limit.reached",
@@ -358,7 +363,29 @@
       "released-ending-before-cause",
       "filtered-reveals-matches",
       "work-constraint-inferred",
-      "abandon-sealed-accepted"
+      "abandon-sealed-accepted",
+      "claim-revision-overwritten",
+      "revise-base-unchecked",
+      "drift-as-conflict",
+      "single-status-field",
+      "support-entries-as-origins",
+      "equal-digest-roots-disjoint",
+      "overlap-as-multiple",
+      "conflict-on-identity-only",
+      "potential-reported-demonstrated",
+      "resolve-without-authority",
+      "decide-by-grant-right",
+      "derivation-label-authorizes",
+      "transfer-resets-reliance",
+      "self-adoption-unrecorded",
+      "incomplete-coverage-applicable",
+      "unknown-outranks-mismatch",
+      "history-drops-superseded",
+      "validity-filled-from-recorded",
+      "normative-implies-binding",
+      "decision-epoch-optional",
+      "decision-supersession-unchecked",
+      "bind-by-grant"
     ]
   }
 }

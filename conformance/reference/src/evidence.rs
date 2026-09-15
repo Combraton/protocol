@@ -732,7 +732,7 @@ pub fn tick(
 
 /// Availability as observed now: the recorded state, the scripted store's `unavailable` list, and
 /// integrity of the stored bytes. Queries record nothing, so a read-time failure is reported only.
-fn observed(
+pub(crate) fn observed(
     tx: &Transaction,
     id: &str,
     record: &Value,

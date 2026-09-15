@@ -47,7 +47,9 @@
         "upload_incomplete",
         "content_digest_mismatch",
         "artifact_digest_mismatch",
-        "hold_active"
+        "hold_active",
+        "claims_not_comparable",
+        "contract_unavailable"
       ]
     },
     "retry": {

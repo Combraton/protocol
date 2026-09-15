@@ -5,6 +5,91 @@ use std::collections::BTreeSet;
 
 pub const ALL: &[(&str, &str)] = &[
     (
+        "claim-revision-overwritten",
+        "replaces the previous claim revision instead of keeping it",
+    ),
+    (
+        "revise-base-unchecked",
+        "accepts a revise whose supersedes names a stale revision or digest",
+    ),
+    (
+        "drift-as-conflict",
+        "records normative against observed as a conflict rather than drift",
+    ),
+    ("single-status-field", "lets acceptance imply applicability"),
+    (
+        "support-entries-as-origins",
+        "treats each support artifact as an origin when no ancestry is declared",
+    ),
+    (
+        "equal-digest-roots-disjoint",
+        "treats roots with equal digests but different references as disjoint",
+    ),
+    (
+        "overlap-as-multiple",
+        "classifies pairwise-overlapping ancestry as multiple lineages",
+    ),
+    (
+        "conflict-on-identity-only",
+        "accepts a conflict on matching subject, predicate and scope alone",
+    ),
+    (
+        "potential-reported-demonstrated",
+        "reports a conflict with uncertain dimensions as demonstrated",
+    ),
+    (
+        "resolve-without-authority",
+        "lets any principal with a decide right resolve a conflict",
+    ),
+    (
+        "decide-by-grant-right",
+        "lets a grant with knowledge.decide record decisions without the binding",
+    ),
+    (
+        "derivation-label-authorizes",
+        "lets a producer decide its own claim when the derivation says human",
+    ),
+    (
+        "transfer-resets-reliance",
+        "drops decisions recorded under an earlier authority epoch",
+    ),
+    (
+        "self-adoption-unrecorded",
+        "records a decision by the claim's author without author_is_decider",
+    ),
+    (
+        "incomplete-coverage-applicable",
+        "treats a missing anchor as a match",
+    ),
+    (
+        "unknown-outranks-mismatch",
+        "reports unknown when an observed mismatch is present",
+    ),
+    (
+        "history-drops-superseded",
+        "omits superseded revisions from history",
+    ),
+    (
+        "validity-filled-from-recorded",
+        "fills an unknown validity start from the recorded time",
+    ),
+    (
+        "normative-implies-binding",
+        "reports undecided normative claims as accepted for binding use",
+    ),
+    (
+        "decision-epoch-optional",
+        "accepts a decision without an authority epoch",
+    ),
+    (
+        "decision-supersession-unchecked",
+        "records a decision without naming the latest decision it replaces",
+    ),
+    (
+        "bind-by-grant",
+        "lets a non-authority principal bind a scope under a grant",
+    ),
+    (
         "chunk-limit-ignores-overhead",
         "declares a chunk limit that ignores base64 and envelope overhead",
     ),

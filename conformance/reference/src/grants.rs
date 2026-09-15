@@ -73,6 +73,43 @@ pub fn required_rights(operation: &str, params: &Value) -> Option<Vec<(String, V
             "core-test.read".to_string(),
             params["payload"]["subject"].clone(),
         )]),
+        "knowledge.claim.propose" | "knowledge.claim.revise" => Some(vec![(
+            "knowledge.propose".to_string(),
+            params["subject"].clone(),
+        )]),
+        "knowledge.conflict.open" | "knowledge.applicability.evaluate" => {
+            let mut needed = vec![("knowledge.propose".to_string(), params["subject"].clone())];
+            let named: Vec<&Value> = match params["payload"]["revisions"].as_array() {
+                Some(revisions) => revisions.iter().collect(),
+                None => vec![&params["payload"]["claim"]],
+            };
+            for reference in named {
+                needed.push((
+                    "knowledge.read".to_string(),
+                    serde_json::json!({"kind": "knowledge.claim", "id": reference["claim"]}),
+                ));
+            }
+            Some(needed)
+        }
+        "knowledge.decision.record" => Some(vec![
+            ("knowledge.decide".to_string(), params["subject"].clone()),
+            (
+                "knowledge.read".to_string(),
+                serde_json::json!({"kind": "knowledge.claim", "id": params["payload"]["claim"]["claim"]}),
+            ),
+        ]),
+        "knowledge.conflict.resolve" => Some(vec![(
+            "knowledge.decide".to_string(),
+            params["subject"].clone(),
+        )]),
+        "knowledge.claim.inspect" | "knowledge.claim.history" => Some(vec![(
+            "knowledge.read".to_string(),
+            serde_json::json!({"kind": "knowledge.claim", "id": params["payload"]["claim"]}),
+        )]),
+        "knowledge.authority.get" => Some(vec![(
+            "knowledge.read".to_string(),
+            serde_json::json!({"kind": "knowledge.authority", "id": params["payload"]["scope"]}),
+        )]),
         _ => None,
     }
 }

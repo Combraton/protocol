@@ -10,7 +10,7 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - PR #2 (M0 and M1) as `f42d21a`.
   - PR #3 (M2) as `7bd5cb9`, after the owner accepted M2.
   - PR #4 (M3) as `481cf7f`, after the owner's conditional acceptance with corrections C1–C3 on 2026-09-14. [PR #4 checks](https://github.com/Combraton/protocol/pull/4/checks) passed on its final head `19e0e16`. M3 is accepted; Protocol 0.1 is not.
-- **Branch:** `release-0.1/m4` from `481cf7f`, in a draft PR; not merged.
+- **Branch:** `release-0.1/m4` from `481cf7f`, in draft [PR #5](https://github.com/Combraton/protocol/pull/5); not merged.
 - **Done in M4 so far:** step 1 drafts: [EVIDENCE](../spec/profiles/EVIDENCE.md), [CONTEXT](../spec/profiles/CONTEXT.md), refined [MATRIX](release-0.1/MATRIX.md) rows (EVD, CTX, EXE-21 and the M4 scenarios), and the [M4 task packet](release-0.1/M4.md). No implementation yet.
 - **Evidence at M3 merge:** CI at `19e0e16` on Ubuntu and macOS. The uploaded Ubuntu artifact shows:
   - reference over stdio: 200 pass, 12 skipped; Unix socket: 212 pass;

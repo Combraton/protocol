@@ -1550,3 +1550,25 @@ The H-RETRY-RUNNER failures are gone with the rebuilt runner. The sixth-pass cod
 - **H8-BASIS-CHANGES-MERGE.** Replace versus merge for `basis_changes` (H8-BASIS-CHANGES) is not distinguished by the single-repository fixtures. Basis: own judgment.
 - **H8-CONSTRAINT-ADDITION.** CORE §15.3 says a delegated grant "carries every constraint of its parent, unchanged, otherwise `delegation_exceeded`", but not whether it may add constraints. Allowed here, since constraints only narrow. Unchecked. Basis: own judgment.
 - **H8-CAPACITY-FAIRNESS.** M4 names fairness among released executions waiting for capacity as unspecified. Here queued admissions are evaluated before scripts in each tick, so work queued at admission takes a freed slot before released work resumes. Unchecked. Basis: own judgment (limit acknowledged in M4).
+
+### H.9 (base 9591551)
+
+> Ninth spec-only pass, a short realignment with the resolution of H.8 (M4-DIVERGENCES §C.2). Read first: `git diff dc2f8c8 9591551 -- docs/spec conformance/README.md docs/work/release-0.1/M4-DIVERGENCES.md`. The one changed fixture, `execution.revalidation-reports-match-mismatch-and-unavailable-by-obligation` v3, was read after implementing and running. Read rules unchanged.
+
+**Changes, from the documents.**
+
+| Resolved text | Change |
+|---|---|
+| EXECUTION §13.1: `require_current: true` needs `fetch.context`, otherwise `invalid_envelope` at `/payload/context_bindings/<i>/require_current` | Refused at step 2 (resolves H8-REQUIRE-CURRENT-WITHOUT-FETCH). `require_current: false` without a fetch grant is accepted. |
+| Conformance README: `basis_changes` merges per member and per repository, like `observe_host_basis`, in time order | `basis_changes` now merges (resolves H8-BASIS-CHANGES-MERGE) |
+| CONTEXT §8: `superseded_by` names the request's current revision | The latest revision instead of the next one |
+| EXECUTION §13.1: a passed delivery timeout ends released work with `scheduling.reason: "deadline_passed"` | The §8 delivery-timeout path now also records `scheduling: { capacity: "released", reason: "deadline_passed" }` and its event for released work, and clears `context.blocked` (resolves H8-RELEASED-TIMEOUT-OVERLAP) |
+| EXECUTION §13.1: `observed` strings for `packet.facts` and `packet.current` mismatches | No change: this executor reaches no context provider, so those results are always `unavailable`, with no `observed` |
+| EXECUTION §9 `resumed`; CORE §15.3 added constraints; §13.1 end timing and fairness | Already as implemented (H8-RESUMED-REASON, H8-CONSTRAINT-ADDITION, H8-END-TIMING, H8-CAPACITY-FAIRNESS) |
+
+**Run** (255 fixtures): **228 pass, 0 fail, 0 timeout, 0 harness_error, 4 unsupported, 23 skipped**, on the first run after the changes. The v3 fixture adds one step, a `require_current: true` binding without fetch grants expecting `invalid_envelope` at `/payload/context_bindings/0/require_current`, which matches. Nothing was changed after reading it.
+
+**Still open.** None fails a fixture.
+
+- **H9-TIMEOUT-SCHEDULING-ORDER.** When a delivery timeout ends released work, this implementation appends `execution.timeout.passed`, the overdue markings, `execution.delivery.observed`, then `execution.scheduling.changed { released, deadline_passed }`. On the §13.1 path (execution deadline, cancellation, revoked authorization) the scheduling change comes first, before the determination. §9's causal order puts the cause first, but the text does not say whether the scheduling change is caused by the timeout or causes the determination. The two paths therefore order the same events differently. Unchecked. Suggested: fix one order for both. Basis: own judgment.
+- **H9-OBSERVED-UNTESTED.** The `observed` strings for `packet.facts` and `packet.current` are exercised only by composition fixtures, so this stdio participant never produces or checks them (coverage limit). Basis: spec text.

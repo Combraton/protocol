@@ -2,7 +2,7 @@
 
 This is a dated navigation snapshot. Reconcile it with Git, linked issues and current task evidence before acting. Issues own live progress; this file does not grant authority or maintain a second backlog.
 
-- **Updated:** 2026-09-15 (M6 release candidate presented for the owner's acceptance on draft PR #7; not merged, tagged or published).
+- **Updated:** 2026-09-16. The owner found the Protocol 0.1 scope ready and authorized the bounded close-out and the v0.1.0 release process. This commit is the release-preparation head. The merge, tag, release URL and asset checksums are recorded in issue #1 and in the post-release handoff.
 - **Owner/current task:** Protocol session (Claude Code) on the Protocol 0.1 standalone release, [issue #1](https://github.com/Combraton/protocol/issues/1).
   - Current milestone: [M6 task](release-0.1/M6.md), the release candidate.
   - Detailed state and evidence: [release handoff](release-0.1/HANDOFF.md).
@@ -24,9 +24,9 @@ This is a dated navigation snapshot. Reconcile it with Git, linked issues and cu
   - the S-A and S-B third-party compositions;
   - the independent passes 14 and 15;
   - the compatibility sweep, status headers, operation check, inventory and release record.
-- **Open owner decisions:** acceptance of the Protocol 0.1 release candidate; then authorization to merge, tag and publish.
+- **Release authorization (2026-09-16):** close out ([M6 release close-out](release-0.1/M6.md#release-close-out-2026-09-16)), then, if every condition passes, merge PR #7 pinned to the final head, create the annotated `v0.1.0` tag at the verified merge, and publish the source release with checksums, manifest and evidence. Unrelated protocol changes are not authorized.
 - **Worktrees kept until the candidate merges:** `.worktrees/independent-m6` (branch `release-0.1/m6-independent`) and `.worktrees/thirdparty-m6` (branch `release-0.1/m6-thirdparty`), both fully merged. Their results are copied under `conformance/results/independent-m6-pass-evidence/` and `conformance/results/thirdparty-m6-evidence/`.
 - **Prompt disposition:** no active continuation prompt. The workspace `START-PROTOCOL.md` stays retired and points here.
-- **Next action:** wait for the owner's decision on the release candidate. Do not merge, tag or publish before it.
+- **Next action:** complete the release process, then record the release in issue #1 and the post-release handoff.
 
 At the next meaningful checkpoint, replace stale observations with verified current state. Record exact test commands, exit status, evidence and remaining limitations for the work performed.

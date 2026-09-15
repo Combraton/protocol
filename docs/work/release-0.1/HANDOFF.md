@@ -9,7 +9,7 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 - **Checkpoint:** 2026-09-15 (release candidate).
   - The owner accepted M5 at `00b3c5a`; PR #6 merged as `6ed4727`.
   - The owner approved M6-Q1 to M6-Q3 with clarifications. The bounded M6 work is done ([M6 status](M6.md#status)), and the release candidate is presented on draft PR #7.
-- **Status:** M0–M5 merged and accepted as milestones. The Protocol 0.1 release candidate awaits the owner's acceptance. It is not merged, tagged or published; each needs the owner's explicit authorization.
+- **Status:** M0–M5 merged and accepted as milestones. On 2026-09-16 the owner authorized the close-out and the v0.1.0 release process, conditional on the checks. The close-out is in [M6](M6.md#release-close-out-2026-09-16). This commit is the release-preparation head; the tag and release details follow in issue #1.
 
 ## Goal, decisions and constraints
 
@@ -125,8 +125,8 @@ A dated observation, not permission to replay actions. Reconcile with Git, [issu
 
 ## Next action
 
-1. Wait for the owner's decision on the release candidate (PR #7, issue #1).
-2. After acceptance and an authorized merge:
+1. Complete the authorized release process (M6 release close-out).
+2. After the merge:
    - verify that the merge tree equals the accepted head;
    - create the tag only when authorized, and record the commit and tag in issue #1 and the release record's acceptance note;
    - update STATE, this handoff and CONSUMERS;

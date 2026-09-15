@@ -1,8 +1,8 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "core.feature-dependencies-match-negotiation",
-  "version": 1,
-  "title": "core.feature_dependencies lists each profile major's Core features and execution.claim_revalidation's dependency on execution.context_revalidation, before and after negotiation, read-only; every listed dependency is exactly what negotiation enforces, including the required, optional and optional-profile forms of a feature-triggered dependency",
+  "version": 2,
+  "title": "core.feature_dependencies lists each supported profile major's Core features, before and after negotiation, without negotiating or appending anything; every listed profile dependency is exactly what negotiation enforces",
   "requirements": [
     "CMP-5",
     "CORE-3"
@@ -10,8 +10,7 @@
   "spec_refs": [
     "docs/spec/profiles/CORE.md#43-corefeature_dependencies-query-m6-q1",
     "docs/spec/profiles/CORE.md#42-corenegotiate-query",
-    "docs/spec/profiles/EXECUTION.md#1-dependencies-and-negotiation",
-    "docs/spec/profiles/EXECUTION.md#133-claim-revalidation-executionclaim_revalidation"
+    "docs/spec/profiles/EXECUTION.md#1-dependencies-and-negotiation"
   ],
   "role": "provider",
   "profiles": [
@@ -40,18 +39,13 @@
     "core.events",
     "core.capabilities",
     "core.effects",
-    "execution.context",
-    "execution.context_revalidation",
-    "execution.claim_revalidation"
+    "execution.context"
   ],
   "requires_controls": [
     "executor.script"
   ],
-  "polarity": "negative",
-  "kills": [
-    "feature-dependencies-omit-feature-trigger",
-    "feature-dependency-unenforced"
-  ],
+  "polarity": "positive",
+  "kills": [],
   "steps": [
     {
       "step": "start",
@@ -223,34 +217,10 @@
     },
     {
       "step": "query",
-      "operation": "core.feature_dependencies",
+      "operation": "core.capabilities",
       "payload": {},
       "expect": {
-        "ok": {
-          "dependencies": {
-            "$contains": {
-              "profile": "execution",
-              "major": 1,
-              "trigger": {
-                "$exact": {
-                  "kind": "feature",
-                  "feature": "execution.claim_revalidation"
-                }
-              },
-              "requires": [
-                {
-                  "$exact": {
-                    "profile": "execution",
-                    "major": 1,
-                    "features": [
-                      "execution.context_revalidation"
-                    ]
-                  }
-                }
-              ]
-            }
-          }
-        }
+        "error": "negotiation_required"
       }
     },
     {
@@ -519,60 +489,7 @@
             ],
             "required": true,
             "required_features": [
-              "execution.context",
-              "execution.claim_revalidation"
-            ],
-            "optional_features": []
-          }
-        ]
-      },
-      "expect": {
-        "error": "unsupported_required_feature",
-        "details": {
-          "unsatisfied": [
-            {
-              "profile": "execution",
-              "feature": "execution.claim_revalidation",
-              "reason": "dependency_not_selected"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "step": "negotiate",
-      "payload": {
-        "caller": {
-          "name": "fixture",
-          "version": "1"
-        },
-        "receive_limits": {
-          "max_frame_bytes": 1048576
-        },
-        "profiles": [
-          {
-            "name": "core",
-            "majors": [
-              1
-            ],
-            "required": true,
-            "required_features": [
-              "core.events",
-              "core.capabilities",
-              "core.effects"
-            ],
-            "optional_features": []
-          },
-          {
-            "name": "execution",
-            "majors": [
-              1
-            ],
-            "required": true,
-            "required_features": [
-              "execution.context",
-              "execution.context_revalidation",
-              "execution.claim_revalidation"
+              "execution.context"
             ],
             "optional_features": []
           },
@@ -618,10 +535,8 @@
         "ok": {
           "selected": {
             "$contains": {
-              "name": "execution",
-              "features": {
-                "$contains": "execution.claim_revalidation"
-              }
+              "name": "verification",
+              "major": 1
             }
           }
         }
@@ -639,17 +554,18 @@
               "major": 1,
               "trigger": {
                 "$exact": {
-                  "kind": "feature",
-                  "feature": "execution.claim_revalidation"
+                  "kind": "profile"
                 }
               },
               "requires": [
                 {
                   "$exact": {
-                    "profile": "execution",
+                    "profile": "core",
                     "major": 1,
                     "features": [
-                      "execution.context_revalidation"
+                      "core.events",
+                      "core.capabilities",
+                      "core.effects"
                     ]
                   }
                 }
@@ -669,146 +585,6 @@
       "expect": {
         "ok": {
           "items": []
-        }
-      }
-    },
-    {
-      "step": "stop"
-    },
-    {
-      "step": "start",
-      "config": {
-        "principal": "owner",
-        "authority_principals": [
-          "owner"
-        ],
-        "executor": {}
-      }
-    },
-    {
-      "step": "negotiate",
-      "payload": {
-        "caller": {
-          "name": "fixture",
-          "version": "1"
-        },
-        "receive_limits": {
-          "max_frame_bytes": 1048576
-        },
-        "profiles": [
-          {
-            "name": "core",
-            "majors": [
-              1
-            ],
-            "required": true,
-            "required_features": [
-              "core.events",
-              "core.capabilities",
-              "core.effects"
-            ],
-            "optional_features": []
-          },
-          {
-            "name": "execution",
-            "majors": [
-              1
-            ],
-            "required": true,
-            "required_features": [
-              "execution.context"
-            ],
-            "optional_features": [
-              "execution.claim_revalidation"
-            ]
-          }
-        ]
-      },
-      "expect": {
-        "ok": {
-          "selected": {
-            "$contains": {
-              "name": "execution",
-              "features": [
-                "execution.context"
-              ]
-            }
-          },
-          "unselected": [
-            {
-              "profile": "execution",
-              "feature": "execution.claim_revalidation",
-              "reason": "dependency_not_selected"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "step": "stop"
-    },
-    {
-      "step": "start",
-      "config": {
-        "principal": "owner",
-        "authority_principals": [
-          "owner"
-        ],
-        "executor": {}
-      }
-    },
-    {
-      "step": "negotiate",
-      "payload": {
-        "caller": {
-          "name": "fixture",
-          "version": "1"
-        },
-        "receive_limits": {
-          "max_frame_bytes": 1048576
-        },
-        "profiles": [
-          {
-            "name": "core",
-            "majors": [
-              1
-            ],
-            "required": true,
-            "required_features": [
-              "core.events",
-              "core.capabilities",
-              "core.effects"
-            ],
-            "optional_features": []
-          },
-          {
-            "name": "execution",
-            "majors": [
-              1
-            ],
-            "required": false,
-            "required_features": [
-              "execution.context",
-              "execution.claim_revalidation"
-            ],
-            "optional_features": []
-          }
-        ]
-      },
-      "expect": {
-        "ok": {
-          "selected": [
-            {
-              "name": "core"
-            }
-          ],
-          "unselected": [
-            {
-              "profile": "execution",
-              "feature": "execution.claim_revalidation",
-              "reason": "dependency_not_selected"
-            }
-          ]
         }
       }
     },

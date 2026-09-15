@@ -81,7 +81,9 @@ A provider MUST NOT list a profile as supported unless it also supports every pr
 - **Dependencies (§4.3)** are applied after selection:
   - **Profile-triggered.** A profile whose dependency is not selected is not selected. For each missing dependency the item is `{ profile, reason: "dependency_not_selected" }`, or `{ profile, feature: <missing dependency feature>, reason: "dependency_not_selected" }` for a missing feature. A required profile's items refuse the negotiation with `unsupported_profile`.
   - **Feature-triggered** (M6-Q1). A requested feature whose dependency is not selected is itself not selected, and the item is `{ profile, feature: <the requested feature>, reason: "dependency_not_selected" }`. When the feature was required in a required profile, the negotiation is refused with `unsupported_required_feature`. When it was required in an optional profile, the profile is not selected. When it was optional, the item is reported in `unselected`.
-  - A dependency is applied only when its dependent profile or feature was requested. A caller that requests neither sees no dependency items.
+  - **Order.** Profile-triggered dependencies are applied first. Feature-triggered dependencies are then judged against the profiles and features still selected, and are applied again until nothing changes. A profile that was not selected contributes no feature items: when a required profile is refused for a missing Core feature, its feature-triggered items are not also listed.
+  - **One item per cause.** An optional profile left unselected by a required feature's dependency is reported with that one item, and its other features are not listed.
+  - A dependency is applied only when its dependent profile or feature was requested. A caller that requests neither sees no dependency items. The order of items within `unsatisfied` and `unselected` is not significant.
 - A feature named under a profile it does not belong to is `unknown_feature` for the profile it was listed under.
 - The same profile listed twice is `invalid_envelope`.
 - `unsatisfied` lists only the items that caused the refusal.
@@ -472,7 +474,7 @@ For each command or query that a profile protects:
 
    When several reasons apply, report the first in this order: `grant_not_found` (checked before any other property of the grant, so another principal's revoked grant is still `grant_not_found`); `revoked`; `expired`; `authority_epoch_stale`; `right_missing` for any needed right; `out_of_scope` for any needed subject.
 
-**Which operations are protected.** In this document: the `core-test` operations (§13), `core.events.read` and `core.events.subscribe` (§16.6). The `core.grant.*` operations follow their own rules (§15.3). `core.describe`, `core.negotiate`, `core.authenticate`, `core.capabilities` and `core.events.unsubscribe` are not protected. A `grant` field on an unprotected or `core.grant.*` operation is validated but not evaluated. `core.events.unsubscribe` removes only the session's own subscriptions; an unknown subscription is `not_found`.
+**Which operations are protected.** In this document: the `core-test` operations (§13), `core.events.read` and `core.events.subscribe` (§16.6). The `core.grant.*` operations follow their own rules (§15.3). `core.describe`, `core.feature_dependencies`, `core.negotiate`, `core.authenticate`, `core.capabilities` and `core.events.unsubscribe` are not protected. A `grant` field on an unprotected or `core.grant.*` operation is validated but not evaluated. `core.events.unsubscribe` removes only the session's own subscriptions; an unknown subscription is `not_found`.
 
 **Without `core.grants`.** Authorization still applies when the session did not negotiate `core.grants`. Such a session cannot name a grant, so a principal that is not an authority is refused with `grant_required`.
 

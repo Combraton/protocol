@@ -492,8 +492,8 @@
     },
     {
       "path": "conformance/fixtures/core/feature-dependencies-match-negotiation.json",
-      "sha256": "21c9d46b77008be7eda99ddc8b32a02065062cd04b5f3e49fef83a0c0cb599d1",
-      "bytes": 19000
+      "sha256": "a8b7d7e3f6189c93a9f2a5730ffab1a70803a6830775b1ac5747408d9bc671ee",
+      "bytes": 13580
     },
     {
       "path": "conformance/fixtures/core/grants-authority-binding-scope-must-exist.json",
@@ -1016,6 +1016,11 @@
       "bytes": 9048
     },
     {
+      "path": "conformance/fixtures/execution/feature-triggered-dependencies-match-negotiation.json",
+      "sha256": "d4df74f9ab8bd03ab4f3f12e14bf1426475caa2aa11658d4842254a42cf41652",
+      "bytes": 8775
+    },
+    {
       "path": "conformance/fixtures/execution/fresh-continuation-is-never-labeled-resumed.json",
       "sha256": "4d8fa6af9c775462aa71fd5898182ba083637e97c67b10a6a352b0c137b6465b",
       "bytes": 7220
@@ -1447,8 +1452,8 @@
     },
     {
       "path": "docs/spec/profiles/CORE.md",
-      "sha256": "4ffb550901a479358ecd86a945ad87f58b1cf678b33094edddd91094e11737b8",
-      "bytes": 71725
+      "sha256": "10fb1558e2df64d9fa67f07fb7d2b143e06d15f9d52ca54fa910804aaeba00a3",
+      "bytes": 72382
     },
     {
       "path": "docs/spec/profiles/EVIDENCE.md",
@@ -1457,8 +1462,8 @@
     },
     {
       "path": "docs/spec/profiles/EXECUTION.md",
-      "sha256": "a0332be0bbbfc8de55e925b2d0166d62eabea197d870a0155233646bf057b34e",
-      "bytes": 61526
+      "sha256": "c6948db8e5caae0de00a18ef1dd9a42128ebeb886335f45c8cebcc8f83e77f88",
+      "bytes": 61562
     },
     {
       "path": "docs/spec/profiles/KNOWLEDGE.md",
@@ -2107,8 +2112,8 @@
     }
   ],
   "totals": {
-    "files": 419,
-    "bytes": 2918541,
-    "listing_sha256": "35046fe4375b807004d64012419365e858199a43b7453cf537ebc6384e2bb2fc"
+    "files": 420,
+    "bytes": 2922589,
+    "listing_sha256": "a383e8ab2a15c74cf5fb338942087404f22cc390342ee0b7cd2c394ad43513e0"
   }
 }

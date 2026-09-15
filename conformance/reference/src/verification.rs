@@ -160,14 +160,14 @@ pub fn read_contract(
     }
     let bytes = crate::evidence::sealed_bytes(tx, id)?;
     match serde_json::from_slice::<Value>(&bytes) {
-        Ok(contract) if contract_well_formed(&contract) => Ok(Ok(contract)),
+        Ok(contract) if contract_well_formed(&contract, mutants) => Ok(Ok(contract)),
         _ => unavailable("invalid_format"),
     }
 }
 
 /// A readable contract (VERIFICATION section 3): the format, unique non-empty roles and property
 /// IDs, and known layers.
-fn contract_well_formed(contract: &Value) -> bool {
+fn contract_well_formed(contract: &Value, mutants: &Mutants) -> bool {
     const LAYERS: [&str; 6] = [
         "static",
         "component",
@@ -185,7 +185,37 @@ fn contract_well_formed(contract: &Value) -> bool {
                 .enumerate()
                 .all(|(i, n)| !items[..i].contains(n))
     };
-    contract["format"] == CONTRACT_FORMAT
+    const MEMBERS: [&str; 7] = [
+        "format",
+        "outcome",
+        "subjects",
+        "properties",
+        "environment",
+        "evaluators",
+        "freshness",
+    ];
+    // A contract is a closed object (VERIFICATION section 3).
+    let closed = contract.as_object().is_some_and(|members| {
+        members.len() == MEMBERS.len() && MEMBERS.iter().all(|m| members.contains_key(*m))
+    });
+    let open = mutants.on("contract-members-open");
+    (closed || open)
+        && (contract["format"] == CONTRACT_FORMAT || (open && contract.get("format").is_none()))
+        && contract["outcome"].is_string()
+        && contract["environment"]["required_anchors"]
+            .as_array()
+            .is_some_and(|a| a.iter().all(Value::is_string))
+        && (contract["evaluators"].is_null()
+            || contract["evaluators"]
+                .as_array()
+                .is_some_and(|a| a.iter().all(Value::is_string)))
+        && (contract["freshness"].is_null() || contract["freshness"]["max_age_seconds"].is_i64())
+        && entries_closed(&contract["subjects"], &["role", "kind"], open)
+        && entries_closed(
+            &contract["properties"],
+            &["property_id", "layer", "required", "statement"],
+            open,
+        )
         && unique(&contract["subjects"], "role")
         && unique(&contract["properties"], "property_id")
         && contract["properties"]
@@ -196,6 +226,22 @@ fn contract_well_formed(contract: &Value) -> bool {
                 p["layer"].as_str().is_some_and(|l| LAYERS.contains(&l))
                     && p["required"].is_boolean()
             })
+}
+
+/// Every entry has exactly the named members, each a string except `required` (a boolean).
+fn entries_closed(list: &Value, members: &[&str], open: bool) -> bool {
+    list.as_array().is_some_and(|entries| {
+        entries.iter().all(|entry| {
+            entry.as_object().is_some_and(|object| {
+                (open || object.len() == members.len())
+                    && members.iter().all(|m| match object.get(*m) {
+                        Some(value) if *m == "required" => value.is_boolean(),
+                        Some(value) => value.is_string(),
+                        None => false,
+                    })
+            })
+        })
+    })
 }
 
 /// Missing, duplicated or unknown names against the contract's list.
@@ -239,6 +285,30 @@ fn roles_refusal(contract: &Value, subjects: &Value) -> Option<Refusal> {
 // ---------------------------------------------------------------------------------------------
 // Step 7.
 
+/// The evaluator version a job depends on is `supported`: a capability check, so it comes before
+/// the Core preconditions (CORE sections 10 and 17).
+pub fn capability_check(params: &Value, ctx: &Context) -> Result<(), Refusal> {
+    if ctx.mutants.on("evaluator-after-preconditions") {
+        return Ok(());
+    }
+    evaluator_supported(params, ctx)
+}
+
+fn evaluator_supported(params: &Value, ctx: &Context) -> Result<(), Refusal> {
+    let evaluator = &params["payload"]["evaluator"];
+    let name = predicate_name(evaluator);
+    let current = status(ctx.capabilities, &name, ctx.mutants);
+    if current != "supported"
+        && pinned_substitute(ctx.capabilities, evaluator, ctx.mutants).is_none()
+    {
+        return Err((
+            "capability_unavailable",
+            json!({"capability": name, "status": current}),
+        ));
+    }
+    Ok(())
+}
+
 pub fn check(
     tx: &Transaction,
     operation: &str,
@@ -257,15 +327,10 @@ pub fn check(
                     json!({"failed": [{"subject": subject(RECEIPT, id), "expected": 0}]}),
                 )));
             }
-            let name = predicate_name(&payload["evaluator"]);
-            let current = status(ctx.capabilities, &name, mutants);
-            if current != "supported"
-                && pinned_substitute(ctx.capabilities, &payload["evaluator"], mutants).is_none()
+            if mutants.on("evaluator-after-preconditions")
+                && let Err(refusal) = evaluator_supported(params, ctx)
             {
-                return Ok(Err((
-                    "capability_unavailable",
-                    json!({"capability": name, "status": current}),
-                )));
+                return Ok(Err(refusal));
             }
             let contract = match read_contract(
                 tx,
@@ -722,10 +787,15 @@ fn complete(
         }),
         "inputs": [],
         "properties": properties,
-        "observed_from": job.get("started_at").cloned().unwrap_or_else(|| job["submitted_at"].clone()),
+        // A job that never ran observed nothing: its period is empty (VERIFICATION section 4).
+        "observed_from": job.get("started_at").cloned().unwrap_or_else(|| json!(now)),
         "observed_until": now,
         "valid_until": job.get("valid_until").cloned().unwrap_or(Value::Null),
-        "scope": contract["outcome"].as_str().unwrap_or("contract evaluation"),
+        "scope": if mutants.on("issued-scope-from-job") {
+            json!(format!("verification job {id}"))
+        } else {
+            json!(contract["outcome"].as_str().unwrap_or("contract evaluation"))
+        },
         "job": id,
         "provenance": [],
     });
@@ -739,16 +809,23 @@ fn complete(
         Some(id),
         mutants,
     )?;
-    drafts.extend(receipt_drafts);
     job["state"] = json!("completed");
     job["receipt"] = reference;
     *revision += 1;
-    drafts.push((
+    let changed: Draft = (
         "verification.job.changed",
         subject(JOB, id),
         *revision,
         json!({"state": "completed", "evaluator": job["evaluator"]}),
-    ));
+    );
+    // receipt.issued, then the artifact's events, then the job's change (VERIFICATION section 4).
+    if mutants.on("issued-events-job-first") {
+        drafts.push(changed);
+        drafts.extend(receipt_drafts);
+    } else {
+        drafts.extend(receipt_drafts);
+        drafts.push(changed);
+    }
     Ok(())
 }
 
@@ -889,12 +966,20 @@ pub fn assess(
         return Ok(Err(refusal));
     }
     let have_content = content.is_object();
+    // Several applicable reasons: `contract_unavailable` first, then the receipt's.
+    let both = |receipt_usable: bool| {
+        if receipt_usable || mutants.on("unusable-reasons-dropped") {
+            vec!["contract_unavailable"]
+        } else {
+            vec!["contract_unavailable", receipt_reason]
+        }
+    };
     if contract.is_none() {
         set(
             &mut checks,
             "contract",
             "unverifiable",
-            vec!["contract_unavailable"],
+            both(content.is_object()),
         );
     } else if have_content {
         let same = if mutants.on("contract-digest-only") {
@@ -1028,8 +1113,16 @@ pub fn assess(
             time_reasons,
         );
     } else {
-        for name in ["subjects", "environment", "evaluator", "time"] {
+        for name in ["subjects", "time"] {
             set(&mut checks, name, "unverifiable", vec![receipt_reason]);
+        }
+        for name in ["environment", "evaluator"] {
+            let reasons = if contract.is_none() {
+                both(false)
+            } else {
+                vec![receipt_reason]
+            };
+            set(&mut checks, name, "unverifiable", reasons);
         }
     }
     let mut reasons: Vec<Value> = Vec::new();

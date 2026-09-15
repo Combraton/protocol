@@ -45,6 +45,46 @@ pub const ALL: &[(&str, &str)] = &[
         "publishes packet format /2 for requests submitted without context.claims",
     ),
     (
+        "knowledge-epoch-after-preconditions",
+        "checks a knowledge scope's authority epoch after the Core preconditions",
+    ),
+    (
+        "self-reference-before-provider",
+        "reports a remote dependency repeating the evaluated claim ID and revision as a self reference",
+    ),
+    (
+        "evaluator-after-preconditions",
+        "checks the evaluator capability after the Core preconditions",
+    ),
+    (
+        "contract-members-open",
+        "accepts a contract with unlisted members or without its format",
+    ),
+    (
+        "unusable-reasons-dropped",
+        "drops the receipt's reason when the contract is also unreadable",
+    ),
+    (
+        "issued-events-job-first",
+        "appends the job's completed change before the issued receipt's events",
+    ),
+    (
+        "issued-scope-from-job",
+        "names the job instead of the contract's outcome as an issued receipt's scope",
+    ),
+    (
+        "historical-claim-reason-unavailable",
+        "reports a historical claim section's item as unavailable instead of invalid for the target",
+    ),
+    (
+        "hypothesis-invalidation-unreported",
+        "does not invalidate hypothesis or reference items whose claim becomes invalid for the target",
+    ),
+    (
+        "scripted-unmet-overrides-satisfied",
+        "lets a scripted unmet step override an item its check satisfies",
+    ),
+    (
         "dependency-digest-ignored",
         "resolves a dependency by claim and revision whatever its digest",
     ),

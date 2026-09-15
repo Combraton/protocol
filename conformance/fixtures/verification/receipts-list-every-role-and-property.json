@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "verification.receipts-list-every-role-and-property",
-  "version": 2,
+  "version": 3,
   "title": "A recorded receipt lists every contract role and property exactly once, gives reasons exactly for unevaluated and indeterminate results, names a readable contract by exact reference, and maps to one sealed artifact whose bytes are its content",
   "requirements": [
     "VER-1"
@@ -31,7 +31,8 @@
   "polarity": "negative",
   "kills": [
     "receipt-listing-incomplete-accepted",
-    "receipt-events-artifact-first"
+    "receipt-events-artifact-first",
+    "contract-members-open"
   ],
   "steps": [
     {
@@ -366,6 +367,198 @@
           "subject": {
             "kind": "evidence.artifact",
             "id": "c-duplicated"
+          },
+          "revision": 2
+        }
+      ],
+      "payload": {},
+      "expect": {
+        "ok": {
+          "outcome": {
+            "state": "sealed"
+          }
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.prepare",
+      "command_id": "upload-prepare-c-open",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-open"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-open"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "digest": "sha256:a8765ba333fab6a4dabb973548c0ad80edf8156ab5eb8d86d588c39cf4ae7cdf",
+        "size": 643,
+        "media_type": "text/plain",
+        "producer": {
+          "producer_id": "fixture-producer"
+        },
+        "source": {
+          "kind": "test_report",
+          "id": "run-1"
+        },
+        "scope": "project-a",
+        "capture": {
+          "captured_at": "2030-01-01T00:00:00Z",
+          "anchors": [
+            {
+              "kind": "code_tree",
+              "id": "tree-1"
+            }
+          ]
+        },
+        "coverage": {
+          "completeness": "complete",
+          "covered": [
+            "report"
+          ],
+          "gaps": []
+        },
+        "retention_class": "standard"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.append",
+      "command_id": "upload-append-c-open",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-open"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-open"
+          },
+          "revision": 1
+        }
+      ],
+      "payload": {
+        "offset": 0,
+        "data_base64": "eyJlbnZpcm9ubWVudCI6eyJyZXF1aXJlZF9hbmNob3JzIjpbXX0sImV2YWx1YXRvcnMiOm51bGwsImZvcm1hdCI6ImNvbWJyYXRvbi12ZXJpZmljYXRpb24tY29udHJhY3QvMSIsImZyZXNobmVzcyI6bnVsbCwib3V0Y29tZSI6InVwbG9hZCBwcm9kdWNlcyB0aGUgZXhwZWN0ZWQgYXJ0aWZhY3QiLCJvd25lcl9ub3RlIjoiYW4gdW5saXN0ZWQgbWVtYmVyIiwicHJvcGVydGllcyI6W3sibGF5ZXIiOiJjb21wb25lbnQiLCJwcm9wZXJ0eV9pZCI6InBhcnNlci51bml0IiwicmVxdWlyZWQiOnRydWUsInN0YXRlbWVudCI6InRoZSBwYXJzZXIgaGFuZGxlcyBhIEJPTSJ9LHsibGF5ZXIiOiJqb3VybmV5IiwicHJvcGVydHlfaWQiOiJ1cGxvYWQuam91cm5leSIsInJlcXVpcmVkIjp0cnVlLCJzdGF0ZW1lbnQiOiJhbiB1cGxvYWQgcHJvZHVjZXMgdGhlIGFydGlmYWN0In0seyJsYXllciI6InF1YWxpdGF0aXZlIiwicHJvcGVydHlfaWQiOiJkb2NzLnJldmlldyIsInJlcXVpcmVkIjpmYWxzZSwic3RhdGVtZW50IjoidGhlIGhlbHAgdGV4dCByZWFkcyB3ZWxsIn1dLCJzdWJqZWN0cyI6W3sia2luZCI6InJlcG9zaXRvcnlfdHJlZSIsInJvbGUiOiJ0cmVlIn0seyJraW5kIjoiZXZpZGVuY2UuYXJ0aWZhY3QiLCJyb2xlIjoib3V0cHV0In1dfQ=="
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.seal",
+      "command_id": "seal-c-open",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-open"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-open"
+          },
+          "revision": 2
+        }
+      ],
+      "payload": {},
+      "expect": {
+        "ok": {
+          "outcome": {
+            "state": "sealed"
+          }
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.prepare",
+      "command_id": "upload-prepare-c-no-format",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-no-format"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-no-format"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "digest": "sha256:f1462000a0049ef167e4d9dc95cc4ce08ed2fac9136e8742b0b710818a9ec13c",
+        "size": 564,
+        "media_type": "text/plain",
+        "producer": {
+          "producer_id": "fixture-producer"
+        },
+        "source": {
+          "kind": "test_report",
+          "id": "run-1"
+        },
+        "scope": "project-a",
+        "capture": {
+          "captured_at": "2030-01-01T00:00:00Z",
+          "anchors": [
+            {
+              "kind": "code_tree",
+              "id": "tree-1"
+            }
+          ]
+        },
+        "coverage": {
+          "completeness": "complete",
+          "covered": [
+            "report"
+          ],
+          "gaps": []
+        },
+        "retention_class": "standard"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.upload.append",
+      "command_id": "upload-append-c-no-format",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-no-format"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-no-format"
+          },
+          "revision": 1
+        }
+      ],
+      "payload": {
+        "offset": 0,
+        "data_base64": "eyJlbnZpcm9ubWVudCI6eyJyZXF1aXJlZF9hbmNob3JzIjpbXX0sImV2YWx1YXRvcnMiOm51bGwsImZyZXNobmVzcyI6bnVsbCwib3V0Y29tZSI6InVwbG9hZCBwcm9kdWNlcyB0aGUgZXhwZWN0ZWQgYXJ0aWZhY3QiLCJwcm9wZXJ0aWVzIjpbeyJsYXllciI6ImNvbXBvbmVudCIsInByb3BlcnR5X2lkIjoicGFyc2VyLnVuaXQiLCJyZXF1aXJlZCI6dHJ1ZSwic3RhdGVtZW50IjoidGhlIHBhcnNlciBoYW5kbGVzIGEgQk9NIn0seyJsYXllciI6ImpvdXJuZXkiLCJwcm9wZXJ0eV9pZCI6InVwbG9hZC5qb3VybmV5IiwicmVxdWlyZWQiOnRydWUsInN0YXRlbWVudCI6ImFuIHVwbG9hZCBwcm9kdWNlcyB0aGUgYXJ0aWZhY3QifSx7ImxheWVyIjoicXVhbGl0YXRpdmUiLCJwcm9wZXJ0eV9pZCI6ImRvY3MucmV2aWV3IiwicmVxdWlyZWQiOmZhbHNlLCJzdGF0ZW1lbnQiOiJ0aGUgaGVscCB0ZXh0IHJlYWRzIHdlbGwifV0sInN1YmplY3RzIjpbeyJraW5kIjoicmVwb3NpdG9yeV90cmVlIiwicm9sZSI6InRyZWUifSx7ImtpbmQiOiJldmlkZW5jZS5hcnRpZmFjdCIsInJvbGUiOiJvdXRwdXQifV19"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "evidence.seal",
+      "command_id": "seal-c-no-format",
+      "subject": {
+        "kind": "evidence.artifact",
+        "id": "c-no-format"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "evidence.artifact",
+            "id": "c-no-format"
           },
           "revision": 2
         }
@@ -1319,6 +1512,154 @@
             "id": "c-duplicated"
           },
           "digest": "sha256:64e49f03a0404697a6e02a9c87394691034f50e41a3d06239c0d15c7419ad78f"
+        },
+        "evaluator": {
+          "id": "journey",
+          "version": "1"
+        },
+        "environment": {
+          "anchors": {}
+        },
+        "inputs": [],
+        "properties": [
+          {
+            "property_id": "parser.unit",
+            "result": "pass",
+            "evidence": []
+          },
+          {
+            "property_id": "upload.journey",
+            "result": "pass",
+            "evidence": []
+          },
+          {
+            "property_id": "docs.review",
+            "result": "pass",
+            "evidence": []
+          }
+        ],
+        "observed_from": "2030-01-01T00:00:00Z",
+        "observed_until": "2030-01-01T00:01:40Z",
+        "valid_until": null,
+        "scope": "upload journey on staging",
+        "provenance": []
+      },
+      "expect": {
+        "error": "contract_unavailable",
+        "details": {
+          "reason": "invalid_format"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "verification.receipt.record",
+      "command_id": "receipt-record-r-open-contract",
+      "subject": {
+        "kind": "verification.receipt",
+        "id": "r-open-contract"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "verification.receipt",
+            "id": "r-open-contract"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-open"
+          },
+          "digest": "sha256:a8765ba333fab6a4dabb973548c0ad80edf8156ab5eb8d86d588c39cf4ae7cdf"
+        },
+        "evaluator": {
+          "id": "journey",
+          "version": "1"
+        },
+        "environment": {
+          "anchors": {}
+        },
+        "inputs": [],
+        "properties": [
+          {
+            "property_id": "parser.unit",
+            "result": "pass",
+            "evidence": []
+          },
+          {
+            "property_id": "upload.journey",
+            "result": "pass",
+            "evidence": []
+          },
+          {
+            "property_id": "docs.review",
+            "result": "pass",
+            "evidence": []
+          }
+        ],
+        "observed_from": "2030-01-01T00:00:00Z",
+        "observed_until": "2030-01-01T00:01:40Z",
+        "valid_until": null,
+        "scope": "upload journey on staging",
+        "provenance": []
+      },
+      "expect": {
+        "error": "contract_unavailable",
+        "details": {
+          "reason": "invalid_format"
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "verification.receipt.record",
+      "command_id": "receipt-record-r-no-format-contract",
+      "subject": {
+        "kind": "verification.receipt",
+        "id": "r-no-format-contract"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "verification.receipt",
+            "id": "r-no-format-contract"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-no-format"
+          },
+          "digest": "sha256:f1462000a0049ef167e4d9dc95cc4ce08ed2fac9136e8742b0b710818a9ec13c"
         },
         "evaluator": {
           "id": "journey",

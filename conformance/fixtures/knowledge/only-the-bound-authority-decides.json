@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.only-the-bound-authority-decides",
-  "version": 2,
+  "version": 3,
   "title": "Only the scope's bound authority records reliance decisions: grants and derivation labels confer nothing, a second binding and stale or unknown epochs are refused, the authority may adopt its own claim recorded as author and decider, and a transfer keeps earlier decisions in effect",
   "requirements": [
     "KNW-6"
@@ -29,7 +29,8 @@
     "decision-epoch-optional",
     "decision-supersession-unchecked",
     "bind-by-grant",
-    "authority-binds-under-grant"
+    "authority-binds-under-grant",
+    "knowledge-epoch-after-preconditions"
   ],
   "steps": [
     {
@@ -1317,6 +1318,48 @@
         },
         "rationale": "rejected c-lead",
         "supersedes_decision": "dec-lead-adopts"
+      },
+      "set": {
+        "authority_epoch": 1,
+        "grant": "g-lead2"
+      },
+      "expect": {
+        "error": "stale_authority_epoch"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.decision.record",
+      "command_id": "stale-epoch-reused-id",
+      "subject": {
+        "kind": "knowledge.decision",
+        "id": "dec-lead-adopts"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.decision",
+            "id": "dec-lead-adopts"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "c-lead",
+          "revision": 1,
+          "digest": {
+            "$var": "d_c-lead"
+          }
+        },
+        "decision": "rejected",
+        "supersedes_decision": "dec-lead-adopts",
+        "validation_basis": {
+          "evidence": [],
+          "receipts": []
+        },
+        "rationale": "stale epoch and a reused decision ID"
       },
       "set": {
         "authority_epoch": 1,

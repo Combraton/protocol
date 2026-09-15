@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "knowledge.dependencies-resolve-only-exact-references",
-  "version": 2,
+  "version": 3,
   "title": "A dependency resolves only as an exact local provider, claim, revision and digest: another digest, another provider, a missing, future or self reference stays unchecked with its reason and the claim needs_check, and no unrelated evaluation satisfies it; commands naming a revision under another provider are not_found",
   "requirements": [
     "KNW-7",
@@ -28,7 +28,8 @@
     "dependency-provider-ignored",
     "missing-dependency-satisfied",
     "reference-provider-unchecked",
-    "dependency-read-unauthorized"
+    "dependency-read-unauthorized",
+    "self-reference-before-provider"
   ],
   "steps": [
     {
@@ -1181,6 +1182,180 @@
                 },
                 "finding": "unchecked",
                 "reason": "self_reference"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.claim.propose",
+      "command_id": "claim-propose-rself",
+      "subject": {
+        "kind": "knowledge.claim",
+        "id": "rself"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.claim",
+            "id": "rself"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "plane": "observed",
+        "statement": {
+          "subject": {
+            "kind": "app.service",
+            "id": "billing"
+          },
+          "predicate": "remote_self",
+          "value": "v1",
+          "cardinality": "single"
+        },
+        "scope": {
+          "id": "svc",
+          "qualifiers": {}
+        },
+        "support": [],
+        "derivation": {
+          "kind": "deterministic",
+          "inputs": []
+        },
+        "conditions": [
+          {
+            "condition_id": "k-tree",
+            "kind": "repository_tree",
+            "repository": "repo-a",
+            "expected": "t1"
+          }
+        ]
+      },
+      "capture": {
+        "d_rself": "/result/outcome/reference/digest"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.claim.revise",
+      "command_id": "claim-revise-rself",
+      "subject": {
+        "kind": "knowledge.claim",
+        "id": "rself"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.claim",
+            "id": "rself"
+          },
+          "revision": 1
+        }
+      ],
+      "payload": {
+        "plane": "observed",
+        "statement": {
+          "subject": {
+            "kind": "app.service",
+            "id": "billing"
+          },
+          "predicate": "remote_self",
+          "value": "v2",
+          "cardinality": "single"
+        },
+        "scope": {
+          "id": "svc",
+          "qualifiers": {}
+        },
+        "support": [],
+        "derivation": {
+          "kind": "deterministic",
+          "inputs": []
+        },
+        "dependencies": [
+          {
+            "provider": "knowledge-other",
+            "claim": "rself",
+            "revision": 2,
+            "digest": "sha256:6d586e68e8de996023ed09b236caa41f956709564e18d2c8526ae253b35b522f"
+          }
+        ],
+        "conditions": [
+          {
+            "condition_id": "k-tree",
+            "kind": "repository_tree",
+            "repository": "repo-a",
+            "expected": "t1"
+          }
+        ],
+        "supersedes": {
+          "revision": 1,
+          "digest": {
+            "$var": "d_rself"
+          }
+        }
+      },
+      "capture": {
+        "d_rself_2": "/result/outcome/reference/digest"
+      }
+    },
+    {
+      "step": "command",
+      "operation": "knowledge.applicability.evaluate",
+      "command_id": "applicability-evaluate-ev-rself-2",
+      "subject": {
+        "kind": "knowledge.evaluation",
+        "id": "ev-rself-2"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "knowledge.evaluation",
+            "id": "ev-rself-2"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "claim": {
+          "provider": "conformance-provider",
+          "claim": "rself",
+          "revision": 2,
+          "digest": {
+            "$var": "d_rself_2"
+          }
+        },
+        "target": {
+          "repositories": [
+            {
+              "id": "repo-a",
+              "tree": "t1"
+            }
+          ],
+          "completeness": "complete"
+        }
+      },
+      "expect": {
+        "ok": {
+          "outcome": {
+            "result": "needs_check",
+            "findings": [
+              {
+                "condition_id": "k-tree",
+                "finding": "match"
+              },
+              {
+                "dependency": {
+                  "provider": "knowledge-other",
+                  "claim": "rself",
+                  "revision": 2,
+                  "digest": "sha256:6d586e68e8de996023ed09b236caa41f956709564e18d2c8526ae253b35b522f"
+                },
+                "finding": "unchecked",
+                "reason": "remote_dependency"
               }
             ]
           }

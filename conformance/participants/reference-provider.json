@@ -432,7 +432,17 @@
       "issued-environment-requested",
       "contract-unverifiable-checks-passed",
       "receipt-id-collision-accepted",
-      "claims-format-without-negotiation"
+      "claims-format-without-negotiation",
+      "knowledge-epoch-after-preconditions",
+      "self-reference-before-provider",
+      "evaluator-after-preconditions",
+      "contract-members-open",
+      "unusable-reasons-dropped",
+      "issued-events-job-first",
+      "issued-scope-from-job",
+      "historical-claim-reason-unavailable",
+      "hypothesis-invalidation-unreported",
+      "scripted-unmet-overrides-satisfied"
     ]
   }
 }

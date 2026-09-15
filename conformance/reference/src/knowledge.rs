@@ -275,7 +275,8 @@ pub fn binding(tx: &Transaction, scope: &str) -> rusqlite::Result<Option<(i64, V
     load(tx, AUTHORITY, scope)
 }
 
-/// Checks 2 to 4 of section 6 for a scope: binding, bound principal, epoch.
+/// Checks 2 and 3 of section 6 for a scope: binding and bound principal. The authority epoch is
+/// checked earlier, before the Core preconditions (`epoch_check`).
 fn authority_checks(
     tx: &Transaction,
     scope: &str,
@@ -294,6 +295,13 @@ fn authority_checks(
     if bound["authority"] != principal && !mutants.on("decide-by-grant-right") && !labelled_human {
         return Ok(denied());
     }
+    if !mutants.on("knowledge-epoch-after-preconditions") {
+        return Ok(Ok(()));
+    }
+    epoch_against(&bound, epoch)
+}
+
+fn epoch_against(bound: &Value, epoch: Option<i64>) -> rusqlite::Result<Result<(), Refusal>> {
     let current = bound["epoch"].as_i64().unwrap_or(1);
     match epoch {
         Some(e) if e < current => Ok(Err((
@@ -302,6 +310,48 @@ fn authority_checks(
         ))),
         Some(e) if e > current => Ok(Err(("unknown_authority_epoch", json!({})))),
         _ => Ok(Ok(())),
+    }
+}
+
+/// The authority epoch of the scope a decision or resolution acts on (CORE sections 8 and 10):
+/// checked before the Core preconditions, when the named revision or record exists and its scope
+/// is bound. Otherwise the step 7 checks decide.
+pub fn epoch_check(
+    tx: &Transaction,
+    operation: &str,
+    params: &Value,
+    provider_id: &str,
+    mutants: &Mutants,
+) -> rusqlite::Result<Result<(), Refusal>> {
+    if mutants.on("knowledge-epoch-after-preconditions") {
+        return Ok(Ok(()));
+    }
+    let payload = &params["payload"];
+    let named = match operation {
+        "knowledge.decision.record" if payload["claim"]["provider"] == provider_id => {
+            payload["claim"].clone()
+        }
+        "knowledge.conflict.resolve" => {
+            let id = params["subject"]["id"].as_str().unwrap_or_default();
+            match load(tx, CONFLICT, id)? {
+                Some((_, conflict)) => conflict["revisions"][0].clone(),
+                None => return Ok(Ok(())),
+            }
+        }
+        _ => return Ok(Ok(())),
+    };
+    let Some(entry) = revision_entry(
+        tx,
+        named["claim"].as_str().unwrap_or_default(),
+        named["revision"].as_i64().unwrap_or(0),
+    )?
+    else {
+        return Ok(Ok(()));
+    };
+    let scope = entry["record"]["scope"]["id"].as_str().unwrap_or_default();
+    match binding(tx, scope)? {
+        Some((_, bound)) => epoch_against(&bound, params["authority_epoch"].as_i64()),
+        None => Ok(Ok(())),
     }
 }
 
@@ -720,11 +770,15 @@ fn dependency_finding(
     provider_id: &str,
     mutants: &Mutants,
 ) -> rusqlite::Result<(&'static str, Option<&'static str>)> {
-    if same_revision(dependency, own) {
+    // Reasons in table order: another provider first, then the evaluated revision itself.
+    if mutants.on("self-reference-before-provider") && same_revision(dependency, own) {
         return Ok(("unchecked", Some("self_reference")));
     }
     if dependency["provider"] != provider_id && !mutants.on("dependency-provider-ignored") {
         return Ok(("unchecked", Some("remote_dependency")));
+    }
+    if same_revision(dependency, own) {
+        return Ok(("unchecked", Some("self_reference")));
     }
     let held = revision_entry(
         tx,

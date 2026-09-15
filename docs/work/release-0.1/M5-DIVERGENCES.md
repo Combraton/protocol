@@ -34,7 +34,7 @@ Every point is resolved against the written contract. Where the reference, a fix
 | HM5-VALIDITY-ORDER, HM5-GAP-VALIDITY | **spec:** `from` must be before `until`; an empty or inverted interval is `invalid_envelope` at `/payload/validity`. **fixture:** equal-bounds step added. |
 | HM5-LISTING-DETAILS | **spec:** `missing`, `duplicated` and `unknown` are lists, always all three present |
 | HM5-ASSESS-REFERENCE-MISMATCH | **spec:** a reference differing from its mapping makes the receipt unusable. Properties are empty, and the dependent checks are `unverifiable` with `receipt_reference_mismatch` (fixture v2). |
-| HM5-CORE-PRECONDITION-ORDER, HM5-GAP-STEP7 | **spec:** Core revision preconditions come first at step 7 for Knowledge and Verification commands. **fixture:** a reused decision ID gives `precondition_failed` before the authority checks (authority v2). |
+| HM5-CORE-PRECONDITION-ORDER, HM5-GAP-STEP7 | **spec:** the Core revision preconditions come before the profile's own step 7 checks. **fixture:** a reused decision ID gives `precondition_failed` before the authority checks (authority v2). The first resolution also put the preconditions before the authority epoch and the evaluator capability, which contradicted CORE §10. That is corrected in §D (HM5B-STEP7-CORE-ORDER). |
 | HM5-NAMED-REVISION-RIGHTS | **spec (KNOWLEDGE §10):** an explicit list: `decision.record` needs read on its claim, `conflict.open` on both claims, and `applicability.evaluate` on its claim and its local dependency claims, because findings reveal existence. **reference:** dependency read rights added. **fixture:** `knowledge.dependencies-resolve-only-exact-references` v2. **mutant:** `dependency-read-unauthorized`. |
 | HM5-RESOLVE-EPOCH | **spec:** `authority_epoch` is required for `conflict.resolve` too |
 | HM5-LATEST-DECISION-NULL | **spec:** `supersedes_decision` present when no decision exists is `precondition_failed` with `latest_decision: null` |
@@ -69,16 +69,38 @@ Every point is resolved against the written contract. Where the reference, a fix
     - VERIFICATION §5 now says so, and readers must not depend on the artifact's event count or revision;
     - the fixture checks only that the receipt's event comes first, which still kills `receipt-events-artifact-first`.
 
-## D. Still unchecked by fixtures (coverage limits)
+## D. Twelfth pass: realignment (H.M5b)
+
+- **The pass.** The helper realigned the independent implementation with the resolved documents from `6cec5f6`. Its readings were committed before any fixture was opened.
+- **Result.** It passed every fixture on the first run (245 pass, 24 skipped, 4 unsupported), so no fixture was read. Its sensitivity probe found 16 unguarded deviations.
+- **Resolutions.** Every open point is resolved against the written contracts. Each resolution either follows an accepted contract or writes down a reading, and each carries a distinguishing fixture step and mutant.
+
+| Tag | Resolution |
+|---|---|
+| HM5B-STEP7-CORE-ORDER | **A contradiction introduced by the first resolution.** CORE §10 orders step 7 as capabilities, then authority epoch, then preconditions, and CORE §17 checks a capability "before its preconditions". The first resolution put the Core preconditions first in KNOWLEDGE and VERIFICATION. CORE is accepted, so the profiles now follow it. **KNOWLEDGE §6 and §7:** a decision's or resolution's authority epoch (the binding's epoch for the named revision's scope, when that revision or record exists and the scope is bound), then the preconditions, then the profile checks. **VERIFICATION §4:** the evaluator capability, then the preconditions, then the ID collision, contract and roles. The reference had placed both after the preconditions and is fixed. **fixtures:** a stale epoch with a reused decision ID is `stale_authority_epoch` (authority v3); an unlisted evaluator version for an existing job ID is `capability_unavailable` (evaluate v3). **mutants:** `knowledge-epoch-after-preconditions`, `evaluator-after-preconditions`. |
+| HM5B-SELF-OR-REMOTE | **spec (KNOWLEDGE §8):** reasons are decided in table order, and `remote_dependency` comes first. `self_reference` needs this provider. The reference checked `self_reference` first and is fixed. **fixture:** a remote reference repeating the evaluated claim ID and revision (dependencies v3). **mutant:** `self-reference-before-provider`. |
+| HM5B-HISTORICAL-CLAIM-REASON | **spec (CONTEXT §14):** a historical section gives `invalid_for_target` for every reliance, and at the read an item of any reliance whose claim is now `invalid_for_target` is invalidated, with `permitted_use_lost` first. The reference had reported `unavailable` and ignored hypothesis items at the read; it is fixed. **fixture:** hypothesis items in `r-h` (claims v3). **mutants:** `historical-claim-reason-unavailable`, `hypothesis-invalidation-unreported`. |
+| HM5B-SCRIPTED-UNMET-SCOPE | **spec (CONTEXT §12):** a scripted `unmet` never makes a satisfied item unmet. For an unsatisfied item it outranks every check reason, including `knowledge_unavailable` and `claim_digest_mismatch`. The reference let the script override a satisfied item; it is fixed. No earlier fixture used scripted `unmet`. **fixture:** claims v3. **mutant:** `scripted-unmet-overrides-satisfied`. |
+| HM5B-COLLISION-DETAILS | **spec (VERIFICATION §4):** the collision entry carries `current` where readable, as any precondition entry does (CORE §7). The reference omitted it and is fixed. **fixture:** evaluate v3. |
+| HM5B-QUEUED-LOSS | **spec (VERIFICATION §4):** a job whose evaluator is lost before its first evaluation never ran. It goes from `queued` straight to `completed`, and `observed_from` equals `observed_until`. Neither implementation did exactly this: the reference used the submission time, and the independent passed through `running`. **Unguarded;** see §E. |
+| HM5B-ISSUED-EVENTS | Confirmed as written. **fixture:** property recorded, then `receipt.issued`, then `job.changed` (evaluate v3). **mutant:** `issued-events-job-first`. The issued `scope` is also checked now (**mutant:** `issued-scope-from-job`). |
+| HM5B-UNUSABLE-REASON-ORDER | **spec (VERIFICATION §7):** a check lists every applicable reason, `contract_unavailable` first. Top-level `reasons` follow check order without duplicates. The reference dropped one of the reasons and is fixed. **fixture:** assessment v3. **mutant:** `unusable-reasons-dropped`. |
+| HM5B-TIME-WITHOUT-CONTRACT | **spec (VERIFICATION §7):** without the contract, only `valid_until` and `observed_until` are compared, as both implementations did. **fixture:** assessment v3 (`time` passed). |
+| HM5B-CONTRACT-MEMBERS | **spec (VERIFICATION §3):** a contract is a closed object (CORE §5.1). Every member is required, and a wrongly typed or unlisted member is `invalid_format`. The reference accepted unlisted members and is fixed. **fixture:** receipts v3. **mutant:** `contract-members-open`. |
+| HM5B-DUPLICATE-PATH-ORDER | **spec (KNOWLEDGE §3):** each entry is validated before duplicates are checked, as the helper read it |
+| HM5B-EVALUATE-DEPENDENCY-RIGHTS | Confirmed. The difference matters only for commands that then fail `not_found` at step 7. |
+
+## E. Still unchecked by fixtures (coverage limits)
 
 - **Knowledge:**
   - `decision.record` without `knowledge.read` on its claim (the right is implemented and specified);
-  - the order of the other step 7 checks against Core preconditions, beyond decisions;
-  - resolved conflicts in packet snapshots;
+  - the step 7 order for `conflict.resolve` (decisions are checked);
   - duplicate `condition_id`.
 - **Verification:**
-  - the event order of an issued receipt;
-  - the rarer contract-format violations (unknown layer, non-boolean `required`);
+  - a job losing its evaluator before its first evaluation (HM5B-QUEUED-LOSS);
+  - the rarer contract violations (unknown layer, non-boolean `required`, empty lists);
   - the exact `max_age_seconds` boundary (the `valid_until` boundary and later instants are checked).
-- **Context:** `hypothesis` or `reference` claim items with applicability not established; the precedence of scripted `unmet` reasons (a test-control convention).
+- **Context:**
+  - `unverified_items` limited to `binding` and `evidence` items;
+  - resolved conflicts left out of snapshots.
 - **Independent coverage:** `context.knowledge_provider` peers and `execution.claim_revalidation` need the Unix-socket binding, so SCN-16 and the Execution side of CMP-9 are checked only on the reference. The composition runs one implementation for every participant; it is not mixed-implementation proof.

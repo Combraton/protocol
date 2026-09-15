@@ -66,7 +66,7 @@ Both carry the same content members; `revise` adds `supersedes`. Outcome: `{ ref
 
 `producer` is the session principal. An absent `validity`, `basis` or `supersedes` is recorded as `null`, absent `dependencies` and `conditions` as `[]`, and an absent `health` as `not_applicable`. The reference `digest` is the `sha256` canonical digest (ENCODING) of this record. `knowledge.claim.inspect` returns the record, so any reader can recompute the digest.
 
-- **Unique IDs.** `support_id` values are unique within a revision, and so are `condition_id` values; a duplicate is `invalid_envelope` at `/payload/support` or `/payload/conditions` (step 2).
+- **Unique IDs.** `support_id` values are unique within a revision, and so are `condition_id` values; a duplicate is `invalid_envelope` at `/payload/support` or `/payload/conditions` (step 2). Each entry is validated first, so an invalid entry is reported at its own path before any duplicate.
 - **Base check** (KNW-1). A stale Core precondition is `precondition_failed`. A `supersedes.revision` other than the current revision is `invalid_envelope` at `/payload/supersedes/revision`, and a wrong digest at `/payload/supersedes/digest`. A provider MUST NOT overwrite a revision or merge concurrent revisions silently.
 - **Producer.** A revision's producer is always the session principal, whatever `derivation.kind` says.
 - **New revisions start unaccepted.** No member of `propose` or `revise` sets reliance. A new revision is `proposed` until a decision names it (§6). This includes extracted instructions: a `normative` claim a model derived from a transcript is only `proposed` (KNW-9).
@@ -145,13 +145,15 @@ For example:
   | `rationale` | Free text |
 
   The command's `authority_epoch` (CORE §5) carries the binding epoch; without it the command is `invalid_envelope` at `/authority_epoch` (step 2).
-- **Who decides.** After Core authorization with rights `knowledge.decide` on the decision and `knowledge.read` on the claim (CORE §15.5), step 7 checks the Core revision preconditions first (CORE §10), then in this order:
-  1. The named revision does not exist at this provider, including a reference naming another provider: `not_found`.
-  2. The claim's scope has no binding: `permission_denied` with `not_authority`.
-  3. The session principal is not the bound authority: `permission_denied` with `not_authority`. A grant never makes a principal an authority, whatever rights it carries. No deciding is delegated in 0.1.
-  4. `authority_epoch` lower than the binding's epoch: `stale_authority_epoch`; higher: `unknown_authority_epoch`.
-  5. The reference's digest differs from the revision's: `invalid_envelope` at `/payload/claim/digest`.
-  6. `supersedes_decision` absent while a decision about the revision exists, present when none exists, or not the latest one: `precondition_failed` with details `{ latest_decision }` (`null` when none exists).
+- **Who decides.** Core authorization comes first, with rights `knowledge.decide` on the decision and `knowledge.read` on the claim (CORE §15.5). Step 7 then follows CORE §10: the authority epoch, then the Core revision preconditions, then this profile's checks.
+  - **Authority epoch** (CORE §8). The binding's epoch is the authority epoch of the claim's scope. The check applies when the named revision exists at this provider (claim ID and revision, whatever the digest) and its scope is bound. `authority_epoch` lower than the binding's epoch is `stale_authority_epoch`, with `current_epoch` only if the principal may read the binding subject; higher is `unknown_authority_epoch`. With no such revision or binding there is no epoch to compare, and the checks below decide.
+  - **Core revision preconditions** (CORE §7).
+  - **Then, in this order:**
+    1. The named revision does not exist at this provider, including a reference naming another provider: `not_found`.
+    2. The claim's scope has no binding: `permission_denied` with `not_authority`.
+    3. The session principal is not the bound authority: `permission_denied` with `not_authority`. A grant never makes a principal an authority, whatever rights it carries. No deciding is delegated in 0.1.
+    4. The reference's digest differs from the revision's: `invalid_envelope` at `/payload/claim/digest`.
+    5. `supersedes_decision` absent while a decision about the revision exists, present when none exists, or not the latest one: `precondition_failed` with details `{ latest_decision }` (`null` when none exists).
 - **Authentication and binding, not labels, control permission.** A revision's `derivation.kind` has no effect on who may decide. A model producer that is not the bound authority cannot accept its output, even if it labels the derivation `human`.
 - **The bound authority may adopt its own claim.** When the session principal is also the revision's producer, the decision is recorded with `author_is_decider: true`, and inspect and history report it. Such a decision is an adoption by its author, never a separate review. A human authority can therefore state a requirement and then adopt it through a separate decision, without an artificial producer identity.
 - **Transfer preserves decisions.** Decisions recorded under an earlier epoch stay in effect until the current authority records a later decision about the same revision. A transfer never resets reliance.
@@ -192,7 +194,12 @@ So "staging uses 5 workers" and "production uses 3 workers" are not comparable (
 - **Who opens and who resolves.** Any principal with `knowledge.propose` may open a record, including a model producer, and may add a suggested distinguishing observation in `note`.
   - `knowledge.conflict.resolve` (command, precondition on the record's revision) records `{ resolution: "select" | "narrow_scope" | "reject_support" | "supersede" | "request_observation" | "not_a_conflict", selected?, rationale }`, with `authority_epoch`.
   - `authority_epoch` is required, as for decisions (`invalid_envelope` at `/authority_epoch`, step 2).
-  - After authorization with `knowledge.decide` on the record, step 7 checks the Core revision preconditions, then: the record does not exist or is already resolved, `not_found`; then checks 2 to 4 of §6 for the revisions' scope; then `selected`, required exactly for `select` and naming one of the two revisions, otherwise `invalid_envelope` at `/payload/selected`. Only the bound authority resolves. Recency and producer confidence never resolve a record.
+  - Authorization needs `knowledge.decide` on the record. Step 7 follows CORE §10, as for decisions (§6):
+    - the authority epoch of the revisions' scope, when the record exists and that scope is bound;
+    - the Core revision preconditions;
+    - the record does not exist or is already resolved: `not_found`;
+    - checks 2 and 3 of §6 for the revisions' scope;
+    - `selected`, required exactly for `select` and naming one of the two revisions: otherwise `invalid_envelope` at `/payload/selected`. Only the bound authority resolves. Recency and producer confidence never resolve a record.
   - A resolution changes no revision and records no reliance decision; those remain separate operations.
 
 ## 8. Applicability (KNW-7, M5-Q4)
@@ -207,12 +214,12 @@ So "staging uses 5 workers" and "production uses 3 workers" are not comparable (
 Each dependency resolves only as an **exact local reference**. It resolves when it names this provider, and a revision this provider holds with exactly its claim ID, revision and digest. It then gets its finding from the latest evaluation recorded for that exact reference (provider, claim, revision and digest) and a target equal to this one (canonical JSON):
 - `match` if that evaluation is `applicable`;
 - `mismatch` if it is `invalid_for_target`;
-- `unchecked`, with `reason`, in every other case:
+- `unchecked`, with `reason`, in every other case. The first row that applies gives the reason:
 
 | `reason` | When |
 |---|---|
-| `self_reference` | The dependency names the evaluated revision's own claim ID and revision, whatever its digest |
-| `remote_dependency` | The dependency names another provider. This profile defines no cross-provider dependency evaluation, and the provider never substitutes an evaluation of a local revision with the same claim ID. |
+| `remote_dependency` | The dependency names another provider. This profile defines no cross-provider dependency evaluation, and the provider never substitutes an evaluation of a local revision with the same claim ID, even when that ID and revision are the evaluated revision's own. |
+| `self_reference` | The dependency names this provider and the evaluated revision's own claim ID and revision, whatever its digest |
 | `unresolved` | No revision with that claim ID, revision and digest exists here. This covers malformed or guessed references, and references to revisions proposed later. |
 | `not_evaluated` | The reference resolves, but no evaluation of it exists for an equal target |
 | `not_established` | The latest such evaluation is `needs_check` or `unknown` |

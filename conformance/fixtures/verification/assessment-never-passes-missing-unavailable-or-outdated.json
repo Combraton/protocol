@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "verification.assessment-never-passes-missing-unavailable-or-outdated",
-  "version": 2,
+  "version": 3,
   "title": "Assessment is read-only and states its time and basis: every contract role must be named once; exact contract references, subject digests, required environment anchors, permitted evaluators, observation time, validity and freshness are checked; unverifiable, stale, not evaluated and indeterminate are never satisfied; a caller-selected time never establishes present validity",
   "requirements": [
     "VER-4"
@@ -42,7 +42,8 @@
     "assess-roles-incomplete-accepted",
     "receipt-bytes-unchecked",
     "overall-ignores-checks",
-    "contract-unverifiable-checks-passed"
+    "contract-unverifiable-checks-passed",
+    "unusable-reasons-dropped"
   ],
   "steps": [
     {
@@ -2307,8 +2308,106 @@
               "reasons": [
                 "contract_unavailable"
               ]
+            },
+            "time": {
+              "status": "passed",
+              "reasons": []
             }
           },
+          "properties": [],
+          "overall": "not_satisfied"
+        }
+      }
+    },
+    {
+      "step": "query",
+      "operation": "verification.receipt.assess",
+      "payload": {
+        "receipt": {
+          "provider": "conformance-provider",
+          "receipt": "r-pass",
+          "artifact": {
+            "provider": "conformance-provider",
+            "artifact": {
+              "kind": "evidence.artifact",
+              "id": "receipt.r-pass"
+            },
+            "digest": {
+              "$var": "ra_r-mixed"
+            }
+          }
+        },
+        "contract": {
+          "provider": "conformance-provider",
+          "artifact": {
+            "kind": "evidence.artifact",
+            "id": "c-lost"
+          },
+          "digest": "sha256:5f7a783bb38fe87baf42374fa5e389177ec3f2f443aa59c1d84919205b709a25"
+        },
+        "subjects": [
+          {
+            "role": "tree",
+            "digest": "t12"
+          },
+          {
+            "role": "output",
+            "digest": "sha256:db6ac92fefefaf3fa8610a74cd8dcef8815d173fbd7853f2ed5ac18c8ac1ff45"
+          }
+        ],
+        "environment": {
+          "anchors": {
+            "browser": "chromium-120"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "checks": {
+            "receipt": {
+              "status": "failed",
+              "reasons": [
+                "receipt_reference_mismatch"
+              ]
+            },
+            "contract": {
+              "status": "unverifiable",
+              "reasons": [
+                "contract_unavailable",
+                "receipt_reference_mismatch"
+              ]
+            },
+            "subjects": {
+              "status": "unverifiable",
+              "reasons": [
+                "receipt_reference_mismatch"
+              ]
+            },
+            "environment": {
+              "status": "unverifiable",
+              "reasons": [
+                "contract_unavailable",
+                "receipt_reference_mismatch"
+              ]
+            },
+            "evaluator": {
+              "status": "unverifiable",
+              "reasons": [
+                "contract_unavailable",
+                "receipt_reference_mismatch"
+              ]
+            },
+            "time": {
+              "status": "unverifiable",
+              "reasons": [
+                "receipt_reference_mismatch"
+              ]
+            }
+          },
+          "reasons": [
+            "receipt_reference_mismatch",
+            "contract_unavailable"
+          ],
           "properties": [],
           "overall": "not_satisfied"
         }

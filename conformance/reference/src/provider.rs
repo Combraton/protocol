@@ -2322,8 +2322,62 @@ impl Provider {
         {
             self.check_controller_epoch(params)?;
         }
+        self.check_profile_capability_and_epoch(operation, params)?;
         self.check_preconditions_only(params)?;
         self.check_targets(operation, params)
+    }
+
+    /// Step 7 checks that CORE section 10 places before the preconditions: an evaluator version a
+    /// verification job depends on (CORE section 17), and a knowledge scope's authority epoch.
+    fn check_profile_capability_and_epoch(
+        &self,
+        operation: &str,
+        params: &Value,
+    ) -> Result<(), Reject> {
+        let reader = self.store.reader().map_err(storage)?;
+        if operation.starts_with("knowledge.") {
+            let checked = crate::knowledge::epoch_check(
+                &reader,
+                operation,
+                params,
+                &self.identity.provider_id,
+                &self.mutants,
+            )
+            .map_err(storage)?;
+            return self.knowledge_refusal(&reader, operation, params, checked);
+        }
+        if operation == "verification.evaluate_contract" {
+            let context = self.verification_context(0);
+            if let Err((code, details)) = crate::verification::capability_check(params, &context) {
+                return Err(reject(code, details));
+            }
+        }
+        Ok(())
+    }
+
+    /// A knowledge refusal, with `current_epoch` only for a principal who may read the binding.
+    fn knowledge_refusal(
+        &self,
+        reader: &rusqlite::Transaction,
+        operation: &str,
+        params: &Value,
+        checked: Result<(), (&'static str, Value)>,
+    ) -> Result<(), Reject> {
+        match checked {
+            Ok(()) => Ok(()),
+            Err(("stale_authority_epoch", details)) => {
+                let scope =
+                    crate::knowledge::scope_of(reader, operation, params).map_err(storage)?;
+                let binding = json!({"kind": crate::knowledge::AUTHORITY, "id": scope});
+                let details = if self.may_read(&binding, params)? {
+                    details
+                } else {
+                    json!({})
+                };
+                Err(reject("stale_authority_epoch", details))
+            }
+            Err((code, details)) => Err(reject(code, details)),
+        }
     }
 
     /// Controller lease (EXECUTION section 11, EXE-13): once a controller has claimed the host,
@@ -2378,7 +2432,7 @@ impl Provider {
                 id == crate::execution::host_id(&self.identity.executor)
             }
             name if name.starts_with("knowledge.") => {
-                return match crate::knowledge::check(
+                let checked = crate::knowledge::check(
                     &reader,
                     name,
                     params,
@@ -2386,22 +2440,8 @@ impl Provider {
                     &self.identity.provider_id,
                     &self.mutants,
                 )
-                .map_err(storage)?
-                {
-                    Ok(()) => Ok(()),
-                    Err(("stale_authority_epoch", details)) => {
-                        let scope =
-                            crate::knowledge::scope_of(&reader, name, params).map_err(storage)?;
-                        let binding = json!({"kind": crate::knowledge::AUTHORITY, "id": scope});
-                        let details = if self.may_read(&binding, params)? {
-                            details
-                        } else {
-                            json!({})
-                        };
-                        Err(reject("stale_authority_epoch", details))
-                    }
-                    Err((code, details)) => Err(reject(code, details)),
-                };
+                .map_err(storage)?;
+                return self.knowledge_refusal(&reader, name, params, checked);
             }
             name if name.starts_with("verification.") => {
                 let context = self.verification_context(0);
@@ -2409,6 +2449,19 @@ impl Provider {
                     .map_err(storage)?
                 {
                     Ok(()) => Ok(()),
+                    // An ID collision names the existing subject, with `current` where readable
+                    // (CORE section 7).
+                    Err(("precondition_failed", mut details)) if details["failed"].is_array() => {
+                        for entry in details["failed"].as_array_mut().into_iter().flatten() {
+                            let kind = entry["subject"]["kind"].as_str().unwrap_or_default();
+                            let id = entry["subject"]["id"].as_str().unwrap_or_default();
+                            if self.may_read(&entry["subject"], params)? {
+                                entry["current"] =
+                                    json!(self.store.revision(kind, id).map_err(storage)?);
+                            }
+                        }
+                        Err(reject("precondition_failed", details))
+                    }
                     Err((code, details)) => Err(reject(code, details)),
                 };
             }

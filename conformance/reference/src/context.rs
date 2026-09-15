@@ -659,7 +659,11 @@ fn item_results(
                     && check_passes(item, s, record, job, mutants)
             });
             let mut result = json!({"item_id": item_id, "obligation": obligation});
-            if let Some(unmet) = job["unmet"].get(item_id) {
+            // A scripted unmet reason never overrides a satisfied item (CONTEXT section 12).
+            let scripted = job["unmet"]
+                .get(item_id)
+                .filter(|_| !satisfied || mutants.on("scripted-unmet-overrides-satisfied"));
+            if let Some(unmet) = scripted {
                 result["result"] = json!("unmet");
                 result["reason"] = unmet.clone();
             } else if satisfied {
@@ -667,7 +671,7 @@ fn item_results(
             } else if !finishing {
                 result["result"] = json!("pending");
             } else {
-                let claim_cause = claim_reason(item, job);
+                let claim_cause = claim_reason(item, job, mutants);
                 let cause = if let Some(claim) = claim_cause {
                     claim
                 } else if omitted {
@@ -1286,7 +1290,7 @@ fn claim_shortfall(item: &Value, snapshot: &Value) -> Option<&'static str> {
 }
 
 /// The unmet reason a claim check gives an item, when it has a claim section.
-fn claim_reason(item: &Value, job: &Value) -> Option<&'static str> {
+fn claim_reason(item: &Value, job: &Value, mutants: &Mutants) -> Option<&'static str> {
     if item["check"]["kind"] != "claim_included" {
         return None;
     }
@@ -1303,7 +1307,10 @@ fn claim_reason(item: &Value, job: &Value) -> Option<&'static str> {
     if section["claim"]["reference"] != item["check"]["claim"] {
         return Some("unavailable");
     }
-    claim_shortfall(item, &section["claim"])
+    // Only a section that is not historical satisfies; a historical one is invalid for the target.
+    claim_shortfall(item, &section["claim"]).or((section["historical"] == true
+        && !mutants.on("historical-claim-reason-unavailable"))
+    .then_some("invalid_for_target"))
 }
 
 /// Read-time claim facts: changes, claim invalidations and unverified items (CONTEXT section 14).
@@ -1377,8 +1384,14 @@ fn read_time_claims(
                 if now["current_revision"].as_i64() > reference["revision"].as_i64() {
                     changes.push(change("lineage_revised"));
                 }
+                // For every reliance, a claim now invalid for the target would make its section
+                // historical (CONTEXT section 14); a lost permitted use comes first.
+                let shortfall = claim_shortfall(&item, &now)
+                    .or((now["applicability"]["result"] == "invalid_for_target"
+                        && !mutants.on("hypothesis-invalidation-unreported"))
+                    .then_some("invalid_for_target"));
                 if satisfied_required {
-                    match claim_shortfall(&item, &now) {
+                    match shortfall {
                         Some("not_accepted") if !mutants.on("claim-invalidation-unreported") => {
                             invalidated.push(json!({"item_id": item["item_id"], "claim": reference, "reason": "permitted_use_lost"}));
                         }

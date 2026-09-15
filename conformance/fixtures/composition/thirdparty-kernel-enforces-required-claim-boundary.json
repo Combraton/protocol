@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.thirdparty-kernel-enforces-required-claim-boundary",
-  "version": 2,
+  "version": 3,
   "title": "An independently written execution kernel (client only, not an execution/1 provider) negotiates Context with the Context provider and Evidence with each Evidence provider, and enforces its own dispatch boundary from read-time claim facts over the public protocol: a valid required context dispatches, an advisory-only change does not stop required work, an invalidated required claim withholds the required dispatch while advisory work proceeds with its gap, mismatched bytes are never held, and unavailable knowledge is never valid; a kernel that ignores the boundary fails",
   "requirements": [
     "SCN-16",
@@ -47,11 +47,21 @@
   "client_kills": [
     {
       "implementation": "minimal-executor",
-      "mutant": "ignores-required-boundary"
+      "mutant": "ignores-required-boundary",
+      "step": 49,
+      "reason_contains": "expected error not_found, received success"
     },
     {
       "implementation": "minimal-executor",
-      "mutant": "trusts-advertised-digest"
+      "mutant": "trusts-advertised-digest",
+      "step": 51,
+      "reason_contains": "decision"
+    },
+    {
+      "implementation": "minimal-executor",
+      "mutant": "ignores-claim-invalidation",
+      "step": 53,
+      "reason_contains": "expected error not_found, received success"
     }
   ],
   "steps": [
@@ -1410,6 +1420,31 @@
             }
           },
           {
+            "work_id": "w-marker",
+            "dispatch_at": "2030-01-01T00:03:00Z",
+            "binding": {
+              "packet": {
+                "packet": {
+                  "kind": "context.packet",
+                  "id": "r-2"
+                },
+                "revision": 1,
+                "artifact": {
+                  "provider": "context-1",
+                  "artifact": {
+                    "kind": "evidence.artifact",
+                    "id": "packet.r-2.1"
+                  },
+                  "digest": {
+                    "$var": "p2"
+                  }
+                }
+              },
+              "obligation": "advisory",
+              "fallback": "proceed_with_gap"
+            }
+          },
+          {
             "work_id": "w-unknown",
             "dispatch_at": "2030-01-01T00:04:00Z",
             "binding": {
@@ -1779,6 +1814,204 @@
       "payload": {
         "artifact": {
           "kind": "evidence.artifact",
+          "id": "dispatch.w-marker"
+        }
+      },
+      "expect": {
+        "ok": {
+          "state": "sealed",
+          "descriptor": {
+            "producer": {
+              "principal": "kernel"
+            }
+          }
+        }
+      },
+      "capture": {
+        "d_marker": "/result/descriptor/digest"
+      },
+      "eventually_ms": 20000,
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "dispatch.w-marker"
+        },
+        "digest": {
+          "$var": "d_marker"
+        }
+      },
+      "expect": {
+        "ok": {
+          "data_base64": {
+            "$base64_json": {
+              "format": "combraton-thirdparty-kernel-dispatch/1",
+              "work_id": "w-marker",
+              "obligation": "advisory",
+              "gap": false,
+              "check": 1
+            }
+          }
+        }
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "check.w-tampered.1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "state": "sealed",
+          "descriptor": {
+            "producer": {
+              "principal": "kernel"
+            }
+          }
+        }
+      },
+      "capture": {
+        "c_tampered": "/result/descriptor/digest"
+      },
+      "eventually_ms": 20000,
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "check.w-tampered.1"
+        },
+        "digest": {
+          "$var": "c_tampered"
+        }
+      },
+      "expect": {
+        "ok": {
+          "data_base64": {
+            "$base64_json": {
+              "format": "combraton-thirdparty-kernel-check/1",
+              "work_id": "w-tampered",
+              "boundary": "dispatch",
+              "state": "unsatisfied",
+              "decision": "withhold"
+            }
+          }
+        }
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "dispatch.w-tampered"
+        }
+      },
+      "expect": {
+        "error": "not_found"
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "check.w-altered.1"
+        }
+      },
+      "expect": {
+        "ok": {
+          "state": "sealed",
+          "descriptor": {
+            "producer": {
+              "principal": "kernel"
+            }
+          }
+        }
+      },
+      "capture": {
+        "c_altered": "/result/descriptor/digest"
+      },
+      "eventually_ms": 20000,
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.fetch",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "check.w-altered.1"
+        },
+        "digest": {
+          "$var": "c_altered"
+        }
+      },
+      "expect": {
+        "ok": {
+          "data_base64": {
+            "$base64_json": {
+              "format": "combraton-thirdparty-kernel-check/1",
+              "work_id": "w-altered",
+              "boundary": "dispatch",
+              "state": "unsatisfied",
+              "decision": "withhold"
+            }
+          }
+        }
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "dispatch.w-altered"
+        }
+      },
+      "expect": {
+        "error": "not_found"
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
+          "id": "dispatch.w-req"
+        }
+      },
+      "expect": {
+        "error": "not_found"
+      },
+      "session": "rec-owner"
+    },
+    {
+      "step": "query",
+      "operation": "evidence.inspect",
+      "payload": {
+        "artifact": {
+          "kind": "evidence.artifact",
           "id": "check.w-req.1"
         }
       },
@@ -1926,152 +2159,6 @@
             }
           }
         }
-      },
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.inspect",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "check.w-tampered.1"
-        }
-      },
-      "expect": {
-        "ok": {
-          "state": "sealed",
-          "descriptor": {
-            "producer": {
-              "principal": "kernel"
-            }
-          }
-        }
-      },
-      "capture": {
-        "c_tampered": "/result/descriptor/digest"
-      },
-      "eventually_ms": 20000,
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.fetch",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "check.w-tampered.1"
-        },
-        "digest": {
-          "$var": "c_tampered"
-        }
-      },
-      "expect": {
-        "ok": {
-          "data_base64": {
-            "$base64_json": {
-              "format": "combraton-thirdparty-kernel-check/1",
-              "work_id": "w-tampered",
-              "boundary": "dispatch",
-              "state": "unsatisfied",
-              "decision": "withhold"
-            }
-          }
-        }
-      },
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.inspect",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "check.w-altered.1"
-        }
-      },
-      "expect": {
-        "ok": {
-          "state": "sealed",
-          "descriptor": {
-            "producer": {
-              "principal": "kernel"
-            }
-          }
-        }
-      },
-      "capture": {
-        "c_altered": "/result/descriptor/digest"
-      },
-      "eventually_ms": 20000,
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.fetch",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "check.w-altered.1"
-        },
-        "digest": {
-          "$var": "c_altered"
-        }
-      },
-      "expect": {
-        "ok": {
-          "data_base64": {
-            "$base64_json": {
-              "format": "combraton-thirdparty-kernel-check/1",
-              "work_id": "w-altered",
-              "boundary": "dispatch",
-              "state": "unsatisfied",
-              "decision": "withhold"
-            }
-          }
-        }
-      },
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.inspect",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "dispatch.w-altered"
-        }
-      },
-      "expect": {
-        "error": "not_found"
-      },
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.inspect",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "dispatch.w-req"
-        }
-      },
-      "expect": {
-        "error": "not_found"
-      },
-      "session": "rec-owner"
-    },
-    {
-      "step": "query",
-      "operation": "evidence.inspect",
-      "payload": {
-        "artifact": {
-          "kind": "evidence.artifact",
-          "id": "dispatch.w-tampered"
-        }
-      },
-      "expect": {
-        "error": "not_found"
       },
       "session": "rec-owner"
     },

@@ -25,7 +25,8 @@
     ],
     "names": [
       "ignores-required-boundary",
-      "trusts-advertised-digest"
+      "trusts-advertised-digest",
+      "ignores-claim-invalidation"
     ]
   }
 }

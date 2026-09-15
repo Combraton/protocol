@@ -1,7 +1,7 @@
 {
   "format": "combraton-conformance-fixture/1",
   "id": "composition.claims-in-packets-block-only-the-required-boundary",
-  "version": 1,
+  "version": 2,
   "title": "Across separate knowledge, context and executor participants: rejecting the claim behind a required item blocks the required-bound execution at dispatch as stale while the advisory-bound one proceeds; a newer claim revision is reported but never substituted; an unreachable knowledge provider makes the required binding unknown, never valid",
   "requirements": [
     "SCN-16",
@@ -53,7 +53,8 @@
   "kills": [
     "claim-revalidation-ignored",
     "advisory-blocked-by-claims",
-    "unavailable-knowledge-valid"
+    "unavailable-knowledge-valid",
+    "claim-revalidation-without-negotiation"
   ],
   "steps": [
     {
@@ -737,6 +738,17 @@
                 "stall": true
               }
             ],
+            "e-m4": [
+              {
+                "wait_until": "2030-01-01T00:01:00Z"
+              },
+              {
+                "deliver": "provider_ack_id"
+              },
+              {
+                "stall": true
+              }
+            ],
             "e-out": [
               {
                 "wait_until": "2030-01-01T00:02:00Z"
@@ -1371,6 +1383,131 @@
       "session": "caller"
     },
     {
+      "step": "connect",
+      "session": "caller-m4",
+      "participant": "exe",
+      "principal": "owner"
+    },
+    {
+      "step": "negotiate",
+      "payload": {
+        "caller": {
+          "name": "fixture",
+          "version": "1"
+        },
+        "receive_limits": {
+          "max_frame_bytes": 1048576
+        },
+        "profiles": [
+          {
+            "name": "core",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "core.events",
+              "core.capabilities",
+              "core.effects",
+              "core.grants"
+            ],
+            "optional_features": []
+          },
+          {
+            "name": "execution",
+            "majors": [
+              1
+            ],
+            "required": true,
+            "required_features": [
+              "execution.context",
+              "execution.context_revalidation"
+            ],
+            "optional_features": []
+          }
+        ]
+      },
+      "session": "caller-m4"
+    },
+    {
+      "step": "command",
+      "operation": "execution.submit",
+      "command_id": "submit-e-m4",
+      "subject": {
+        "kind": "execution.execution",
+        "id": "e-m4"
+      },
+      "preconditions": [
+        {
+          "subject": {
+            "kind": "execution.execution",
+            "id": "e-m4"
+          },
+          "revision": 0
+        }
+      ],
+      "payload": {
+        "brief": {
+          "digest": "sha256:abababababababababababababababababababababababababababababababab",
+          "media_type": "text/plain"
+        },
+        "context_bindings": [
+          {
+            "binding_id": "b-m4",
+            "request": {
+              "kind": "context.request",
+              "id": "r-1"
+            },
+            "packet": {
+              "packet": {
+                "kind": "context.packet",
+                "id": "r-1"
+              },
+              "revision": 1,
+              "artifact": {
+                "provider": "context-1",
+                "artifact": {
+                  "kind": "evidence.artifact",
+                  "id": "packet.r-1.1"
+                },
+                "digest": {
+                  "$var": "p1"
+                }
+              }
+            },
+            "obligation": "required_before_start",
+            "selected_by": "owner",
+            "conditions": [
+              {
+                "condition_id": "k-1",
+                "kind": "repository_tree",
+                "repository": "repo-a",
+                "expected": "tree-1"
+              }
+            ],
+            "fetch": {
+              "context": {
+                "provider": "context-1",
+                "grant": "g-packets"
+              },
+              "evidence": {
+                "provider": "context-1",
+                "grant": "g-artifacts"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": {
+          "outcome": {
+            "admission": "admitted"
+          }
+        }
+      },
+      "session": "caller-m4"
+    },
+    {
       "step": "command",
       "operation": "knowledge.decision.record",
       "command_id": "decision-record-dec-A-reject",
@@ -1588,6 +1725,36 @@
         }
       },
       "session": "caller"
+    },
+    {
+      "step": "query",
+      "operation": "execution.inspect",
+      "payload": {
+        "execution": "e-m4"
+      },
+      "expect": {
+        "ok": {
+          "delivery": "acknowledged",
+          "context": {
+            "blocked": {
+              "$absent": true
+            },
+            "checks": {
+              "$contains": {
+                "boundary": "dispatch",
+                "state": "current",
+                "results": {
+                  "$contains": {
+                    "condition_id": "packet.facts",
+                    "result": "match"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "session": "caller-m4"
     },
     {
       "step": "stop_participant",

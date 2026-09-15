@@ -144,7 +144,8 @@
       "newer-revision-substituted",
       "unavailable-knowledge-valid",
       "claim-revalidation-ignored",
-      "advisory-blocked-by-claims"
+      "advisory-blocked-by-claims",
+      "claim-revalidation-without-negotiation"
     ]
   }
 }

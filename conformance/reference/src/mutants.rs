@@ -105,6 +105,10 @@ pub const ALL: &[(&str, &str)] = &[
         "omits feature-triggered entries from core.feature_dependencies",
     ),
     (
+        "claim-revalidation-without-negotiation",
+        "enforces claim changes for bindings submitted without execution.claim_revalidation",
+    ),
+    (
         "feature-dependency-unenforced",
         "selects a feature whose feature-triggered dependency is not selected",
     ),
